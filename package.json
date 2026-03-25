@@ -1,0 +1,44 @@
+{
+  "name": "claude-nexus",
+  "version": "0.1.0",
+  "description": "Zettelkasten dashboard for Claude Code — session monitoring, memory browsing, cross-project search",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "nexus": "node --loader ts-node/esm src/cli/index.ts",
+    "dev:mcp": "node --loader ts-node/esm src/mcp/server.ts",
+    "dev:api": "npx tsx src/web/server.ts",
+    "dev:frontend": "vite --config vite.config.ts",
+    "build:frontend": "vite build --config vite.config.ts",
+    "dev": "concurrently \"npm run dev:api\" \"npx @tauri-apps/cli dev\"",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@sveltejs/vite-plugin-svelte": "^5.1.1",
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/cli": "^2.10.1",
+    "better-sqlite3": "^11.7.0",
+    "chalk": "^5.3.0",
+    "chokidar": "^4.0.0",
+    "commander": "^13.0.0",
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "glob": "^11.0.0",
+    "gray-matter": "^4.0.3",
+    "svelte": "^5.55.0",
+    "vite": "^6.4.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
