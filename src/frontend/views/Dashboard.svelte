@@ -54,10 +54,12 @@
           <button class="session-card" onclick={() => navigate("sessions", { id: session.id })}>
             <div class="session-header">
               <span class="status-dot status-{session.status}"></span>
-              <span class="session-project">{session.project}</span>
+              <span class="session-title">{session.title}</span>
             </div>
             <div class="session-meta">
-              <span>{session.messageCount} messages</span>
+              <span class="session-project">{session.project}</span>
+              <span class="sep">·</span>
+              <span>{session.messageCount} msgs</span>
               <span class="sep">·</span>
               <span>{new Date(session.lastActivity).toLocaleDateString()}</span>
             </div>
@@ -177,7 +179,8 @@
     50% { opacity: 0.4; }
   }
 
-  .session-project { font-weight: 600; font-size: 14px; }
+  .session-title { font-weight: 600; font-size: 14px; }
+  .session-project { font-size: 12px; color: var(--text-secondary); }
 
   .session-meta {
     font-size: 12px;

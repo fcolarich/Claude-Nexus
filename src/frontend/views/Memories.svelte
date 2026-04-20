@@ -9,7 +9,7 @@
   let selectedMemory: MemoryAtom | null = $state(null);
   let error: string | null = $state(null);
 
-  const grouped = $derived(() => {
+  const grouped = $derived.by(() => {
     const map = new Map<string, MemoryAtom[]>();
     for (const m of memories) {
       const key = m.project;
@@ -40,6 +40,8 @@
     }
   }
 
+  poll(load, POLL.NORMAL);
+
   $effect(() => {
     const p = $routeParams;
     if (p.project) selectedProject = p.project;
@@ -64,7 +66,7 @@
       </select>
 
       <div class="tree">
-        {#each [...grouped().entries()] as [project, atoms]}
+        {#each [...grouped.entries()] as [project, atoms]}
           <div class="tree-group">
             <span class="tree-project">{project}</span>
             {#each atoms as atom}

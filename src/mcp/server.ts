@@ -1,8 +1,14 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { writeFile, mkdir } from 'fs/promises';
+import { existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { createHash } from 'crypto';
 import { openDatabase, initializeSchema } from '../core/database.js';
-import { runFullIndex } from '../indexer/indexer.js';
+import { runFullIndex, reindexFile } from '../indexer/indexer.js';
+import { computeAtomId, computeHash } from '../indexer/parser.js';
 import {
   search,
   fetchContext,
@@ -180,32 +186,34 @@ server.tool(
     project: z.string().optional().describe('Project slug (required for project scope)'),
   },
   async ({ title, content, scope, atom_type, tags, project }) => {
-    const { createHash } = await import('crypto');
-    const { writeFileSync, mkdirSync, existsSync } = await import('fs');
-    const { join } = await import('path');
-    const { homedir } = await import('os');
-    const { computeAtomId, computeHash } = await import('../indexer/parser.js');
-
     // Determine where to store the file
     const claudeDir = join(homedir(), '.claude');
     let targetDir: string;
-    let filename: string;
 
     if (scope === 'global' || !project) {
-      // Store in a nexus-specific directory
       targetDir = join(claudeDir, 'nexus-atoms');
     } else {
       targetDir = join(claudeDir, 'projects', project, 'memory');
     }
 
     if (!existsSync(targetDir)) {
-      mkdirSync(targetDir, { recursive: true });
+      await mkdir(targetDir, { recursive: true });
     }
 
-    // Generate filename from title
+    // Generate filename from title, with collision avoidance
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-    filename = `${atom_type}_${slug}.md`;
-    const filePath = join(targetDir, filename);
+    let filename = `${atom_type}_${slug}.md`;
+    let filePath = join(targetDir, filename);
+
+    // If file exists with different content, append a counter
+    if (existsSync(filePath)) {
+      let counter = 2;
+      while (existsSync(filePath)) {
+        filename = `${atom_type}_${slug}_${counter}.md`;
+        filePath = join(targetDir, filename);
+        counter++;
+      }
+    }
 
     // Write markdown file with frontmatter
     const frontmatter = [
@@ -217,10 +225,9 @@ server.tool(
       '---',
     ].filter(Boolean).join('\n');
 
-    writeFileSync(filePath, `${frontmatter}\n\n${content}`, 'utf-8');
+    await writeFile(filePath, `${frontmatter}\n\n${content}`, 'utf-8');
 
     // Index the new file
-    const { reindexFile } = await import('../indexer/indexer.js');
     reindexFile(db, filePath, scope === 'global' ? 'nexus_native' : 'memory_file');
 
     return {
@@ -249,6 +256,24 @@ server.tool(
 **Diagnostics:** ${stats.totalDiagnostics}`;
 
     return { content: [{ type: 'text', text }] };
+  }
+);
+
+// ── nexus_reindex ───────────────────────────────────────────────────
+
+server.tool(
+  'nexus_reindex',
+  'Force a full re-index of all Claude knowledge files. Call after saving new memory files via the Write tool, or if search results seem stale.',
+  {},
+  async () => {
+    const stats = runFullIndex(db);
+
+    return {
+      content: [{
+        type: 'text',
+        text: `Re-index complete: ${stats.atomsCreated} created, ${stats.atomsUpdated} updated, ${stats.atomsUnchanged} unchanged, ${stats.linksCreated} links, ${stats.sessionsIndexed} sessions.`,
+      }],
+    };
   }
 );
 

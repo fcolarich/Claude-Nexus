@@ -80,7 +80,9 @@ export function initializeSchema(db: Database.Database): void {
       estimated_cost  REAL DEFAULT 0.0,
       subagent_count  INTEGER DEFAULT 0,
       summary         TEXT,
-      message_count   INTEGER DEFAULT 0
+      message_count   INTEGER DEFAULT 0,
+      title           TEXT,
+      custom_title    TEXT
     );
 
     -- Diagnostics for health checks
@@ -105,6 +107,8 @@ export function initializeSchema(db: Database.Database): void {
     );
 
     -- Triggers to keep FTS5 in sync with atoms table
+    -- Uses new.rowid/old.rowid which is the implicit integer rowid,
+    -- matching the content_rowid='rowid' declaration above.
     CREATE TRIGGER IF NOT EXISTS atoms_ai AFTER INSERT ON atoms BEGIN
       INSERT INTO atoms_fts(rowid, title, body, tags)
       VALUES (new.rowid, new.title, new.body, new.tags);
@@ -115,6 +119,8 @@ export function initializeSchema(db: Database.Database): void {
       VALUES ('delete', old.rowid, old.title, old.body, old.tags);
     END;
 
+    -- For UPDATE: the upsert (INSERT ... ON CONFLICT DO UPDATE) keeps the
+    -- same rowid, so old.rowid == new.rowid. Delete old FTS entry, insert new.
     CREATE TRIGGER IF NOT EXISTS atoms_au AFTER UPDATE ON atoms BEGIN
       INSERT INTO atoms_fts(atoms_fts, rowid, title, body, tags)
       VALUES ('delete', old.rowid, old.title, old.body, old.tags);
@@ -122,6 +128,18 @@ export function initializeSchema(db: Database.Database): void {
       VALUES (new.rowid, new.title, new.body, new.tags);
     END;
 
+    -- Migrate: add title columns if missing (for existing DBs)
+    -- SQLite ignores ALTER TABLE if column already exists via this pattern
+  `);
+
+  // Safe migration for existing databases
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN title TEXT`); } catch {}
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN custom_title TEXT`); } catch {}
+
+  // Rebuild FTS5 index to fix any stale entries from prior versions
+  try { db.exec(`INSERT INTO atoms_fts(atoms_fts) VALUES('rebuild')`); } catch {}
+
+  db.exec(`
     -- Indexes for common queries
     CREATE INDEX IF NOT EXISTS idx_atoms_project ON atoms(project);
     CREATE INDEX IF NOT EXISTS idx_atoms_type ON atoms(atom_type);

@@ -2,6 +2,32 @@ import Database from 'better-sqlite3';
 import type { Atom, AtomLink, SearchResult, Diagnostic, Session } from './types.js';
 
 /**
+ * Sanitize a query for FTS5 MATCH. Wraps each token in double quotes
+ * to prevent special characters from crashing the query parser.
+ * Passes through explicit FTS5 operators (AND, OR, NOT) and quoted phrases.
+ */
+function sanitizeFts5Query(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '""';
+
+  // If the user wrote a quoted phrase, pass it through
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) return trimmed;
+
+  // Split on whitespace, preserve FTS5 operators, quote everything else
+  const FTS5_OPS = new Set(['AND', 'OR', 'NOT']);
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  return tokens.map(t => {
+    if (FTS5_OPS.has(t)) return t;
+    // Allow prefix search (word*)
+    if (t.endsWith('*')) {
+      const base = t.slice(0, -1).replace(/"/g, '');
+      return base ? `"${base}" *` : '""';
+    }
+    return `"${t.replace(/"/g, '')}"`;
+  }).join(' ');
+}
+
+/**
  * Full-text search across all atoms using FTS5 BM25 ranking.
  */
 export function search(
@@ -9,6 +35,7 @@ export function search(
   query: string,
   options?: { project?: string; type?: string; scope?: string; limit?: number }
 ): SearchResult[] {
+  const sanitized = sanitizeFts5Query(query);
   const limit = options?.limit ?? 20;
   let sql = `
     SELECT
@@ -19,7 +46,7 @@ export function search(
     JOIN atoms a ON a.rowid = atoms_fts.rowid
     WHERE atoms_fts MATCH ?
   `;
-  const params: unknown[] = [query];
+  const params: unknown[] = [sanitized];
 
   if (options?.project) {
     sql += ` AND a.project = ?`;
@@ -57,7 +84,7 @@ export function fetchContext(
   db: Database.Database,
   topics: string[],
   options?: { project?: string; maxTokensEstimate?: number }
-): string {
+): string | null {
   const allResults: SearchResult[] = [];
   const seenIds = new Set<string>();
 
@@ -74,6 +101,8 @@ export function fetchContext(
   // Sort by relevance (best rank first, rank is negative — closer to 0 is better)
   allResults.sort((a, b) => a.rank - b.rank);
 
+  if (allResults.length === 0) return null;
+
   // Merge into markdown
   const parts: string[] = [];
   for (const r of allResults) {
@@ -88,10 +117,12 @@ export function fetchContext(
 /**
  * Get all atoms with global or shared scope.
  */
-export function getSharedKnowledge(db: Database.Database): string {
+export function getSharedKnowledge(db: Database.Database): string | null {
   const atoms = db.prepare(`
     SELECT * FROM atoms WHERE scope IN ('global', 'shared') ORDER BY scope, atom_type, title
   `).all() as Atom[];
+
+  if (atoms.length === 0) return null;
 
   const parts: string[] = [];
   for (const a of atoms) {
@@ -105,10 +136,12 @@ export function getSharedKnowledge(db: Database.Database): string {
 /**
  * Get all atoms for a specific project.
  */
-export function getProjectContext(db: Database.Database, project: string): string {
+export function getProjectContext(db: Database.Database, project: string): string | null {
   const atoms = db.prepare(`
     SELECT * FROM atoms WHERE project = ? ORDER BY atom_type, title
   `).all(project) as Atom[];
+
+  if (atoms.length === 0) return null;
 
   const parts: string[] = [];
   for (const a of atoms) {

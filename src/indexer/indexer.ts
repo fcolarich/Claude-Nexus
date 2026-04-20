@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { parseFile, computeAtomId } from './parser.js';
 import { discoverSources, discoverSessions } from './scanner.js';
+import { importSessionTitles, backfillTitlesFromSummary, generateTitle } from './session-titles.js';
 import { readFileSync, statSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import type { Atom, ParsedFile, SourceType } from '../core/types.js';
@@ -62,14 +63,15 @@ function prepareStatements(db: Database.Database): PreparedStatements {
       DELETE FROM diagnostics WHERE source_path = ?
     `),
     upsertSession: db.prepare(`
-      INSERT INTO sessions (session_id, project, git_branch, slug, jsonl_path, started_at, last_active, status, message_count, subagent_count, summary)
-      VALUES (@session_id, @project, @git_branch, @slug, @jsonl_path, @started_at, @last_active, @status, @message_count, @subagent_count, @summary)
+      INSERT INTO sessions (session_id, project, git_branch, slug, jsonl_path, started_at, last_active, status, message_count, subagent_count, summary, title)
+      VALUES (@session_id, @project, @git_branch, @slug, @jsonl_path, @started_at, @last_active, @status, @message_count, @subagent_count, @summary, @title)
       ON CONFLICT(session_id) DO UPDATE SET
         last_active = @last_active,
         status = @status,
         message_count = @message_count,
         subagent_count = @subagent_count,
-        summary = COALESCE(@summary, sessions.summary)
+        summary = COALESCE(@summary, sessions.summary),
+        title = COALESCE(sessions.custom_title, @title, sessions.title)
     `),
   };
 }
@@ -237,6 +239,8 @@ export function indexSession(
       subagentCount = readdirSync(subagentDir).filter(f => f.endsWith('.meta.json')).length;
     }
 
+    const title = summary ? generateTitle(summary) : null;
+
     stmts.upsertSession.run({
       session_id: sessionId,
       project: projectSlug,
@@ -249,6 +253,7 @@ export function indexSession(
       message_count: messageCount,
       subagent_count: subagentCount,
       summary,
+      title,
     });
   } catch {
     // Skip malformed JSONL files
@@ -283,21 +288,23 @@ export function runFullIndex(db: Database.Database): IndexStats {
   });
   indexAll();
 
-  // Detect orphan atoms (no links at all)
-  const orphans = db.prepare(`
-    SELECT a.id, a.source_path FROM atoms a
-    WHERE a.id NOT IN (SELECT source_id FROM atom_links)
-    AND a.id NOT IN (SELECT target_id FROM atom_links)
-    AND a.atom_type NOT IN ('agent', 'skill', 'plan')
-  `).all() as { id: string; source_path: string }[];
+  // Detect orphans and infer links in a single transaction
+  const postProcess = db.transaction(() => {
+    const orphans = db.prepare(`
+      SELECT a.id, a.source_path FROM atoms a
+      WHERE a.id NOT IN (SELECT source_id FROM atom_links)
+      AND a.id NOT IN (SELECT target_id FROM atom_links)
+      AND a.atom_type NOT IN ('agent', 'skill', 'plan')
+    `).all() as { id: string; source_path: string }[];
 
-  for (const orphan of orphans) {
-    stmts.insertDiagnostic.run('orphan', orphan.id, orphan.source_path,
-      `Orphan atom: no links to or from this atom`, null);
-  }
+    for (const orphan of orphans) {
+      stmts.insertDiagnostic.run('orphan', orphan.id, orphan.source_path,
+        `Orphan atom: no links to or from this atom`, null);
+    }
 
-  // Infer links between atoms based on shared tags and co-location
-  inferLinks(db, stmts);
+    inferLinks(db, stmts);
+  });
+  postProcess();
 
   // Index sessions
   const sessions = discoverSessions();
@@ -309,6 +316,10 @@ export function runFullIndex(db: Database.Database): IndexStats {
   });
   indexSessions();
 
+  // Import richer session data from Claude's own metadata DB
+  importSessionTitles(db);
+  backfillTitlesFromSummary(db);
+
   return stats;
 }
 
@@ -319,15 +330,16 @@ export function runFullIndex(db: Database.Database): IndexStats {
  * 3. Title/keyword overlap (atoms mentioning each other's titles → "references")
  */
 function inferLinks(db: Database.Database, stmts: PreparedStatements): void {
-  // Get all atoms with their tags
-  const atoms = db.prepare(`SELECT id, title, tags, project, source_path, atom_type FROM atoms`).all() as {
-    id: string; title: string; tags: string; project: string | null; source_path: string; atom_type: string;
+  // Get all atoms with their tags and body (avoids per-pair queries)
+  const atoms = db.prepare(`SELECT id, title, body, tags, project, source_path, atom_type FROM atoms`).all() as {
+    id: string; title: string; body: string; tags: string; project: string | null; source_path: string; atom_type: string;
   }[];
 
   const parsed = atoms.map(a => ({
     ...a,
+    bodyLower: a.body.toLowerCase(),
     tagSet: new Set<string>(JSON.parse(a.tags) as string[]),
-    titleWords: new Set(a.title.toLowerCase().split(/\W+/).filter(w => w.length > 3)),
+    titleLower: a.title.toLowerCase(),
   }));
 
   // Clear previously inferred links (confidence < 1.0) to re-derive them
@@ -365,22 +377,15 @@ function inferLinks(db: Database.Database, stmts: PreparedStatements): void {
         if (shared >= 2) {
           const confidence = Math.min(0.9, 0.3 + shared * 0.15);
           insertLink.run(a.id, b.id, 'related', confidence);
-          continue; // Don't double-link
+          continue;
         }
       }
 
-      // 2. Title cross-reference: atom A's body mentions atom B's title (or vice versa)
-      if (a.title.length > 5 && b.atom_type !== 'plan') {
-        // Only check for meaningful title mentions (not super short/generic titles)
-        const titleLower = a.title.toLowerCase();
-        if (b.id !== a.id) {
-          // Check if B's body contains A's title
-          // Use a simple substring check for performance
-          const bBodyLower = (db.prepare(`SELECT body FROM atoms WHERE id = ?`).get(b.id) as { body: string })?.body?.toLowerCase();
-          if (bBodyLower && titleLower.length > 8 && bBodyLower.includes(titleLower)) {
-            insertLink.run(b.id, a.id, 'references', 0.6);
-            continue;
-          }
+      // 2. Title cross-reference: atom A's title appears in atom B's body
+      if (a.titleLower.length > 8 && b.atom_type !== 'plan') {
+        if (b.bodyLower.includes(a.titleLower)) {
+          insertLink.run(b.id, a.id, 'references', 0.6);
+          continue;
         }
       }
 

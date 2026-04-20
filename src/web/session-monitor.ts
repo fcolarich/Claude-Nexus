@@ -1,4 +1,4 @@
-import { readFileSync, statSync, existsSync } from 'fs';
+import { readFileSync, statSync, existsSync, openSync, readSync, closeSync } from 'fs';
 import { execSync } from 'child_process';
 import Database from 'better-sqlite3';
 import type { SessionStatus } from '../core/types.js';
@@ -65,10 +65,10 @@ function parseSessionTail(jsonlPath: string): {
     // Read last ~8KB of file for tail analysis
     const size = stat.size;
     const readSize = Math.min(size, 8192);
-    const fd = require('fs').openSync(jsonlPath, 'r');
+    const fd = openSync(jsonlPath, 'r');
     const buf = Buffer.alloc(readSize);
-    require('fs').readSync(fd, buf, 0, readSize, Math.max(0, size - readSize));
-    require('fs').closeSync(fd);
+    readSync(fd, buf, 0, readSize, Math.max(0, size - readSize));
+    closeSync(fd);
 
     const tail = buf.toString('utf-8');
     const lines = tail.split('\n').filter(l => l.trim()).reverse();

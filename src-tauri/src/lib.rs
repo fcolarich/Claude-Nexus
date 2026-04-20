@@ -18,6 +18,30 @@ fn wait_for_server(port: u16, timeout: Duration) -> bool {
   false
 }
 
+fn resolve_project_root() -> Option<String> {
+  // 1. Env var override
+  if let Ok(root) = std::env::var("NEXUS_ROOT") {
+    return Some(root);
+  }
+
+  // 2. Walk up from executable to find package.json
+  if let Ok(exe) = std::env::current_exe() {
+    let mut dir = exe.parent().map(|p| p.to_path_buf());
+    for _ in 0..6 {
+      if let Some(ref d) = dir {
+        if d.join("package.json").exists() {
+          return Some(d.to_string_lossy().into_owned());
+        }
+        dir = d.parent().map(|p| p.to_path_buf());
+      } else {
+        break;
+      }
+    }
+  }
+
+  None
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -30,19 +54,18 @@ pub fn run() {
         )?;
       }
 
-      // Start the API server as a child process
-      let npx = if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" };
-      let project_root = std::env::var("NEXUS_ROOT").unwrap_or_else(|_| {
-        let exe = std::env::current_exe().unwrap_or_default();
-        exe.parent()
-          .and_then(|p| p.parent())
-          .and_then(|p| p.parent())
-          .and_then(|p| p.parent())
-          .map(|p| p.to_string_lossy().into_owned())
-          .unwrap_or_else(|| "C:\\Fran\\claude-nexus".to_string())
-      });
+      let project_root = match resolve_project_root() {
+        Some(root) => root,
+        None => {
+          eprintln!("[claude-nexus] ERROR: Cannot find project root. Set NEXUS_ROOT env var.");
+          return Ok(());
+        }
+      };
 
       eprintln!("[claude-nexus] Starting API server from: {}", project_root);
+
+      // Start the API server as a child process
+      let npx = if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" };
 
       match Command::new(npx)
         .args(["tsx", "src/web/server.ts"])
@@ -56,23 +79,27 @@ pub fn run() {
         }
         Err(e) => {
           eprintln!("[claude-nexus] Failed to start API server: {}", e);
+          return Ok(());
         }
       }
 
-      // Wait for server to be ready before showing the window
-      eprintln!("[claude-nexus] Waiting for API server on port 3210...");
-      if wait_for_server(3210, Duration::from_secs(15)) {
-        eprintln!("[claude-nexus] API server ready!");
-      } else {
-        eprintln!("[claude-nexus] Warning: API server did not start within 15s");
-      }
+      // Wait for server on a background thread to avoid blocking the main thread
+      let handle = app.handle().clone();
+      thread::spawn(move || {
+        eprintln!("[claude-nexus] Waiting for API server on port 3210...");
+        if wait_for_server(3210, Duration::from_secs(15)) {
+          eprintln!("[claude-nexus] API server ready!");
+        } else {
+          eprintln!("[claude-nexus] Warning: API server did not start within 15s");
+        }
 
-      // Now show the window
-      let windows = app.webview_windows();
-      if let Some((_label, window)) = windows.into_iter().next() {
-        window.show().ok();
-        window.set_focus().ok();
-      }
+        // Show the window from the background thread
+        let windows = handle.webview_windows();
+        if let Some((_label, window)) = windows.into_iter().next() {
+          window.show().ok();
+          window.set_focus().ok();
+        }
+      });
 
       Ok(())
     })

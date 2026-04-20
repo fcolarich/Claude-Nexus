@@ -45,6 +45,8 @@ export interface Session {
   subagent_count: number;
   summary: string | null;
   message_count: number;
+  title: string | null;
+  custom_title: string | null;
 }
 
 export interface Diagnostic {

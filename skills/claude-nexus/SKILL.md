@@ -100,6 +100,30 @@ Atom counts by type/scope/project, link counts, session counts.
 | Learned something worth persisting | `nexus_remember(...)` |
 | Checking what other sessions are doing | `nexus_sessions()` |
 | Auditing knowledge quality | `nexus_health()` |
+| Just saved memory files via Write tool | `nexus_reindex()` — forces immediate re-index |
+
+### `nexus_reindex` — Force re-index
+```
+nexus_reindex()
+```
+Triggers a full re-scan of all `.md` files under `~/.claude/`. Call this after saving new memory files via the Write tool so they appear in search immediately.
+
+## Sync Behavior
+
+- **MCP server**: runs a full index on startup (each new Claude session)
+- **Web server**: re-indexes every 60 seconds automatically
+- **`nexus_remember`**: indexes the new atom immediately after writing
+- **Normal Write tool to memory files**: NOT auto-detected by MCP — call `nexus_reindex()` after saving
+
+## Saving Memories: `nexus_remember` vs Write Tool
+
+| Action | Use |
+|--------|-----|
+| **Creating a new memory** | `nexus_remember(...)` — writes file + indexes in one step |
+| **Editing an existing memory file** | Write tool, then `nexus_reindex()` |
+| **Updating MEMORY.md index** | Write tool (nexus_remember can't edit the index file) |
+
+**Rule: Always prefer `nexus_remember` for new memories.** It handles file placement, frontmatter, and indexing automatically. Only use the Write tool when you need to edit or update an existing file.
 
 ## Key Principle
 

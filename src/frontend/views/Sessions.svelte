@@ -5,6 +5,8 @@
   let sessions: SessionInfo[] = $state([]);
   let filter: "all" | "active" | "waiting" | "idle" = $state("all");
   let error: string | null = $state(null);
+  let editingId: string | null = $state(null);
+  let editValue: string = $state("");
 
   const filtered = $derived(
     filter === "all" ? sessions : sessions.filter((s) => s.status === filter)
@@ -24,6 +26,21 @@
     } catch (e: any) {
       error = e.message;
     }
+  }
+
+  function startRename(session: SessionInfo) {
+    editingId = session.id;
+    editValue = session.title;
+  }
+
+  async function saveRename(id: string) {
+    if (editValue.trim()) {
+      try {
+        await api.renameSession(id, editValue.trim());
+        await load();
+      } catch {}
+    }
+    editingId = null;
   }
 
   $effect(() => {
@@ -55,8 +72,22 @@
         <div class="session-row">
           <span class="status-dot status-{session.status}"></span>
           <div class="session-info">
-            <span class="session-project">{session.project}</span>
-            <span class="session-id">{session.id.slice(0, 8)}</span>
+            {#if editingId === session.id}
+              <input
+                class="rename-input"
+                bind:value={editValue}
+                onkeydown={(e) => { if (e.key === 'Enter') saveRename(session.id); if (e.key === 'Escape') editingId = null; }}
+                onblur={() => saveRename(session.id)}
+              />
+            {:else}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <span class="session-title" ondblclick={() => startRename(session)} title="Double-click to rename">{session.title}</span>
+            {/if}
+            <span class="session-meta-line">
+              <span class="session-project">{session.project}</span>
+              <span class="sep">·</span>
+              <span class="session-id">{session.id.slice(0, 8)}</span>
+            </span>
           </div>
           <div class="session-detail">
             <span>{session.messageCount} msgs</span>
@@ -134,9 +165,24 @@
 
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
-  .session-info { display: flex; flex-direction: column; min-width: 180px; }
-  .session-project { font-weight: 600; font-size: 14px; }
+  .session-info { display: flex; flex-direction: column; min-width: 220px; flex: 1; }
+  .session-title { font-weight: 600; font-size: 14px; cursor: default; }
+  .session-title:hover { color: var(--accent); }
+  .session-meta-line { display: flex; gap: 4px; align-items: center; }
+  .session-project { font-size: 12px; color: var(--text-secondary); }
   .session-id { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+
+  .rename-input {
+    font-weight: 600; font-size: 14px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--accent-dim);
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    outline: none;
+    width: 100%;
+  }
 
   .session-detail { font-size: 12px; color: var(--text-muted); display: flex; gap: 4px; margin-left: auto; }
   .sep { color: var(--text-muted); }

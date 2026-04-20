@@ -8,12 +8,14 @@ async function get<T>(path: string): Promise<T> {
 
 export interface SessionInfo {
   id: string;
+  title: string;
   project: string;
   lastActivity: string;
   messageCount: number;
   status: "active" | "idle" | "waiting";
   lastMessage?: string;
   pendingPrompt?: string;
+  summary?: string;
 }
 
 export interface AtomLink {
@@ -23,7 +25,7 @@ export interface AtomLink {
 }
 
 export interface MemoryAtom {
-  id: number;
+  id: string;
   path: string;
   project: string;
   title: string;
@@ -34,7 +36,7 @@ export interface MemoryAtom {
 }
 
 export interface SearchResult {
-  id: number;
+  id: string;
   path: string;
   project: string;
   title: string;
@@ -57,12 +59,23 @@ export interface DashboardData {
   totalSessions: number;
 }
 
+async function patch<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
 export const api = {
   dashboard: () => get<DashboardData>("/api/dashboard"),
   sessions: () => get<SessionInfo[]>("/api/sessions"),
   session: (id: string) => get<SessionInfo & { messages: any[] }>(`/api/sessions/${id}`),
+  renameSession: (id: string, title: string) => patch<SessionInfo>(`/api/sessions/${id}`, { title }),
   memories: (project?: string) => get<MemoryAtom[]>(`/api/memories${project ? `?project=${encodeURIComponent(project)}` : ""}`),
-  memory: (id: number) => get<MemoryAtom>(`/api/memories/${id}`),
+  memory: (id: string) => get<MemoryAtom>(`/api/memories/${encodeURIComponent(id)}`),
   search: (q: string, type?: string) => get<SearchResult[]>(`/api/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ""}`),
   projects: () => get<string[]>("/api/projects"),
   plans: () => get<MemoryAtom[]>("/api/plans"),

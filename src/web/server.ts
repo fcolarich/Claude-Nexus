@@ -11,8 +11,9 @@ import {
   getStats,
   getDiagnostics,
 } from '../core/search.js';
+import { runFullIndex } from '../indexer/indexer.js';
 import { refreshSessionStatuses } from './session-monitor.js';
-import type { Atom, AtomLink } from '../core/types.js';
+import type { Atom, AtomLink, Session } from '../core/types.js';
 
 const PORT = parseInt(process.env.NEXUS_PORT ?? '3210', 10);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,14 +22,29 @@ const FRONTEND_DIR = path.resolve(__dirname, '../../dist-frontend');
 const db = openDatabase();
 initializeSchema(db);
 
-// Refresh session statuses on startup and every 10 seconds
+// Full index on startup
+runFullIndex(db);
+
+// Refresh session statuses every 10 seconds
 refreshSessionStatuses(db);
 setInterval(() => {
   try { refreshSessionStatuses(db); } catch {}
 }, 10_000);
 
+// Re-index all knowledge every 60 seconds to pick up new/changed memory files
+setInterval(() => {
+  try { runFullIndex(db); } catch {}
+}, 60_000);
+
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:3210',
+    'http://127.0.0.1:3210',
+    'tauri://localhost',
+    'https://tauri.localhost',
+  ],
+}));
 app.use(express.json());
 
 // Serve the built frontend
@@ -82,6 +98,15 @@ app.get('/api/sessions', (req, res) => {
 app.get('/api/sessions/:id', (req, res) => {
   const row = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(req.params.id);
   if (!row) return res.status(404).json({ error: 'Session not found' });
+  res.json(toSessionInfo(row as any));
+});
+
+app.patch('/api/sessions/:id', (req, res) => {
+  const { title } = req.body as { title?: string };
+  if (!title) return res.status(400).json({ error: 'Missing title' });
+  const result = db.prepare('UPDATE sessions SET custom_title = ? WHERE session_id = ?').run(title, req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Session not found' });
+  const row = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(req.params.id);
   res.json(toSessionInfo(row as any));
 });
 
@@ -174,14 +199,16 @@ app.listen(PORT, () => {
 });
 
 // --- Helpers ---
-function toSessionInfo(s: any) {
+function toSessionInfo(s: Session) {
   return {
     id: s.session_id,
+    title: s.custom_title || s.title || s.project,
     project: s.project,
     lastActivity: s.last_active ?? s.started_at ?? '',
     messageCount: s.message_count ?? 0,
     status: mapStatus(s.status),
     pendingPrompt: s.status === 'waiting_input' ? s.summary : undefined,
+    summary: s.summary ?? undefined,
   };
 }
 
