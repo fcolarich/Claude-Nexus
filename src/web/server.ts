@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'fs';
+import os from 'os';
+import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import {
   search,
@@ -11,9 +14,9 @@ import {
   getStats,
   getDiagnostics,
 } from '../core/search.js';
-import { runFullIndex } from '../indexer/indexer.js';
+import { runFullIndex, reindexFile } from '../indexer/indexer.js';
 import { refreshSessionStatuses } from './session-monitor.js';
-import type { Atom, AtomLink, Session } from '../core/types.js';
+import type { Atom, AtomLink, Session, TaskAtom, TaskStatus } from '../core/types.js';
 
 const PORT = parseInt(process.env.NEXUS_PORT ?? '3210', 10);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -147,6 +150,149 @@ app.get('/api/skills', (_req, res) => {
   res.json(atoms.map(toAtomResponse));
 });
 
+// --- Tasks ---
+
+function resolveEffectiveStatus(task: Atom, allTasksById: Map<string, Atom>): TaskStatus {
+  if (task.status === 'done' || task.status === 'in_progress') return task.status as TaskStatus;
+  const blockedBy: string[] = JSON.parse(task.blocked_by || '[]');
+  for (const depId of blockedBy) {
+    const dep = allTasksById.get(depId);
+    if (!dep || dep.status !== 'done') return 'blocked';
+  }
+  return (task.status as TaskStatus) || 'ready';
+}
+
+function toTaskResponse(task: Atom, effectiveStatus: TaskStatus): TaskAtom {
+  return {
+    id: task.id,
+    title: task.title,
+    status: (task.status as TaskStatus) || 'ready',
+    effective_status: effectiveStatus,
+    priority: task.priority ?? 2,
+    project: task.project ?? '',
+    tags: JSON.parse(task.tags as unknown as string || '[]'),
+    blocks: JSON.parse(task.blocks || '[]'),
+    blocked_by: JSON.parse(task.blocked_by || '[]'),
+    discovered_from: task.discovered_from || '',
+    created_at: task.created_at,
+    summary: task.body.slice(0, 120),
+  };
+}
+
+app.get('/api/tasks', (req, res) => {
+  const { project, status, priority, include_done } = req.query as Record<string, string | undefined>;
+
+  let sql = `SELECT * FROM atoms WHERE atom_type = 'task'`;
+  const params: unknown[] = [];
+  if (project) { sql += ` AND project = ?`; params.push(project); }
+  if (priority) { sql += ` AND priority = ?`; params.push(parseInt(priority, 10)); }
+
+  const rows = db.prepare(sql).all(...params) as Atom[];
+  const allTasksById = new Map<string, Atom>(rows.map(r => [r.id, r]));
+
+  const tasks = rows
+    .map(r => ({ task: r, eff: resolveEffectiveStatus(r, allTasksById) }))
+    .filter(({ task, eff }) => {
+      if (include_done !== 'true' && (task.status === 'done' || eff === 'done')) return false;
+      if (status && eff !== status) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const pa = a.task.priority ?? 2;
+      const pb = b.task.priority ?? 2;
+      if (pa !== pb) return pa - pb;
+      return a.task.created_at.localeCompare(b.task.created_at);
+    })
+    .map(({ task, eff }) => toTaskResponse(task, eff));
+
+  res.json(tasks);
+});
+
+app.patch('/api/tasks/:id', (req, res) => {
+  const { status } = req.body as { status?: string };
+  if (!status) return res.status(400).json({ error: 'Missing status' });
+
+  const task = db.prepare(`SELECT * FROM atoms WHERE id = ? AND atom_type = 'task'`).get(req.params.id) as Atom | undefined;
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  try {
+    const now = new Date().toISOString();
+    const fileContent = readFileSync(task.source_path, 'utf-8');
+    const parsed = matter(fileContent);
+    parsed.data.status = status;
+    parsed.data.updated_at = now;
+    const newContent = matter.stringify(parsed.content, parsed.data);
+    writeFileSync(task.source_path, newContent, 'utf-8');
+
+    db.prepare(`UPDATE atoms SET status = ?, updated_at = ? WHERE id = ?`)
+      .run(status, now, task.id);
+
+    const updated = db.prepare(`SELECT * FROM atoms WHERE id = ?`).get(task.id) as Atom;
+    const allTasks = db.prepare(`SELECT * FROM atoms WHERE atom_type = 'task'`).all() as Atom[];
+    const allTasksById = new Map<string, Atom>(allTasks.map(r => [r.id, r]));
+    res.json(toTaskResponse(updated, resolveEffectiveStatus(updated, allTasksById)));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/tasks', (req, res) => {
+  const { title, body, project, priority, tags, blocked_by, blocks } = req.body as {
+    title: string; body: string; project?: string; priority?: number;
+    tags?: string[]; blocked_by?: string[]; blocks?: string[];
+  };
+  if (!title) return res.status(400).json({ error: 'Missing title' });
+
+  const now = new Date().toISOString();
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  const claudeDir = os.homedir() + '/.claude';
+  const targetDir = project
+    ? path.join(claudeDir, 'projects', project, 'memory')
+    : path.join(claudeDir, 'nexus-atoms');
+
+  if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
+
+  let filename = `task_${slug}.md`;
+  let filePath = path.join(targetDir, filename);
+  let counter = 2;
+  while (existsSync(filePath)) {
+    filename = `task_${slug}_${counter}.md`;
+    filePath = path.join(targetDir, filename);
+    counter++;
+  }
+
+  const frontmatterLines = [
+    '---',
+    `title: "${title}"`,
+    `atom_type: task`,
+    `status: ready`,
+    `priority: ${priority ?? 2}`,
+    project ? `project: ${project}` : null,
+    `tags: [${(tags ?? []).map(t => `"${t}"`).join(', ')}]`,
+    `blocks: [${(blocks ?? []).map(b => `"${b}"`).join(', ')}]`,
+    `blocked_by: [${(blocked_by ?? []).map(b => `"${b}"`).join(', ')}]`,
+    `discovered_from: ""`,
+    `created_at: ${now}`,
+    `updated_at: ${now}`,
+    '---',
+  ].filter(Boolean).join('\n');
+
+  try {
+    writeFileSync(filePath, `${frontmatterLines}\n\n${body ?? ''}`, 'utf-8');
+
+    reindexFile(db, filePath, project ? 'memory_file' : 'nexus_native');
+
+    const atom = db.prepare(`SELECT * FROM atoms WHERE source_path = ? LIMIT 1`).get(filePath) as Atom | undefined;
+    if (!atom) return res.status(500).json({ error: 'Failed to index task' });
+
+    const allTasks = db.prepare(`SELECT * FROM atoms WHERE atom_type = 'task'`).all() as Atom[];
+    const allTasksById = new Map<string, Atom>(allTasks.map(r => [r.id, r]));
+    res.status(201).json(toTaskResponse(atom, resolveEffectiveStatus(atom, allTasksById)));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // --- Search ---
 app.get('/api/search', (req, res) => {
   const { q, type, project, limit } = req.query as Record<string, string | undefined>;
@@ -188,6 +334,192 @@ app.get('/api/stats', (_req, res) => {
   res.json(getStats(db));
 });
 
+// --- Atom raw file content ---
+
+app.get('/api/atoms/:id/raw', (req, res) => {
+  const atom = db.prepare('SELECT * FROM atoms WHERE id = ?').get(req.params.id) as Atom | undefined;
+  if (!atom) return res.status(404).json({ error: 'Atom not found' });
+
+  try {
+    const content = readFileSync(atom.source_path, 'utf8');
+    const match = content.match(/^---[\r\n][\s\S]*?[\r\n]---[\r\n]?/);
+    const rawContent = match ? content.slice(match[0].length).trimStart() : content;
+    res.json({ rawContent });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Atom edit / delete / create ---
+
+app.put('/api/atoms/:id', (req, res) => {
+  const { body } = req.body as { body?: string };
+  if (body === undefined) return res.status(400).json({ error: 'Missing body' });
+
+  const atom = db.prepare('SELECT * FROM atoms WHERE id = ?').get(req.params.id) as Atom | undefined;
+  if (!atom) return res.status(404).json({ error: 'Atom not found' });
+
+  try {
+    const existing = readFileSync(atom.source_path, 'utf8');
+    const match = existing.match(/^---[\r\n][\s\S]*?[\r\n]---[\r\n]/);
+    const prefix = match ? match[0] : '';
+    writeFileSync(atom.source_path, prefix + body, 'utf8');
+    db.prepare('UPDATE atoms SET body = ?, updated_at = ? WHERE id = ?')
+      .run(body, new Date().toISOString(), atom.id);
+    const updated = db.prepare('SELECT * FROM atoms WHERE id = ?').get(atom.id) as Atom;
+    res.json(toAtomResponse(updated));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/atoms/:id', (req, res) => {
+  const atom = db.prepare('SELECT * FROM atoms WHERE id = ?').get(req.params.id) as Atom | undefined;
+  if (!atom) return res.status(404).json({ error: 'Atom not found' });
+
+  try {
+    unlinkSync(atom.source_path);
+    db.prepare('DELETE FROM atoms WHERE source_path = ?').run(atom.source_path);
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/atoms/create-memory', (req, res) => {
+  const { name, type, description, body, sourceSessionId, sourceSessionSlug } = req.body as {
+    name: string; type: string; description: string; body: string;
+    sourceSessionId?: string; sourceSessionSlug?: string;
+  };
+  if (!name || !body) return res.status(400).json({ error: 'Missing name or body' });
+
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const memoryDir = path.join(os.homedir(), '.claude', 'memory');
+  if (!existsSync(memoryDir)) mkdirSync(memoryDir, { recursive: true });
+
+  const filePath = path.join(memoryDir, `${slug}.md`);
+  const lines = [
+    '---',
+    `name: ${name}`,
+    ...(description ? [`description: ${description}`] : []),
+    `type: ${type || 'memory'}`,
+    ...(sourceSessionId ? [`source_session_id: ${sourceSessionId}`] : []),
+    ...(sourceSessionSlug ? [`source_session_slug: ${sourceSessionSlug}`] : []),
+    '---',
+    '',
+  ];
+  try {
+    writeFileSync(filePath, lines.join('\n') + body, 'utf8');
+    res.json({ success: true, path: filePath });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Session messages (rich blocks) ---
+
+type MsgBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mediaType: string; data: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'tool_use'; toolId: string; toolName: string; toolInput: Record<string, unknown> }
+  | { type: 'tool_result'; toolUseId: string; resultContent: string; isError?: boolean };
+
+function parseBlock(b: any): MsgBlock | null {
+  if (!b?.type) return null;
+  switch (b.type) {
+    case 'text':
+      return b.text?.trim() ? { type: 'text', text: b.text } : null;
+    case 'thinking':
+      return b.thinking?.trim() ? { type: 'thinking', text: b.thinking } : null;
+    case 'image':
+      if (b.source?.type === 'base64')
+        return { type: 'image', mediaType: b.source.media_type ?? 'image/png', data: b.source.data };
+      return null;
+    case 'tool_use':
+      return { type: 'tool_use', toolId: b.id ?? '', toolName: b.name ?? '', toolInput: b.input ?? {} };
+    case 'tool_result': {
+      let content = '';
+      if (typeof b.content === 'string') content = b.content;
+      else if (Array.isArray(b.content))
+        content = b.content.filter((x: any) => x.type === 'text').map((x: any) => x.text).join('\n');
+      return { type: 'tool_result', toolUseId: b.tool_use_id ?? '', resultContent: content, isError: b.is_error };
+    }
+    default: return null;
+  }
+}
+
+app.get('/api/sessions/:id/messages', (req, res) => {
+  const session = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(req.params.id) as any;
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  try {
+    const fileContent = readFileSync(session.jsonl_path, 'utf8');
+    const messages: { uuid: string; role: string; blocks: MsgBlock[]; timestamp: string }[] = [];
+
+    for (const line of fileContent.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type !== 'user' && entry.type !== 'assistant') continue;
+
+        const raw = entry.message?.content;
+        let blocks: MsgBlock[] = [];
+
+        if (typeof raw === 'string') {
+          if (raw.trim()) blocks = [{ type: 'text', text: raw }];
+        } else if (Array.isArray(raw)) {
+          blocks = raw.map(parseBlock).filter((b): b is MsgBlock => b !== null);
+        }
+
+        if (blocks.length === 0) continue;
+
+        messages.push({
+          uuid: entry.uuid ?? '',
+          role: entry.type === 'user' ? 'user' : 'assistant',
+          blocks,
+          timestamp: entry.timestamp ?? '',
+        });
+      } catch {}
+    }
+
+    res.json({ messages });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// --- Session references + delete ---
+
+app.get('/api/sessions/:id/references', (req, res) => {
+  const rows = db.prepare(
+    `SELECT id, title, source_path, frontmatter FROM atoms WHERE frontmatter IS NOT NULL AND frontmatter LIKE ?`
+  ).all(`%${req.params.id}%`) as any[];
+
+  const references = rows
+    .filter(r => {
+      try { return JSON.parse(r.frontmatter).source_session_id === req.params.id; }
+      catch { return false; }
+    })
+    .map(r => ({ id: r.id, title: r.title, path: r.source_path }));
+
+  res.json({ references });
+});
+
+app.delete('/api/sessions/:id', (req, res) => {
+  const session = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(req.params.id) as any;
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  try {
+    unlinkSync(session.jsonl_path);
+  } catch (e: any) {
+    if (e.code !== 'ENOENT') return res.status(500).json({ error: e.message });
+  }
+
+  db.prepare('DELETE FROM sessions WHERE session_id = ?').run(req.params.id);
+  res.json({ success: true });
+});
+
 // SPA fallback — serve index.html for non-API routes
 app.get(/.*/, (_req, res) => {
   res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
@@ -204,6 +536,7 @@ function toSessionInfo(s: Session) {
     id: s.session_id,
     title: s.custom_title || s.title || s.project,
     project: s.project,
+    slug: s.slug ?? undefined,
     lastActivity: s.last_active ?? s.started_at ?? '',
     messageCount: s.message_count ?? 0,
     status: mapStatus(s.status),

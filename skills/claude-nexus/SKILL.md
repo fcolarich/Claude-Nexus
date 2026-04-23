@@ -70,6 +70,19 @@ nexus_remember(
 )
 ```
 Creates a markdown file with frontmatter AND indexes it. The atom persists across sessions.
+Also accepts `atom_type: "task"` — see Task Tracking section.
+
+### `nexus_tasks` — List tasks with dependency resolution
+```
+nexus_tasks(project?: "slug", status?: "ready", priority?: 1, include_done?: false)
+```
+Returns task atoms sorted by priority. `status="ready"` resolves dependency chains server-side.
+
+### `nexus_task_update` — Update task status
+```
+nexus_task_update(id: "abc123", status: "done", discovered?: "Title of new task found")
+```
+Updates status on disk, re-indexes, returns updated task. `discovered` creates a linked child task.
 
 ### `nexus_stats` — Database overview
 ```
@@ -87,13 +100,50 @@ Atom counts by type/scope/project, link counts, session counts.
 
 ## Atom Types
 
-`memory`, `agent`, `skill`, `plan`, `feedback`, `reference`, `project_note`, `architecture`
+`memory`, `agent`, `skill`, `plan`, `feedback`, `reference`, `project_note`, `architecture`, `task`
+
+## Task Tracking
+
+Nexus handles task state natively. No separate tool needed.
+
+### Session start workflow
+1. `nexus_shared()` — load global knowledge context
+2. `nexus_tasks(status: "ready")` — see what's unblocked and prioritized
+
+These two calls replace reading AGENTS.md + any task plan files.
+
+### Task tools
+
+| Action | Tool |
+|--------|------|
+| See ready work | `nexus_tasks(status: "ready")` |
+| See all tasks for a project | `nexus_tasks(project: "slug")` |
+| Start working on a task | `nexus_task_update(id, status: "in_progress")` |
+| Complete a task | `nexus_task_update(id, status: "done")` |
+| File a discovered task | `nexus_task_update(id, discovered: "title of new task")` |
+| Create a new task | `nexus_remember(atom_type: "task", title: "...", priority: 1, project: "...")` |
+
+### Task atom fields
+- `status`: ready | in_progress | blocked | done
+- `priority`: 1 (urgent) – 3 (low)
+- `blocked_by`: list of atom IDs that must be done first
+- `blocks`: list of atom IDs this task unlocks
+- `discovered_from`: audit trail — which task surfaced this one
+
+### Dependency resolution
+`nexus_tasks(status: "ready")` resolves dependencies server-side. A task only appears
+as ready if ALL its `blocked_by` tasks are done. You never need to manually check
+dependency chains — the tool handles it.
 
 ## Decision Guide
 
 | Situation | Tool to Use |
 |-----------|------------|
-| Starting a new session | `nexus_shared()` |
+| Starting a new session | `nexus_shared()` then `nexus_tasks(status: "ready")` |
+| See what to work on | `nexus_tasks(status: "ready")` |
+| Start a task | `nexus_task_update(id, status: "in_progress")` |
+| Complete a task | `nexus_task_update(id, status: "done")` |
+| Create a task | `nexus_remember(atom_type: "task", ...)` |
 | Need info about a specific topic | `nexus_search(query)` |
 | Need multiple topics at once | `nexus_context(topics)` |
 | Getting up to speed on a project | `nexus_project(slug)` |

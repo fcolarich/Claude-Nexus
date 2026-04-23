@@ -3,6 +3,7 @@
 
   const navItems: { route: Route; label: string; icon: string }[] = [
     { route: "dashboard", label: "Dashboard", icon: "⌂" },
+    { route: "tasks", label: "Tasks", icon: "✓" },
     { route: "sessions", label: "Sessions", icon: "◉" },
     { route: "memories", label: "Memories", icon: "◈" },
     { route: "plans", label: "Plans", icon: "▤" },

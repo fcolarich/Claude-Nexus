@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "build:mcp": "tsc && echo MCP server compiled to dist/mcp/server.js",
     "nexus": "node --loader ts-node/esm src/cli/index.ts",
     "dev:mcp": "node --loader ts-node/esm src/mcp/server.ts",
     "dev:api": "npx tsx src/web/server.ts",
@@ -12,8 +13,8 @@
     "build:frontend": "vite build --config vite.config.ts",
     "dev": "concurrently \"npm run dev:api\" \"npx @tauri-apps/cli dev\"",
     "tauri": "tauri",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

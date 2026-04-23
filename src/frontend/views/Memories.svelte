@@ -2,6 +2,7 @@
   import { api, type MemoryAtom } from "../lib/api";
   import { routeParams, navigate } from "../lib/router";
   import { poll, POLL } from "../lib/poll";
+  import AtomEditor from "../components/AtomEditor.svelte";
 
   let memories: MemoryAtom[] = $state([]);
   let projects: string[] = $state([]);
@@ -38,6 +39,16 @@
     } catch {
       selectedMemory = m;
     }
+  }
+
+  function handleDeleted() {
+    selectedMemory = null;
+    load();
+  }
+
+  function handleSaved(updated: MemoryAtom) {
+    selectedMemory = updated;
+    load();
   }
 
   poll(load, POLL.NORMAL);
@@ -112,9 +123,7 @@
             </div>
           </div>
         {/if}
-        <div class="detail-body">
-          <pre>{selectedMemory.body}</pre>
-        </div>
+        <AtomEditor atom={selectedMemory} onDeleted={handleDeleted} onSaved={handleSaved} />
       {:else}
         <div class="placeholder">
           <p>Select a memory from the sidebar to view its contents.</p>
@@ -257,13 +266,6 @@
     font-weight: 600;
     text-transform: uppercase;
     opacity: 0.7;
-  }
-
-  .detail-body pre {
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-size: 13px;
-    line-height: 1.7;
   }
 
   .placeholder {

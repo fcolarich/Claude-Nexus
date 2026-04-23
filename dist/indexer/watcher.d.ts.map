@@ -1,0 +1,1 @@
+{"version":3,"file":"watcher.d.ts","sourceRoot":"","sources":["../../src/indexer/watcher.ts"],"names":[],"mappings":"AAsBA;;;GAGG;AACH,wBAAgB,YAAY,CAAC,OAAO,CAAC,EAAE;IACrC,QAAQ,CAAC,EAAE,CAAC,QAAQ,EAAE,MAAM,EAAE,KAAK,EAAE,MAAM,KAAK,IAAI,CAAC;IACrD,MAAM,CAAC,EAAE,MAAM,CAAC;CACjB,GAAG,MAAM,IAAI,CAoDb"}

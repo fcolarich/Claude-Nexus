@@ -8,6 +8,7 @@
   import Plans from "./views/Plans.svelte";
   import Agents from "./views/Agents.svelte";
   import Skills from "./views/Skills.svelte";
+  import Tasks from "./views/Tasks.svelte";
   import { currentRoute } from "./lib/router";
 </script>
 
@@ -28,6 +29,8 @@
       <Agents />
     {:else if $currentRoute === "skills"}
       <Skills />
+    {:else if $currentRoute === "tasks"}
+      <Tasks />
     {/if}
   </main>
 </div>

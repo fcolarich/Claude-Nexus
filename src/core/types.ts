@@ -1,4 +1,5 @@
-export type AtomType = 'memory' | 'agent' | 'skill' | 'plan' | 'feedback' | 'reference' | 'project_note' | 'architecture';
+export type AtomType = 'memory' | 'agent' | 'skill' | 'plan' | 'feedback' | 'reference' | 'project_note' | 'architecture' | 'task';
+export type TaskStatus = 'ready' | 'in_progress' | 'blocked' | 'done';
 export type AtomScope = 'global' | 'shared' | 'project';
 export type SourceType = 'memory_file' | 'agent_def' | 'skill_def' | 'plan_file' | 'nexus_native';
 export type LinkType = 'references' | 'extends' | 'refines' | 'contradicts' | 'supports' | 'duplicates' | 'related';
@@ -19,6 +20,27 @@ export interface Atom {
   frontmatter: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  // Task-specific fields (null for non-task atoms)
+  status: TaskStatus | null;
+  priority: number | null;
+  blocks: string | null;      // JSON array of atom IDs
+  blocked_by: string | null;  // JSON array of atom IDs
+  discovered_from: string | null;
+}
+
+export interface TaskAtom {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  effective_status: TaskStatus;
+  priority: number;
+  project: string;
+  tags: string[];
+  blocks: string[];
+  blocked_by: string[];
+  discovered_from: string;
+  created_at: string;
+  summary: string;
 }
 
 export interface AtomLink {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type MemoryAtom } from "../lib/api";
   import { poll, POLL } from "../lib/poll";
+  import AtomEditor from "../components/AtomEditor.svelte";
 
   let plans: MemoryAtom[] = $state([]);
   let selected: MemoryAtom | null = $state(null);
@@ -8,6 +9,24 @@
 
   async function load() {
     try { plans = await api.plans(); error = null; } catch (e: any) { error = e.message; }
+  }
+
+  async function selectPlan(plan: MemoryAtom) {
+    try {
+      selected = await api.memory(plan.id);
+    } catch {
+      selected = plan;
+    }
+  }
+
+  function handleDeleted() {
+    selected = null;
+    load();
+  }
+
+  function handleSaved(updated: MemoryAtom) {
+    selected = updated;
+    load();
   }
 
   $effect(() => {
@@ -24,7 +43,7 @@
         <button
           class="list-item"
           class:active={selected?.id === plan.id}
-          onclick={() => (selected = plan)}
+          onclick={() => selectPlan(plan)}
         >
           <span class="item-title">{plan.title}</span>
           <span class="item-meta">{plan.project}</span>
@@ -45,7 +64,7 @@
           <span>{selected.project}</span>
           <span class="detail-path">{selected.path}</span>
         </div>
-        <pre class="detail-body">{selected.body}</pre>
+        <AtomEditor atom={selected} onDeleted={handleDeleted} onSaved={handleSaved} />
       {:else}
         <div class="placeholder"><p>Select a plan to view.</p></div>
       {/if}
@@ -85,7 +104,6 @@
   .detail-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
   .detail-meta { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; display: flex; gap: 12px; }
   .detail-path { font-family: var(--font-mono); font-size: 11px; }
-  .detail-body { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.7; }
 
   .placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); }
   .error { color: var(--error); font-size: 13px; padding: 8px; }

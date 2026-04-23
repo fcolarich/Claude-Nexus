@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e ' *)",
+      "Bash(npx tsx -e ' *)",
+      "Bash(npx tsx *)",
+      "Bash(find /c/Users/Fran/.claude/projects -name \"*.jsonl\" -type f -exec grep -l '\"type\".*\"document\"\\\\|\"type\".*\"image\"\\\\|\"type\".*\"file\"\\\\|\"type\".*\"attachment\"' {} \\\\;)",
+      "Bash(python3)",
+      "Bash(find /c/Users/Fran/.claude/projects -name \"*.jsonl\" -type f -exec grep -l '\"type\":\"document\"\\\\|\"type\":\"pdf\"' {} \\\\;)",
+      "Bash(npm run *)"
+    ]
+  }
+}

@@ -26,6 +26,7 @@ function inferAtomType(
   filename?: string
 ): AtomType {
   // Frontmatter type takes priority
+  if (frontmatterType === 'task') return 'task';
   if (frontmatterType === 'feedback') return 'feedback';
   if (frontmatterType === 'reference') return 'reference';
   if (frontmatterType === 'project') return 'project_note';
@@ -176,7 +177,12 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
   const project = sourceType === 'memory_file' ? extractProjectSlug(filePath) : null;
 
   const hasFrontmatter = Object.keys(frontmatterData).length > 0;
-  const sections = splitSections(content);
+
+  // Plans, agents, and skills are self-contained — never split into sections.
+  // Only memory files are split by H2 headers into individual atoms.
+  const sections = sourceType === 'memory_file'
+    ? splitSections(content)
+    : [{ title: '', body: content.trim() }];
 
   const atoms: ParsedFile['atoms'] = [];
   const links: ParsedFile['links'] = [];
@@ -197,6 +203,7 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
     // Determine title
     let title = section.title;
     if (!title && frontmatterData.name) title = String(frontmatterData.name);
+    if (!title && frontmatterData.title) title = String(frontmatterData.title);
     if (!title) {
       // Try to extract from first H1
       const h1Match = section.body.match(/^#\s+(.+)$/m);
@@ -209,9 +216,28 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
       title = `${filename.replace(/\.md$/, '')}: ${title}`;
     }
 
-    const atomType = inferAtomType(frontmatterData.type as string, sourceType, filename);
+    const atomType = inferAtomType(
+      (frontmatterData.atom_type as string) ?? (frontmatterData.type as string),
+      sourceType,
+      filename
+    );
     const scope = inferScope(atomType, sourceType);
     const tags = extractTags(section.body, i === 0 ? frontmatterData : undefined);
+
+    // Extract task-specific fields from frontmatter (only for first section)
+    let taskStatus: string | null = null;
+    let taskPriority: number | null = null;
+    let taskBlocks: string | null = null;
+    let taskBlockedBy: string | null = null;
+    let taskDiscoveredFrom: string | null = null;
+
+    if (atomType === 'task' && i === 0 && hasFrontmatter) {
+      taskStatus = typeof frontmatterData.status === 'string' ? frontmatterData.status : 'ready';
+      taskPriority = typeof frontmatterData.priority === 'number' ? frontmatterData.priority : 2;
+      taskBlocks = JSON.stringify(Array.isArray(frontmatterData.blocks) ? frontmatterData.blocks : []);
+      taskBlockedBy = JSON.stringify(Array.isArray(frontmatterData.blocked_by) ? frontmatterData.blocked_by : []);
+      taskDiscoveredFrom = typeof frontmatterData.discovered_from === 'string' ? frontmatterData.discovered_from : '';
+    }
 
     atoms.push({
       title,
@@ -224,6 +250,11 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
       tags,
       content_hash: computeHash(section.body),
       frontmatter: i === 0 && hasFrontmatter ? frontmatterData : null,
+      status: taskStatus as any,
+      priority: taskPriority,
+      blocks: taskBlocks,
+      blocked_by: taskBlockedBy,
+      discovered_from: taskDiscoveredFrom,
     });
 
     // Extract links from this section

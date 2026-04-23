@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type MemoryAtom } from "../lib/api";
   import { poll, POLL } from "../lib/poll";
+  import AtomEditor from "../components/AtomEditor.svelte";
 
   let agents: MemoryAtom[] = $state([]);
   let selected: MemoryAtom | null = $state(null);
@@ -8,6 +9,24 @@
 
   async function load() {
     try { agents = await api.agents(); error = null; } catch (e: any) { error = e.message; }
+  }
+
+  async function selectAgent(agent: MemoryAtom) {
+    try {
+      selected = await api.memory(agent.id);
+    } catch {
+      selected = agent;
+    }
+  }
+
+  function handleDeleted() {
+    selected = null;
+    load();
+  }
+
+  function handleSaved(updated: MemoryAtom) {
+    selected = updated;
+    load();
   }
 
   $effect(() => {
@@ -24,7 +43,7 @@
         <button
           class="list-item"
           class:active={selected?.id === agent.id}
-          onclick={() => (selected = agent)}
+          onclick={() => selectAgent(agent)}
         >
           <span class="item-title">{agent.title}</span>
         </button>
@@ -41,7 +60,7 @@
       {#if selected}
         <h2 class="detail-title">{selected.title}</h2>
         <span class="detail-path">{selected.path}</span>
-        <pre class="detail-body">{selected.body}</pre>
+        <AtomEditor atom={selected} onDeleted={handleDeleted} onSaved={handleSaved} />
       {:else}
         <div class="placeholder"><p>Select an agent to view its definition.</p></div>
       {/if}
@@ -71,7 +90,6 @@
   .detail-panel { flex: 1; background: var(--bg-base); padding: 24px; overflow-y: auto; }
   .detail-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
   .detail-path { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 16px; }
-  .detail-body { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.7; }
   .placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); }
   .error { color: var(--error); font-size: 13px; padding: 8px; }
   .empty { color: var(--text-muted); padding: 12px; font-size: 13px; }

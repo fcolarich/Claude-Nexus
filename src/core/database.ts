@@ -27,6 +27,68 @@ export function openDatabase(dbPath?: string): Database.Database {
   return db;
 }
 
+function migrateTaskSupport(db: Database.Database): void {
+  const schemaRow = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='atoms'`
+  ).get() as { sql: string } | undefined;
+
+  if (!schemaRow) return; // table doesn't exist yet (fresh DB) - CREATE TABLE already has task
+
+  if (!schemaRow.sql.includes("'task'")) {
+    // Recreate atoms table to add 'task' to CHECK constraint
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`CREATE TABLE atoms_new (
+          id            TEXT PRIMARY KEY,
+          title         TEXT NOT NULL,
+          body          TEXT NOT NULL,
+          atom_type     TEXT NOT NULL CHECK(atom_type IN (
+            'memory', 'agent', 'skill', 'plan', 'feedback', 'reference', 'project_note', 'architecture', 'task'
+          )),
+          scope         TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('global', 'shared', 'project')),
+          source_path   TEXT NOT NULL,
+          source_type   TEXT NOT NULL CHECK(source_type IN (
+            'memory_file', 'agent_def', 'skill_def', 'plan_file', 'nexus_native'
+          )),
+          project       TEXT,
+          tags          TEXT NOT NULL DEFAULT '[]',
+          content_hash  TEXT NOT NULL,
+          frontmatter   TEXT,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          status        TEXT,
+          priority      INTEGER,
+          blocks        TEXT,
+          blocked_by    TEXT,
+          discovered_from TEXT
+        )`);
+
+        db.exec(`INSERT INTO atoms_new
+          (id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at)
+          SELECT id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at
+          FROM atoms`);
+
+        db.exec(`DROP TRIGGER IF EXISTS atoms_ai`);
+        db.exec(`DROP TRIGGER IF EXISTS atoms_ad`);
+        db.exec(`DROP TRIGGER IF EXISTS atoms_au`);
+        db.exec(`DROP TABLE IF EXISTS atoms_fts`);
+        db.exec(`DROP TABLE atoms`);
+        db.exec(`ALTER TABLE atoms_new RENAME TO atoms`);
+      })();
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+  } else {
+    // Table has 'task' already — just add new columns if missing
+    try { db.exec(`ALTER TABLE atoms ADD COLUMN status TEXT`); } catch {}
+    try { db.exec(`ALTER TABLE atoms ADD COLUMN priority INTEGER`); } catch {}
+    try { db.exec(`ALTER TABLE atoms ADD COLUMN blocks TEXT`); } catch {}
+    try { db.exec(`ALTER TABLE atoms ADD COLUMN blocked_by TEXT`); } catch {}
+    try { db.exec(`ALTER TABLE atoms ADD COLUMN discovered_from TEXT`); } catch {}
+  }
+}
+
 export function initializeSchema(db: Database.Database): void {
   db.exec(`
     -- Atoms: single units of knowledge
@@ -35,7 +97,7 @@ export function initializeSchema(db: Database.Database): void {
       title         TEXT NOT NULL,
       body          TEXT NOT NULL,
       atom_type     TEXT NOT NULL CHECK(atom_type IN (
-        'memory', 'agent', 'skill', 'plan', 'feedback', 'reference', 'project_note', 'architecture'
+        'memory', 'agent', 'skill', 'plan', 'feedback', 'reference', 'project_note', 'architecture', 'task'
       )),
       scope         TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('global', 'shared', 'project')),
       source_path   TEXT NOT NULL,
@@ -47,7 +109,12 @@ export function initializeSchema(db: Database.Database): void {
       content_hash  TEXT NOT NULL,
       frontmatter   TEXT,
       created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      status        TEXT,
+      priority      INTEGER,
+      blocks        TEXT,
+      blocked_by    TEXT,
+      discovered_from TEXT
     );
 
     -- Semantic links between atoms
@@ -135,6 +202,9 @@ export function initializeSchema(db: Database.Database): void {
   // Safe migration for existing databases
   try { db.exec(`ALTER TABLE sessions ADD COLUMN title TEXT`); } catch {}
   try { db.exec(`ALTER TABLE sessions ADD COLUMN custom_title TEXT`); } catch {}
+
+  // Migration: add 'task' atom_type support and task-specific columns
+  migrateTaskSupport(db);
 
   // Rebuild FTS5 index to fix any stale entries from prior versions
   try { db.exec(`INSERT INTO atoms_fts(atoms_fts) VALUES('rebuild')`); } catch {}

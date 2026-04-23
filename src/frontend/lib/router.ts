@@ -7,7 +7,8 @@ export type Route =
   | "search"
   | "plans"
   | "agents"
-  | "skills";
+  | "skills"
+  | "tasks";
 
 export const currentRoute = writable<Route>("dashboard");
 export const routeParams = writable<Record<string, string>>({});
