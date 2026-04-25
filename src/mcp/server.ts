@@ -268,6 +268,80 @@ server.tool(
   }
 );
 
+// ── nexus_tasks_create ───────────────────────────────────────────────
+
+server.tool(
+  'nexus_tasks_create',
+  'Create multiple task atoms in one call. Accepts an array of task definitions — same fields as nexus_remember with atom_type=task. Returns the ID and path of every created atom.',
+  {
+    tasks: z.array(z.object({
+      title: z.string().describe('Short title for the task'),
+      content: z.string().describe('Markdown body / description of the task'),
+      project: z.string().optional().describe('Project slug; omit to store in global nexus-atoms/'),
+      priority: z.number().min(1).max(3).optional().describe('Priority 1-3 (default 2)'),
+      tags: z.array(z.string()).optional().describe('Tags for searchability'),
+      status: z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('Initial status (default: ready)'),
+      blocks: z.array(z.string()).optional().describe('Atom IDs this task blocks'),
+      blocked_by: z.array(z.string()).optional().describe('Atom IDs that must be done before this task'),
+      discovered_from: z.string().optional().describe('Atom ID of the task that discovered this one'),
+    })).min(1).describe('Array of task definitions to create'),
+  },
+  async ({ tasks }) => {
+    const claudeDir = join(homedir(), '.claude');
+    const now = new Date().toISOString();
+    const created: Array<{ title: string; id: string; path: string }> = [];
+
+    for (const t of tasks) {
+      const targetDir = t.project
+        ? join(claudeDir, 'projects', t.project, 'memory')
+        : join(claudeDir, 'nexus-atoms');
+
+      if (!existsSync(targetDir)) {
+        await mkdir(targetDir, { recursive: true });
+      }
+
+      const slug = t.title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+      let filename = `task_${slug}.md`;
+      let filePath = join(targetDir, filename);
+      let counter = 2;
+      while (existsSync(filePath)) {
+        filename = `task_${slug}_${counter}.md`;
+        filePath = join(targetDir, filename);
+        counter++;
+      }
+
+      const frontmatterLines = [
+        '---',
+        `title: "${t.title}"`,
+        `atom_type: task`,
+        `status: ${t.status ?? 'ready'}`,
+        `priority: ${t.priority ?? 2}`,
+        t.project ? `project: ${t.project}` : null,
+        t.tags && t.tags.length > 0 ? `tags: [${t.tags.map(tag => `"${tag}"`).join(', ')}]` : `tags: []`,
+        `blocks: [${(t.blocks ?? []).map(b => `"${b}"`).join(', ')}]`,
+        `blocked_by: [${(t.blocked_by ?? []).map(b => `"${b}"`).join(', ')}]`,
+        `discovered_from: "${t.discovered_from ?? ''}"`,
+        `created_at: ${now}`,
+        `updated_at: ${now}`,
+        '---',
+      ].filter(Boolean).join('\n');
+
+      const fileContent = `${frontmatterLines}\n\n${t.content}`;
+      await writeFile(filePath, fileContent, 'utf-8');
+
+      reindexFile(db, filePath, t.project ? 'memory_file' : 'nexus_native');
+
+      const row = db.prepare(`SELECT id FROM atoms WHERE source_path = ? LIMIT 1`).get(filePath) as { id: string } | undefined;
+      created.push({ title: t.title, id: row?.id ?? '', path: filePath });
+    }
+
+    const summary = `Created ${created.length} task${created.length === 1 ? '' : 's'}:\n` +
+      created.map(c => `- "${c.title}" → ${c.id} (${c.path})`).join('\n');
+
+    return { content: [{ type: 'text', text: summary }] };
+  }
+);
+
 // ── Task helpers ────────────────────────────────────────────────────
 
 function resolveEffectiveStatus(
@@ -382,7 +456,13 @@ server.tool(
     const newContent = matter.stringify(parsed.content, parsed.data);
     await writeFile(task.source_path, newContent, 'utf-8');
 
-    // Re-index
+    // Update DB directly so the status is immediately visible to both the MCP
+    // response and the web server. reindexFile alone is insufficient because the
+    // unchanged-hash check skips upserts when only frontmatter changed.
+    db.prepare(`UPDATE atoms SET status = ?, updated_at = ? WHERE id = ?`)
+      .run(status, now, id);
+
+    // Full re-index to update content_hash so the next periodic scan is accurate
     reindexFile(db, task.source_path, task.source_type as any);
 
     // Fetch updated task

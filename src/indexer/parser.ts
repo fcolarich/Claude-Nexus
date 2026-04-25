@@ -248,7 +248,10 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
       source_type: sourceType,
       project,
       tags,
-      content_hash: computeHash(section.body),
+      // First section hash covers the full raw file so frontmatter changes
+      // (status, priority, blocked_by, etc.) are detected by the unchanged check.
+      // Subsequent sections in multi-section files hash their own body.
+      content_hash: i === 0 ? computeHash(raw) : computeHash(section.body),
       frontmatter: i === 0 && hasFrontmatter ? frontmatterData : null,
       status: taskStatus as any,
       priority: taskPriority,

@@ -72,6 +72,16 @@ nexus_remember(
 Creates a markdown file with frontmatter AND indexes it. The atom persists across sessions.
 Also accepts `atom_type: "task"` — see Task Tracking section.
 
+### `nexus_tasks_create` — Bulk task creation
+```
+nexus_tasks_create(tasks: [
+  { title: "Task A", content: "...", priority: 1, project: "slug", tags: ["x"] },
+  { title: "Task B", content: "...", blocked_by: ["<id-of-A>"] },
+  ...
+])
+```
+Creates any number of task atoms in **one call**. Each entry accepts the same fields as `nexus_remember` with `atom_type=task`. Returns the ID and file path of every created atom so you can wire up `blocked_by` / `blocks` references in the same batch.
+
 ### `nexus_tasks` — List tasks with dependency resolution
 ```
 nexus_tasks(project?: "slug", status?: "ready", priority?: 1, include_done?: false)
@@ -121,7 +131,8 @@ These two calls replace reading AGENTS.md + any task plan files.
 | Start working on a task | `nexus_task_update(id, status: "in_progress")` |
 | Complete a task | `nexus_task_update(id, status: "done")` |
 | File a discovered task | `nexus_task_update(id, discovered: "title of new task")` |
-| Create a new task | `nexus_remember(atom_type: "task", title: "...", priority: 1, project: "...")` |
+| Create one task | `nexus_remember(atom_type: "task", title: "...", priority: 1, project: "...")` |
+| Create multiple tasks at once | `nexus_tasks_create(tasks: [...])` |
 
 ### Task atom fields
 - `status`: ready | in_progress | blocked | done
@@ -143,7 +154,8 @@ dependency chains — the tool handles it.
 | See what to work on | `nexus_tasks(status: "ready")` |
 | Start a task | `nexus_task_update(id, status: "in_progress")` |
 | Complete a task | `nexus_task_update(id, status: "done")` |
-| Create a task | `nexus_remember(atom_type: "task", ...)` |
+| Create one task | `nexus_remember(atom_type: "task", ...)` |
+| Create many tasks at once | `nexus_tasks_create(tasks: [...])` |
 | Need info about a specific topic | `nexus_search(query)` |
 | Need multiple topics at once | `nexus_context(topics)` |
 | Getting up to speed on a project | `nexus_project(slug)` |
