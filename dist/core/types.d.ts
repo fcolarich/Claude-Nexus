@@ -64,6 +64,9 @@ export interface Session {
     message_count: number;
     title: string | null;
     custom_title: string | null;
+    is_cowork: boolean | null;
+    workspace_id: string | null;
+    participant_id: string | null;
 }
 export interface Diagnostic {
     id: number;

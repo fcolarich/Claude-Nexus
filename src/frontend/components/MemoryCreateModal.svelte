@@ -1,10 +1,10 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { api, type SessionInfo, type CreateMemoryParams } from "../lib/api";
+  import { api, type SessionInfo } from "../lib/api";
 
-  let { selectedText: initialText, session, onClose, onSaved }: {
-    selectedText: string;
-    session: SessionInfo;
+  let { selectedText: initialText = "", session = null, onClose, onSaved }: {
+    selectedText?: string;
+    session?: SessionInfo | null;
     onClose: () => void;
     onSaved: () => void;
   } = $props();
@@ -29,8 +29,7 @@
         type,
         description: description.trim(),
         body: body.trim(),
-        sourceSessionId: session.id,
-        sourceSessionSlug: session.slug,
+        ...(session ? { sourceSessionId: session.id, sourceSessionSlug: session.slug } : {}),
       });
       onSaved();
     } catch (e: any) {
@@ -78,10 +77,12 @@
         <textarea bind:value={body} class="body-input" rows="8" spellcheck="false"></textarea>
       </label>
 
-      <div class="source-info">
-        <span class="source-label">Source session:</span>
-        <span class="source-value">{session.slug ?? session.id.slice(0, 8)} · {session.project}</span>
-      </div>
+      {#if session}
+        <div class="source-info">
+          <span class="source-label">Source session:</span>
+          <span class="source-value">{session.slug ?? session.id.slice(0, 8)} · {session.project}</span>
+        </div>
+      {/if}
 
       {#if error}<p class="err">{error}</p>{/if}
     </div>

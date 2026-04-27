@@ -3,8 +3,10 @@
   import { routeParams, navigate } from "../lib/router";
   import { poll, POLL } from "../lib/poll";
   import AtomEditor from "../components/AtomEditor.svelte";
+  import MemoryCreateModal from "../components/MemoryCreateModal.svelte";
 
   let memories: MemoryAtom[] = $state([]);
+  let showCreateModal = $state(false);
   let projects: string[] = $state([]);
   let selectedProject: string = $state("");
   let selectedMemory: MemoryAtom | null = $state(null);
@@ -68,7 +70,10 @@
 <div class="page">
   <div class="memory-layout">
     <aside class="tree-panel">
-      <h2 class="panel-title">Memory Browser</h2>
+      <div class="panel-header">
+        <h2 class="panel-title">Memory Browser</h2>
+        <button class="new-btn" onclick={() => (showCreateModal = true)}>+ New</button>
+      </div>
       <select class="project-select" bind:value={selectedProject} onchange={() => load()}>
         <option value="">All projects</option>
         {#each projects as p}
@@ -133,6 +138,13 @@
   </div>
 </div>
 
+{#if showCreateModal}
+  <MemoryCreateModal
+    onClose={() => (showCreateModal = false)}
+    onSaved={() => { showCreateModal = false; load(); }}
+  />
+{/if}
+
 <style>
   .page { height: calc(100vh - 56px); }
 
@@ -156,11 +168,30 @@
     gap: 12px;
   }
 
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
   .panel-title {
     font-size: 14px;
     font-weight: 600;
     color: var(--text-secondary);
   }
+
+  .new-btn {
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--accent-dim);
+    color: white;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-family: var(--font-sans);
+  }
+  .new-btn:hover { background: var(--accent); }
 
   .project-select {
     width: 100%;

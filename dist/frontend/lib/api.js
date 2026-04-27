@@ -43,7 +43,7 @@ async function post(path, body) {
 }
 export const api = {
     dashboard: () => get("/api/dashboard"),
-    sessions: () => get("/api/sessions"),
+    sessions: (project) => get(`/api/sessions${project ? `?project=${encodeURIComponent(project)}` : ""}`),
     session: (id) => get(`/api/sessions/${id}`),
     renameSession: (id, title) => patch(`/api/sessions/${id}`, { title }),
     sessionMessages: (id) => get(`/api/sessions/${encodeURIComponent(id)}/messages`),
@@ -59,6 +59,7 @@ export const api = {
     atomRaw: (id) => get(`/api/atoms/${encodeURIComponent(id)}/raw`),
     updateAtom: (id, body) => put(`/api/atoms/${encodeURIComponent(id)}`, { body }),
     deleteAtom: (id) => del(`/api/atoms/${encodeURIComponent(id)}`),
+    deleteProject: (name) => del(`/api/projects/${encodeURIComponent(name)}`),
     createMemory: (data) => post("/api/atoms/create-memory", data),
     tasks: (params) => {
         const q = new URLSearchParams();

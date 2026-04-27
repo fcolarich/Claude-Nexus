@@ -154,7 +154,7 @@ export interface CreateTaskParams {
 
 export const api = {
   dashboard: () => get<DashboardData>("/api/dashboard"),
-  sessions: () => get<SessionInfo[]>("/api/sessions"),
+  sessions: (project?: string) => get<SessionInfo[]>(`/api/sessions${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   session: (id: string) => get<SessionInfo>(`/api/sessions/${id}`),
   renameSession: (id: string, title: string) => patch<SessionInfo>(`/api/sessions/${id}`, { title }),
   sessionMessages: (id: string) => get<{ messages: ConversationMessage[] }>(`/api/sessions/${encodeURIComponent(id)}/messages`),
@@ -170,6 +170,7 @@ export const api = {
   atomRaw: (id: string) => get<{ rawContent: string }>(`/api/atoms/${encodeURIComponent(id)}/raw`),
   updateAtom: (id: string, body: string) => put<MemoryAtom>(`/api/atoms/${encodeURIComponent(id)}`, { body }),
   deleteAtom: (id: string) => del<{ success: boolean }>(`/api/atoms/${encodeURIComponent(id)}`),
+  deleteProject: (name: string) => del<{ success: boolean }>(`/api/projects/${encodeURIComponent(name)}`),
   createMemory: (data: CreateMemoryParams) => post<{ success: boolean; path: string }>("/api/atoms/create-memory", data as unknown as Record<string, unknown>),
   tasks: (params?: { project?: string; status?: string; priority?: number; include_done?: boolean }) => {
     const q = new URLSearchParams();

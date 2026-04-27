@@ -323,6 +323,28 @@ app.get('/api/projects', (_req, res) => {
   res.json(rows.map(r => r.name));
 });
 
+app.delete('/api/projects/:name', (req, res) => {
+  const name = decodeURIComponent(req.params.name);
+
+  const sessions = db.prepare('SELECT * FROM sessions WHERE project = ?').all(name) as any[];
+  for (const s of sessions) {
+    try { unlinkSync(s.jsonl_path); } catch (e: any) {
+      if (e.code !== 'ENOENT') console.warn(`[delete project] Failed to unlink session file ${s.jsonl_path}:`, e.message);
+    }
+  }
+  db.prepare('DELETE FROM sessions WHERE project = ?').run(name);
+
+  const atoms = db.prepare('SELECT * FROM atoms WHERE project = ?').all(name) as Atom[];
+  for (const a of atoms) {
+    try { unlinkSync(a.source_path); } catch (e: any) {
+      if (e.code !== 'ENOENT') console.warn(`[delete project] Failed to unlink atom file ${a.source_path}:`, e.message);
+    }
+  }
+  db.prepare('DELETE FROM atoms WHERE project = ?').run(name);
+
+  res.json({ success: true });
+});
+
 // --- Diagnostics ---
 app.get('/api/diagnostics', (req, res) => {
   const { type } = req.query as { type?: string };
@@ -379,11 +401,16 @@ app.delete('/api/atoms/:id', (req, res) => {
 
   try {
     unlinkSync(atom.source_path);
-    db.prepare('DELETE FROM atoms WHERE source_path = ?').run(atom.source_path);
-    res.json({ success: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    if (e.code !== 'ENOENT') {
+      console.error(`[delete atom ${req.params.id}] Failed to unlink ${atom.source_path}:`, e);
+      return res.status(500).json({ error: `Failed to delete file: ${e.message}`, code: e.code, path: atom.source_path });
+    }
+    console.warn(`[delete atom ${req.params.id}] File not found on disk (${atom.source_path}), removing DB entry`);
   }
+
+  db.prepare('DELETE FROM atoms WHERE source_path = ?').run(atom.source_path);
+  res.json({ success: true });
 });
 
 app.post('/api/atoms/create-memory', (req, res) => {

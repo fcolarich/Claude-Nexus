@@ -112,7 +112,7 @@ export interface CreateTaskParams {
 }
 export declare const api: {
     dashboard: () => Promise<DashboardData>;
-    sessions: () => Promise<SessionInfo[]>;
+    sessions: (project?: string) => Promise<SessionInfo[]>;
     session: (id: string) => Promise<SessionInfo>;
     renameSession: (id: string, title: string) => Promise<SessionInfo>;
     sessionMessages: (id: string) => Promise<{
@@ -136,6 +136,9 @@ export declare const api: {
     }>;
     updateAtom: (id: string, body: string) => Promise<MemoryAtom>;
     deleteAtom: (id: string) => Promise<{
+        success: boolean;
+    }>;
+    deleteProject: (name: string) => Promise<{
         success: boolean;
     }>;
     createMemory: (data: CreateMemoryParams) => Promise<{

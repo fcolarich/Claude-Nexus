@@ -5,6 +5,8 @@
 
   let sessions: SessionInfo[] = $state([]);
   let filter: "all" | "active" | "waiting" | "idle" = $state("all");
+  let selectedProject = $state("");
+  let projects: string[] = $state([]);
   let error: string | null = $state(null);
   let editingId: string | null = $state(null);
   let editValue: string = $state("");
@@ -38,8 +40,13 @@
   });
 
   async function load() {
-    try { sessions = await api.sessions(); error = null; }
-    catch (e: any) { error = e.message; }
+    try {
+      [sessions, projects] = await Promise.all([
+        api.sessions(selectedProject || undefined),
+        api.projects(),
+      ]);
+      error = null;
+    } catch (e: any) { error = e.message; }
   }
 
   async function selectSession(session: SessionInfo) {
@@ -167,6 +174,13 @@
           </button>
         {/each}
       </div>
+
+      <select class="project-select" bind:value={selectedProject} onchange={() => load()}>
+        <option value="">All projects</option>
+        {#each projects as p}
+          <option value={p}>{p}</option>
+        {/each}
+      </select>
 
       {#if error}
         <p class="list-error">API unavailable: {error}</p>
@@ -359,6 +373,17 @@
   .panel-title { font-size: 14px; font-weight: 600; color: var(--text-secondary); }
 
   .filters { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .project-select {
+    width: 100%;
+    padding: 6px 10px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+  }
 
   .filter-chip {
     padding: 4px 10px; border: 1px solid var(--border); border-radius: 14px;

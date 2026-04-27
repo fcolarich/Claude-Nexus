@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { api, type SearchResult } from "../lib/api";
+  import { onMount } from "svelte";
+  import { api } from "../lib/api";
   import { navigate } from "../lib/router";
+  import { searchStore } from "../lib/searchStore";
 
-  let query = $state("");
-  let typeFilter = $state("");
-  let results: SearchResult[] = $state([]);
-  let searched = $state(false);
+  let query = $state($searchStore.query);
+  let typeFilter = $state($searchStore.typeFilter);
+  let results = $state($searchStore.results);
+  let searched = $state($searchStore.searched);
   let loading = $state(false);
 
   async function search() {
@@ -18,11 +20,20 @@
       results = [];
     }
     loading = false;
+    searchStore.set({ query, typeFilter, results, searched });
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === "Enter") search();
   }
+
+  $effect(() => {
+    searchStore.set({ query, typeFilter, results, searched });
+  });
+
+  onMount(() => {
+    if (query.trim()) search();
+  });
 </script>
 
 <div class="page">

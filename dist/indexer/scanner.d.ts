@@ -1,4 +1,11 @@
 import type { SourceType } from '../core/types.js';
+export interface CoworkSession {
+    auditPath: string;
+    metaPath: string | null;
+    workspaceId: string;
+    participantId: string;
+    sessionDirName: string;
+}
 export interface SourceFile {
     path: string;
     sourceType: SourceType;
@@ -14,6 +21,10 @@ export declare function discoverSessions(): {
     path: string;
     project: string;
 }[];
+/**
+ * Discover Cowork (desktop app) audit.jsonl sessions from the Windows Claude package directory.
+ */
+export declare function discoverCoworkSessions(): CoworkSession[];
 /**
  * Get directories to watch for file changes.
  */

@@ -89,6 +89,12 @@ function migrateTaskSupport(db: Database.Database): void {
   }
 }
 
+function migrateCoworkSupport(db: Database.Database): void {
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN is_cowork INTEGER DEFAULT 0`); } catch {}
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN workspace_id TEXT`); } catch {}
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN participant_id TEXT`); } catch {}
+}
+
 export function initializeSchema(db: Database.Database): void {
   db.exec(`
     -- Atoms: single units of knowledge
@@ -205,6 +211,9 @@ export function initializeSchema(db: Database.Database): void {
 
   // Migration: add 'task' atom_type support and task-specific columns
   migrateTaskSupport(db);
+
+  // Migration: add Cowork session columns
+  migrateCoworkSupport(db);
 
   // Rebuild FTS5 index to fix any stale entries from prior versions
   try { db.exec(`INSERT INTO atoms_fts(atoms_fts) VALUES('rebuild')`); } catch {}

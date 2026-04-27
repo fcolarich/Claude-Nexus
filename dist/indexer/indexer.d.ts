@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import type { CoworkSession } from './scanner.js';
 import type { SourceType } from '../core/types.js';
 export interface IndexStats {
     atomsCreated: number;
@@ -32,6 +33,10 @@ export declare function indexFile(db: Database.Database, stmts: PreparedStatemen
  * Index a session JSONL file — extracts metadata without parsing full conversation.
  */
 export declare function indexSession(db: Database.Database, stmts: PreparedStatements, jsonlPath: string, projectSlug: string): void;
+/**
+ * Index a Cowork (desktop app) audit.jsonl session.
+ */
+export declare function indexCoworkSession(db: Database.Database, session: CoworkSession): void;
 /**
  * Run a full index of all Claude data.
  */

@@ -3,6 +3,16 @@
   import { navigate } from "../lib/router";
   import { poll, POLL } from "../lib/poll";
 
+  async function removeProject(name: string) {
+    if (!confirm(`Remove project "${name}" and all its sessions and atoms from the database?`)) return;
+    try {
+      await api.deleteProject(name);
+      data = await api.dashboard();
+    } catch (e: any) {
+      alert(`Failed to remove project: ${e.message}`);
+    }
+  }
+
   let data: DashboardData | null = $state(null);
   let error: string | null = $state(null);
 
@@ -75,14 +85,17 @@
       <h2 class="section-title">Projects</h2>
       <div class="project-grid">
         {#each data.projects as proj}
-          <button class="project-card" onclick={() => navigate("memories", { project: proj.project })}>
-            <span class="project-name">{proj.project}</span>
-            <div class="project-meta">
-              <span>{proj.sessions} sessions</span>
-              <span class="sep">·</span>
-              <span>{proj.memories} memories</span>
-            </div>
-          </button>
+          <div class="project-card-wrap">
+            <button class="project-card" onclick={() => navigate("memories", { project: proj.project })}>
+              <span class="project-name">{proj.project}</span>
+              <div class="project-meta">
+                <span>{proj.sessions} sessions</span>
+                <span class="sep">·</span>
+                <span>{proj.memories} memories</span>
+              </div>
+            </button>
+            <button class="remove-btn" onclick={() => removeProject(proj.project)} title="Remove project">×</button>
+          </div>
         {/each}
       </div>
     </section>
@@ -206,6 +219,11 @@
     gap: 12px;
   }
 
+  .project-card-wrap {
+    position: relative;
+  }
+  .project-card-wrap:hover .remove-btn { opacity: 1; }
+
   .project-card {
     background: var(--bg-surface);
     border: 1px solid var(--border-subtle);
@@ -216,11 +234,29 @@
     text-align: left;
     color: var(--text-primary);
     font-family: var(--font-sans);
+    width: 100%;
   }
 
   .project-card:hover { border-color: var(--border); }
   .project-name { font-weight: 600; font-size: 14px; display: block; margin-bottom: 4px; }
   .project-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 4px; }
+
+  .remove-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    font-size: 14px;
+    line-height: 1;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .remove-btn:hover { background: var(--error); border-color: var(--error); color: white; }
   .sep { color: var(--text-muted); }
 
   .error-card {

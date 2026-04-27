@@ -1,5 +1,5 @@
 import { parseFile, computeAtomId } from './parser.js';
-import { discoverSources, discoverSessions } from './scanner.js';
+import { discoverSources, discoverSessions, discoverCoworkSessions } from './scanner.js';
 import { importSessionTitles, backfillTitlesFromSummary, generateTitle } from './session-titles.js';
 import { readFileSync, statSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
@@ -215,6 +215,111 @@ export function indexSession(db, stmts, jsonlPath, projectSlug) {
     }
 }
 /**
+ * Derive the project slug from a cwd path using the same convention Claude Code uses
+ * for ~/.claude/projects/ directory names (replace : and path separators with -).
+ */
+function cwdToProjectSlug(cwd) {
+    return cwd.replace(/[:\\/]/g, '-').replace(/^-+|-+$/g, '');
+}
+/**
+ * Index a Cowork (desktop app) audit.jsonl session.
+ */
+export function indexCoworkSession(db, session) {
+    try {
+        const { auditPath, metaPath, workspaceId, participantId, sessionDirName } = session;
+        const content = readFileSync(auditPath, 'utf-8');
+        const lines = content.split('\n').filter(l => l.trim());
+        if (lines.length === 0)
+            return;
+        let sessionId = null;
+        let cwd = null;
+        let startedAt = null;
+        let lastActive = null;
+        let summary = null;
+        const messageCount = lines.length;
+        for (let i = 0; i < Math.min(lines.length, 20); i++) {
+            try {
+                const entry = JSON.parse(lines[i]);
+                if (entry.session_id && !sessionId)
+                    sessionId = entry.session_id;
+                if (entry._audit_timestamp && !startedAt)
+                    startedAt = entry._audit_timestamp;
+                if (entry.cwd && !cwd)
+                    cwd = entry.cwd;
+                if (entry.type === 'user' && !summary && entry.message?.content) {
+                    const msgContent = typeof entry.message.content === 'string'
+                        ? entry.message.content
+                        : Array.isArray(entry.message.content)
+                            ? (entry.message.content.find((c) => c.type === 'text')?.text ?? '')
+                            : '';
+                    if (msgContent)
+                        summary = msgContent.slice(0, 200);
+                }
+            }
+            catch { }
+        }
+        try {
+            const lastEntry = JSON.parse(lines[lines.length - 1]);
+            lastActive = lastEntry._audit_timestamp || null;
+        }
+        catch { }
+        // Read companion metadata JSON for title, timestamps, and the real userSelectedFolders
+        let title = null;
+        let userFolder = null;
+        if (metaPath) {
+            try {
+                const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
+                title = meta.title ?? null;
+                userFolder = meta.userSelectedFolders?.[0] ?? null;
+                if (!startedAt && meta.createdAt)
+                    startedAt = new Date(meta.createdAt).toISOString();
+                if (!lastActive && meta.lastActivityAt)
+                    lastActive = new Date(meta.lastActivityAt).toISOString();
+            }
+            catch { }
+        }
+        if (!sessionId)
+            sessionId = sessionDirName;
+        if (!title && summary)
+            title = generateTitle(summary);
+        // Use userSelectedFolders[0] as project (the actual folder the user worked in)
+        const project = userFolder ? cwdToProjectSlug(userFolder) : workspaceId;
+        db.prepare(`
+      INSERT INTO sessions (session_id, project, git_branch, slug, jsonl_path, started_at, last_active, status, message_count, subagent_count, summary, title, is_cowork, workspace_id, participant_id)
+      VALUES (@session_id, @project, @git_branch, @slug, @jsonl_path, @started_at, @last_active, @status, @message_count, @subagent_count, @summary, @title, @is_cowork, @workspace_id, @participant_id)
+      ON CONFLICT(session_id) DO UPDATE SET
+        project = @project,
+        last_active = @last_active,
+        status = @status,
+        message_count = @message_count,
+        summary = COALESCE(@summary, sessions.summary),
+        title = COALESCE(sessions.custom_title, @title, sessions.title),
+        is_cowork = 1,
+        workspace_id = @workspace_id,
+        participant_id = @participant_id
+    `).run({
+            session_id: sessionId,
+            project,
+            git_branch: null,
+            slug: null,
+            jsonl_path: auditPath,
+            started_at: startedAt,
+            last_active: lastActive,
+            status: 'dead',
+            message_count: messageCount,
+            subagent_count: 0,
+            summary,
+            title,
+            is_cowork: 1,
+            workspace_id: workspaceId,
+            participant_id: participantId,
+        });
+    }
+    catch {
+        // Skip malformed sessions
+    }
+}
+/**
  * Run a full index of all Claude data.
  */
 export function runFullIndex(db) {
@@ -263,6 +368,15 @@ export function runFullIndex(db) {
         }
     });
     indexSessions();
+    // Index Cowork (desktop app) sessions
+    const coworkSessions = discoverCoworkSessions();
+    const indexCowork = db.transaction(() => {
+        for (const s of coworkSessions) {
+            indexCoworkSession(db, s);
+            stats.sessionsIndexed++;
+        }
+    });
+    indexCowork();
     // Import richer session data from Claude's own metadata DB
     importSessionTitles(db);
     backfillTitlesFromSummary(db);

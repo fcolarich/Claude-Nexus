@@ -4,6 +4,14 @@ import { join } from 'path';
 import { getClaudeConfig } from '../core/config.js';
 import type { SourceType } from '../core/types.js';
 
+export interface CoworkSession {
+  auditPath: string;
+  metaPath: string | null;
+  workspaceId: string;
+  participantId: string;
+  sessionDirName: string;
+}
+
 export interface SourceFile {
   path: string;
   sourceType: SourceType;
@@ -86,6 +94,57 @@ export function discoverSessions(): { path: string; project: string }[] {
   }
 
   return sessions;
+}
+
+/**
+ * Discover Cowork (desktop app) audit.jsonl sessions from the Windows Claude package directory.
+ */
+export function discoverCoworkSessions(): CoworkSession[] {
+  const localAppData = process.env.LOCALAPPDATA;
+  if (!localAppData) return [];
+
+  const packagesDir = join(localAppData, 'Packages');
+  if (!existsSync(packagesDir)) return [];
+
+  const claudePackageDirs = readdirSync(packagesDir, { withFileTypes: true })
+    .filter(d => d.isDirectory() && d.name.startsWith('Claude_'));
+  if (claudePackageDirs.length === 0) return [];
+
+  const claudeDataDir = join(packagesDir, claudePackageDirs[0].name, 'LocalCache', 'Roaming', 'Claude');
+  const agentSessionsDir = join(claudeDataDir, 'local-agent-mode-sessions');
+  const codeSessionsDir = join(claudeDataDir, 'claude-code-sessions');
+
+  if (!existsSync(agentSessionsDir)) return [];
+
+  const results: CoworkSession[] = [];
+
+  const workspaceDirs = readdirSync(agentSessionsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+  for (const ws of workspaceDirs) {
+    const wsPath = join(agentSessionsDir, ws.name);
+    const participantDirs = readdirSync(wsPath, { withFileTypes: true }).filter(d => d.isDirectory());
+    for (const pt of participantDirs) {
+      const ptPath = join(wsPath, pt.name);
+      const sessionDirs = readdirSync(ptPath, { withFileTypes: true }).filter(d => d.isDirectory());
+      for (const sd of sessionDirs) {
+        const auditPath = join(ptPath, sd.name, 'audit.jsonl');
+        if (!existsSync(auditPath)) continue;
+
+        // Companion metadata JSON is a sibling of the session directory
+        const candidateMetaPath = join(ptPath, `${sd.name}.json`);
+        const metaPath = existsSync(candidateMetaPath) ? candidateMetaPath : null;
+
+        results.push({
+          auditPath,
+          metaPath,
+          workspaceId: ws.name,
+          participantId: pt.name,
+          sessionDirName: sd.name,
+        });
+      }
+    }
+  }
+
+  return results;
 }
 
 /**

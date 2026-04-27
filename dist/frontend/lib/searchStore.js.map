@@ -1,0 +1,1 @@
+{"version":3,"file":"searchStore.js","sourceRoot":"","sources":["../../../src/frontend/lib/searchStore.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,QAAQ,EAAE,MAAM,cAAc,CAAC;AAUxC,MAAM,CAAC,MAAM,WAAW,GAAG,QAAQ,CAAc;IAC/C,KAAK,EAAE,EAAE;IACT,UAAU,EAAE,EAAE;IACd,OAAO,EAAE,EAAE;IACX,QAAQ,EAAE,KAAK;CAChB,CAAC,CAAC"}
