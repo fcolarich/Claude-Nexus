@@ -14,8 +14,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_DIR = path.resolve(__dirname, '../../dist-frontend');
 const db = openDatabase();
 initializeSchema(db);
-// Full index on startup
-runFullIndex(db);
+// Full index on startup (async — embedding pass runs after sync indexing)
+runFullIndex(db).catch(err => console.warn('[web] runFullIndex error:', err));
 // Refresh session statuses every 10 seconds
 refreshSessionStatuses(db);
 setInterval(() => {
@@ -27,7 +27,7 @@ setInterval(() => {
 // Re-index all knowledge every 60 seconds to pick up new/changed memory files
 setInterval(() => {
     try {
-        runFullIndex(db);
+        runFullIndex(db).catch(() => { });
     }
     catch { }
 }, 60_000);

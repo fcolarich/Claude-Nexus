@@ -13,12 +13,12 @@ program
 program
     .command('index')
     .description('Index all Claude data (agents, skills, plans, memories, sessions)')
-    .action(() => {
+    .action(async () => {
     const db = openDatabase();
     initializeSchema(db);
     console.log(chalk.blue('Indexing Claude data...'));
     const startTime = Date.now();
-    const stats = runFullIndex(db);
+    const stats = await runFullIndex(db);
     const elapsed = Date.now() - startTime;
     console.log(chalk.green(`\nIndexing complete in ${elapsed}ms:`));
     console.log(`  Atoms created:   ${chalk.bold(stats.atomsCreated)}`);

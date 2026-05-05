@@ -8,11 +8,12 @@ import { homedir } from 'os';
 import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { runFullIndex, reindexFile } from '../indexer/indexer.js';
-import { search, fetchContext, getSharedKnowledge, getProjectContext, listSessions, getDiagnostics, getStats, } from '../core/search.js';
+import { hybridSearch, fetchContext, getSharedKnowledge, getProjectContext, listSessions, getDiagnostics, getStats, } from '../core/search.js';
 // Initialize database and index on startup
 const db = openDatabase();
 initializeSchema(db);
-runFullIndex(db);
+// runFullIndex is now async (embedding pass runs after sync indexing)
+runFullIndex(db).catch(err => console.warn('[server] runFullIndex error:', err));
 const server = new McpServer({
     name: 'claude-nexus',
     version: '0.1.0',
@@ -25,7 +26,7 @@ server.tool('nexus_search', 'Cross-project full-text search across all Claude kn
     scope: z.string().optional().describe('Filter by scope: global, shared, project'),
     limit: z.number().optional().describe('Max results (default: 10)'),
 }, async ({ query, project, type, scope, limit }) => {
-    const results = search(db, query, { project, type, scope, limit: limit ?? 10 });
+    const results = await hybridSearch(db, query, { project, type, scope, limit: limit ?? 10 });
     if (results.length === 0) {
         return { content: [{ type: 'text', text: 'No results found.' }] };
     }
@@ -408,7 +409,7 @@ server.tool('nexus_stats', 'Get database statistics: atom counts by type/scope/p
 });
 // ── nexus_reindex ───────────────────────────────────────────────────
 server.tool('nexus_reindex', 'Force a full re-index of all Claude knowledge files. Call after saving new memory files via the Write tool, or if search results seem stale.', {}, async () => {
-    const stats = runFullIndex(db);
+    const stats = await runFullIndex(db);
     return {
         content: [{
                 type: 'text',

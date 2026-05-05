@@ -38,9 +38,14 @@ export declare function indexSession(db: Database.Database, stmts: PreparedState
  */
 export declare function indexCoworkSession(db: Database.Database, session: CoworkSession): void;
 /**
+ * Embed all atoms that don't yet have a vector in atoms_vec.
+ * Calls Ollama for each unembedded atom — async, non-blocking for the sync index.
+ */
+export declare function embedUnindexed(db: Database.Database): Promise<void>;
+/**
  * Run a full index of all Claude data.
  */
-export declare function runFullIndex(db: Database.Database): IndexStats;
+export declare function runFullIndex(db: Database.Database): Promise<IndexStats>;
 /**
  * Re-index a single file (for file watcher).
  */

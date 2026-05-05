@@ -13,6 +13,7 @@ import { computeAtomId, computeHash } from '../indexer/parser.js';
 import type { Atom, TaskAtom, TaskStatus } from '../core/types.js';
 import {
   search,
+  hybridSearch,
   fetchContext,
   getSharedKnowledge,
   getProjectContext,
@@ -25,7 +26,8 @@ import {
 // Initialize database and index on startup
 const db = openDatabase();
 initializeSchema(db);
-runFullIndex(db);
+// runFullIndex is now async (embedding pass runs after sync indexing)
+runFullIndex(db).catch(err => console.warn('[server] runFullIndex error:', err));
 
 const server = new McpServer({
   name: 'claude-nexus',
@@ -45,7 +47,7 @@ server.tool(
     limit: z.number().optional().describe('Max results (default: 10)'),
   },
   async ({ query, project, type, scope, limit }) => {
-    const results = search(db, query, { project, type, scope, limit: limit ?? 10 });
+    const results = await hybridSearch(db, query, { project, type, scope, limit: limit ?? 10 });
 
     if (results.length === 0) {
       return { content: [{ type: 'text', text: 'No results found.' }] };
@@ -555,7 +557,7 @@ server.tool(
   'Force a full re-index of all Claude knowledge files. Call after saving new memory files via the Write tool, or if search results seem stale.',
   {},
   async () => {
-    const stats = runFullIndex(db);
+    const stats = await runFullIndex(db);
 
     return {
       content: [{

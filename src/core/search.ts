@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { Atom, AtomLink, SearchResult, Diagnostic, Session } from './types.js';
+import { generateEmbedding } from './embeddings.js';
 
 /**
  * Sanitize a query for FTS5 MATCH. Wraps each token in double quotes
@@ -73,6 +74,116 @@ export function search(
     },
     rank: row.rank,
     snippet: row.snippet,
+  }));
+}
+
+/**
+ * Hybrid search: FTS5 BM25 + vector cosine via sqlite-vec, fused with Reciprocal Rank Fusion.
+ * Falls back to FTS5-only search if Ollama is unavailable or atoms_vec does not exist.
+ */
+export async function hybridSearch(
+  db: Database.Database,
+  query: string,
+  options?: { project?: string; type?: string; scope?: string; limit?: number }
+): Promise<SearchResult[]> {
+  const limit = options?.limit ?? 20;
+  const RRF_K = 60;
+
+  // Run FTS5 search (always available)
+  const ftsResults = search(db, query, { ...options, limit });
+
+  // Build FTS rank map: atomId -> rank (0-based position in results list)
+  const ftsRank = new Map<string, number>();
+  for (let i = 0; i < ftsResults.length; i++) {
+    ftsRank.set(ftsResults[i].atom.id, i);
+  }
+
+  // Attempt vector search
+  let vecRank = new Map<string, number>();
+  let vecAtomIds: string[] = [];
+
+  const queryVec = await generateEmbedding(query);
+  if (queryVec !== null) {
+    // Check atoms_vec exists before querying
+    const tableExists = db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='atoms_vec'`
+    ).get();
+
+    if (tableExists) {
+      try {
+        const vecRows = db.prepare(`
+          SELECT rowid, distance FROM atoms_vec
+          WHERE embedding MATCH json(?)
+          ORDER BY distance
+          LIMIT ?
+        `).all(JSON.stringify(Array.from(queryVec)), limit) as { rowid: number; distance: number }[];
+
+        // Map rowid → atom id
+        for (let i = 0; i < vecRows.length; i++) {
+          const atomRow = db.prepare(`SELECT id FROM atoms WHERE rowid = ?`).get(vecRows[i].rowid) as { id: string } | undefined;
+          if (atomRow) {
+            vecRank.set(atomRow.id, i);
+            vecAtomIds.push(atomRow.id);
+          }
+        }
+      } catch (err) {
+        console.warn('[hybridSearch] Vector query failed, falling back to FTS only:', (err as Error).message);
+      }
+    }
+  }
+
+  // If no vector results, return FTS results unchanged
+  if (vecRank.size === 0) {
+    return ftsResults;
+  }
+
+  // Collect all unique atom IDs from both result sets
+  const allIds = new Set<string>([
+    ...ftsResults.map(r => r.atom.id),
+    ...vecAtomIds,
+  ]);
+
+  // Compute RRF scores
+  const rrfScores = new Map<string, number>();
+  for (const id of allIds) {
+    const ftsPosScore = ftsRank.has(id) ? 1 / (RRF_K + ftsRank.get(id)!) : 0;
+    const vecPosScore = vecRank.has(id) ? 1 / (RRF_K + vecRank.get(id)!) : 0;
+    rrfScores.set(id, ftsPosScore + vecPosScore);
+  }
+
+  // Build a map of id → SearchResult (from FTS results — they have snippet)
+  const resultByAtomId = new Map<string, SearchResult>();
+  for (const r of ftsResults) {
+    resultByAtomId.set(r.atom.id, r);
+  }
+
+  // Fetch any atoms that appeared in vec results but not FTS
+  for (const id of vecAtomIds) {
+    if (!resultByAtomId.has(id)) {
+      const row = db.prepare(`SELECT * FROM atoms WHERE id = ?`).get(id) as (Atom & { tags: string; frontmatter: string | null }) | undefined;
+      if (row) {
+        resultByAtomId.set(id, {
+          atom: {
+            ...row,
+            tags: JSON.parse(row.tags as unknown as string),
+            frontmatter: row.frontmatter ? JSON.parse(row.frontmatter as unknown as string) : null,
+          },
+          rank: 0,
+          snippet: '',
+        });
+      }
+    }
+  }
+
+  // Sort by RRF score descending, return top `limit`
+  const sorted = Array.from(allIds)
+    .filter(id => resultByAtomId.has(id))
+    .sort((a, b) => (rrfScores.get(b) ?? 0) - (rrfScores.get(a) ?? 0))
+    .slice(0, limit);
+
+  return sorted.map(id => ({
+    ...resultByAtomId.get(id)!,
+    rank: -(rrfScores.get(id) ?? 0), // negative so lower = better (consistent with BM25 convention)
   }));
 }
 

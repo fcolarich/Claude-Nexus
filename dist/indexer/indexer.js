@@ -3,6 +3,7 @@ import { discoverSources, discoverSessions, discoverCoworkSessions } from './sca
 import { importSessionTitles, backfillTitlesFromSummary, generateTitle } from './session-titles.js';
 import { readFileSync, statSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
+import { generateEmbedding } from '../core/embeddings.js';
 function prepareStatements(db) {
     return {
         getAtomBySourceAndIndex: db.prepare(`SELECT id, content_hash FROM atoms WHERE source_path = ? AND id = ?`),
@@ -320,9 +321,48 @@ export function indexCoworkSession(db, session) {
     }
 }
 /**
+ * Embed all atoms that don't yet have a vector in atoms_vec.
+ * Calls Ollama for each unembedded atom — async, non-blocking for the sync index.
+ */
+export async function embedUnindexed(db) {
+    // Check if atoms_vec exists (sqlite-vec may not be loaded)
+    const tableExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='atoms_vec'`).get();
+    if (!tableExists) {
+        console.warn('[embedder] atoms_vec table not found — skipping embedding pass');
+        return;
+    }
+    const unembedded = db.prepare(`
+    SELECT rowid, id, title, body FROM atoms
+    WHERE rowid NOT IN (SELECT rowid FROM atoms_vec)
+  `).all();
+    if (unembedded.length === 0)
+        return;
+    console.log(`[embedder] Embedding ${unembedded.length} unindexed atoms...`);
+    const insertVec = db.prepare(`INSERT INTO atoms_vec(rowid, embedding) VALUES (?, ?)`);
+    let embedded = 0;
+    let skipped = 0;
+    for (const atom of unembedded) {
+        const text = `${atom.title}\n${atom.body}`;
+        const vec = await generateEmbedding(text);
+        if (vec === null) {
+            skipped++;
+            continue;
+        }
+        try {
+            insertVec.run(atom.rowid, vec);
+            embedded++;
+        }
+        catch (err) {
+            // Row may have been inserted by a concurrent run — ignore
+            skipped++;
+        }
+    }
+    console.log(`[embedder] Done: ${embedded} embedded, ${skipped} skipped`);
+}
+/**
  * Run a full index of all Claude data.
  */
-export function runFullIndex(db) {
+export async function runFullIndex(db) {
     const stmts = prepareStatements(db);
     const stats = {
         atomsCreated: 0,
@@ -380,6 +420,8 @@ export function runFullIndex(db) {
     // Import richer session data from Claude's own metadata DB
     importSessionTitles(db);
     backfillTitlesFromSummary(db);
+    // Async embedding pass — runs after all atoms are upserted
+    await embedUnindexed(db);
     return stats;
 }
 /**

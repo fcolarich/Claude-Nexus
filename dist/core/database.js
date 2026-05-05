@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { homedir } from 'os';
+import * as sqliteVec from 'sqlite-vec';
 const NEXUS_DIR = join(homedir(), '.claude-nexus');
 const DB_PATH = join(NEXUS_DIR, 'nexus.db');
 export function getDbPath() {
@@ -18,6 +19,13 @@ export function openDatabase(dbPath) {
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     db.pragma('busy_timeout = 5000');
+    // Load sqlite-vec extension for vector search (non-fatal if unavailable)
+    try {
+        sqliteVec.load(db);
+    }
+    catch (err) {
+        console.warn('[claude-nexus] sqlite-vec failed to load — vector search disabled:', err.message);
+    }
     return db;
 }
 function migrateTaskSupport(db) {
@@ -216,6 +224,19 @@ export function initializeSchema(db) {
     -- Migrate: add title columns if missing (for existing DBs)
     -- SQLite ignores ALTER TABLE if column already exists via this pattern
   `);
+    // Vector search table — created separately because vec0 may not be loaded
+    try {
+        db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS atoms_vec USING vec0(embedding float[1024])`);
+        // Keep atoms_vec in sync: remove vec entry when atom is deleted
+        db.exec(`
+      CREATE TRIGGER IF NOT EXISTS atoms_vec_ad AFTER DELETE ON atoms BEGIN
+        DELETE FROM atoms_vec WHERE rowid = old.rowid;
+      END;
+    `);
+    }
+    catch (err) {
+        console.warn('[claude-nexus] Could not create atoms_vec table — vector search disabled:', err.message);
+    }
     // Safe migration for existing databases
     try {
         db.exec(`ALTER TABLE sessions ADD COLUMN title TEXT`);

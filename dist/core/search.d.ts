@@ -10,6 +10,16 @@ export declare function search(db: Database.Database, query: string, options?: {
     limit?: number;
 }): SearchResult[];
 /**
+ * Hybrid search: FTS5 BM25 + vector cosine via sqlite-vec, fused with Reciprocal Rank Fusion.
+ * Falls back to FTS5-only search if Ollama is unavailable or atoms_vec does not exist.
+ */
+export declare function hybridSearch(db: Database.Database, query: string, options?: {
+    project?: string;
+    type?: string;
+    scope?: string;
+    limit?: number;
+}): Promise<SearchResult[]>;
+/**
  * "Smart fetch" — search for multiple topics and merge results into one markdown block.
  * This is the key MCP optimization: one tool call, all relevant context.
  */
