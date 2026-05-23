@@ -4,12 +4,13 @@ import { openDatabase, initializeSchema } from '../core/database.js';
 import { runFullIndex } from '../indexer/indexer.js';
 import { search, listAtoms, getDiagnostics, getStats, fetchContext, getSharedKnowledge, listSessions } from '../core/search.js';
 import { startWatcher } from '../indexer/watcher.js';
+import { backfillSessions, selectBackfillSessions } from '../capture/backfill.js';
 
 const program = new Command();
 
 program
   .name('nexus')
-  .description('Claude Nexus — Zettelkasten dashboard for Claude Code')
+  .description('Claude Nexus — autonomous memory engine for Claude Code')
   .version('0.1.0');
 
 // ── nexus index ──────────────────────────────────────────────────────
@@ -277,6 +278,47 @@ program
       stop();
       process.exit(0);
     });
+  });
+
+// ── nexus backfill ───────────────────────────────────────────────────
+
+program
+  .command('backfill')
+  .description('Retroactively extract memories from past sessions (those predating the capture hooks)')
+  .option('-p, --project <project>', 'Limit to one project slug')
+  .option('-m, --min-messages <n>', 'Skip sessions with fewer messages', '8')
+  .option('-l, --limit <n>', 'Max sessions to process', '50')
+  .option('--since <date>', 'Only sessions active on/after this ISO date')
+  .option('--force', 'Re-analyze sessions already processed')
+  .option('--dry-run', 'Report how many sessions would be processed, then exit')
+  .action(async (opts) => {
+    const db = openDatabase();
+    initializeSchema(db);
+
+    const backfillOpts = {
+      project: opts.project,
+      minMessages: parseInt(opts.minMessages, 10),
+      limit: parseInt(opts.limit, 10),
+      since: opts.since,
+      force: !!opts.force,
+      dryRun: !!opts.dryRun,
+    };
+
+    if (backfillOpts.dryRun) {
+      const sel = selectBackfillSessions(db, backfillOpts);
+      console.log(chalk.blue(`${sel.length} session(s) would be backfilled (~${sel.length} LLM calls).`));
+      db.close();
+      return;
+    }
+
+    console.log(chalk.blue('Backfilling memories from past sessions — one LLM call per session...'));
+    const r = await backfillSessions(db, backfillOpts);
+    console.log(chalk.green('\nBackfill complete:'));
+    console.log(`  Sessions processed: ${chalk.bold(r.processed)} / ${r.selected}`);
+    console.log(`  Memories created:   ${chalk.bold(r.inserted)}`);
+    console.log(`  Merged (duplicate): ${chalk.dim(r.merged)}`);
+    console.log(`  Nothing to capture: ${chalk.dim(r.skippedNoSignal)}`);
+    db.close();
   });
 
 program.parse();

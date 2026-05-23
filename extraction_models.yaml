@@ -1,0 +1,39 @@
+# Claude Nexus v2 — model + pipeline configuration.
+# Edit this file to point Nexus at different local models or endpoints.
+# Loaded by src/core/config.ts (getNexusConfig). If this file is missing,
+# Nexus falls back to the defaults baked into that loader.
+
+# Embedding model — used for vector search and dedup similarity.
+embedding:
+  provider: ollama
+  endpoint: http://127.0.0.1:11434/api/embeddings
+  model: mxbai-embed-large
+  dimensions: 1024          # must match the vec0 table width (memories_vec / atoms_vec)
+  timeout_ms: 15000
+
+# Reflector — distills session transcripts into typed memories.
+#   provider: claude-agent-sdk  -> drives the local `claude` CLI (OAuth / Max plan, no API key)
+#   provider: openai-compatible -> POSTs to a local llama.cpp / Ollama /v1 chat endpoint
+extraction:
+  provider: claude-agent-sdk
+  model: claude-haiku-4-5-20251001
+  timeout_ms: 120000
+  # endpoint + temperature are used only when provider is openai-compatible:
+  endpoint: http://127.0.0.1:11434/v1/chat/completions
+  temperature: 0.2
+
+# Recall — budgeted memory injection at session start.
+# Age-based ranking is handled by the decay model (src/core/decay.ts), keyed on
+# each memory's decay_class — not a single global half-life.
+recall:
+  max_tokens: 2000              # hard cap on injected context
+  min_confidence: 0.35          # effective (decayed) confidence below this is not injected
+
+# Capture — Reflector write thresholds + markdown export target.
+capture:
+  auto_approve_confidence: 0.85 # >= this is stored approved; below = pending review
+  dedup_cosine_threshold: 0.86  # a candidate this similar to an existing memory = merge
+  # Where the DB→markdown export writes. A leading ~/ is expanded to your home dir.
+  # Phase 2 keeps this a safe sandbox; the deliberate cutover points it at
+  # ~/.claude/projects/<project>/memory once capture is verified.
+  export_dir: ~/.claude-nexus/exports

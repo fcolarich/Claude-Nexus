@@ -9,7 +9,11 @@
       "Bash(find /c/Users/Fran/.claude/projects -name \"*.jsonl\" -type f -exec grep -l '\"type\":\"document\"\\\\|\"type\":\"pdf\"' {} \\\\;)",
       "Bash(npm run *)",
       "Bash(node dist/mcp/server.js)",
-      "Bash(python3 -m json.tool)"
+      "Bash(python3 -m json.tool)",
+      "Bash(sqlite3 /c/Users/Fran/.claude-nexus/nexus.db \"SELECT source_path, title, project FROM atoms WHERE atom_type='task' LIMIT 10;\")",
+      "mcp__plugin_claude-nexus_claude-nexus__nexus_backfill",
+      "mcp__plugin_claude-nexus_claude-nexus__nexus_sessions",
+      "mcp__plugin_claude-nexus_claude-nexus__nexus_consolidate"
     ]
   }
 }

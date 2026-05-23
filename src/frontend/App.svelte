@@ -4,6 +4,7 @@
   import Dashboard from "./views/Dashboard.svelte";
   import Sessions from "./views/Sessions.svelte";
   import Memories from "./views/Memories.svelte";
+  import Review from "./views/Review.svelte";
   import Search from "./views/Search.svelte";
   import Plans from "./views/Plans.svelte";
   import Agents from "./views/Agents.svelte";
@@ -21,6 +22,8 @@
       <Sessions />
     {:else if $currentRoute === "memories"}
       <Memories />
+    {:else if $currentRoute === "review"}
+      <Review />
     {:else if $currentRoute === "search"}
       <Search />
     {:else if $currentRoute === "plans"}

@@ -1,0 +1,1 @@
+{"version":3,"file":"export.d.ts","sourceRoot":"","sources":["../../src/capture/export.ts"],"names":[],"mappings":"AAAA;;;;;;;GAOG;AAIH,OAAO,QAAQ,MAAM,gBAAgB,CAAC;AAKtC,MAAM,WAAW,YAAY;IAC3B,OAAO,EAAE,MAAM,CAAC;IAChB,KAAK,EAAE,MAAM,CAAC;IACd,GAAG,EAAE,MAAM,CAAC;CACb;AAUD;;;;GAIG;AACH,wBAAgB,SAAS,CAAC,EAAE,EAAE,QAAQ,CAAC,QAAQ,EAAE,iBAAiB,CAAC,EAAE,MAAM,GAAG,YAAY,CAkEzF"}

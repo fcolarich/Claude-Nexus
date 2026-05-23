@@ -1,0 +1,32 @@
+/**
+ * Recall — budgeted retrieval of memories for injection into a session.
+ *
+ * Ranks approved memories by effective-confidence x help-rate, pins
+ * load_at_init memories, then walks a token budget: full bodies until the
+ * budget is reached, titles-only thereafter. Pure read — no mutation, no
+ * network — so it is cheap enough for the SessionStart hot path.
+ */
+import Database from 'better-sqlite3';
+import type { Memory } from './types.js';
+export interface RecalledItem {
+    memory: Memory;
+    score: number;
+    mode: 'full' | 'title';
+}
+export interface RecallResult {
+    items: RecalledItem[];
+    markdown: string;
+    tokenEstimate: number;
+    total: number;
+}
+/**
+ * Recall memories for a project. With no query, returns the project's most
+ * relevant memories for session-start injection. With a query, restricts to
+ * FTS matches first, then ranks.
+ */
+export declare function recallMemories(db: Database.Database, opts: {
+    project?: string | null;
+    query?: string;
+    maxTokens?: number;
+}): RecallResult;
+//# sourceMappingURL=recall.d.ts.map

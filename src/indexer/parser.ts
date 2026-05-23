@@ -239,6 +239,8 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
       taskDiscoveredFrom = typeof frontmatterData.discovered_from === 'string' ? frontmatterData.discovered_from : '';
     }
 
+    const loadAtInit = i === 0 && hasFrontmatter && frontmatterData.load_at_init === true ? 1 : 0;
+
     atoms.push({
       title,
       body: section.body,
@@ -258,6 +260,7 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
       blocks: taskBlocks,
       blocked_by: taskBlockedBy,
       discovered_from: taskDiscoveredFrom,
+      load_at_init: loadAtInit,
     });
 
     // Extract links from this section

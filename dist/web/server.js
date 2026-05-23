@@ -6,9 +6,18 @@ import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from '
 import os from 'os';
 import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
-import { search, listAtoms, getAtomLinks, listSessions, getStats, getDiagnostics, } from '../core/search.js';
-import { runFullIndex, reindexFile } from '../indexer/indexer.js';
+import { search, listAtoms, listSessions, getStats, getDiagnostics, } from '../core/search.js';
+import { runFullIndex, reindexFile, cwdToProjectSlug } from '../indexer/indexer.js';
+import { reindexSessionMessages, searchSessionMessages } from '../indexer/session-messages.js';
 import { refreshSessionStatuses } from './session-monitor.js';
+import { reflect } from '../capture/reflector.js';
+import { exportAll } from '../capture/export.js';
+import { recallMemories } from '../core/recall.js';
+import { flagStaleMemories, effectiveConfidence } from '../core/decay.js';
+import { getNexusConfig } from '../core/config.js';
+import { verifyMemory, recordFeedback, embedMemory } from '../core/memories.js';
+import { consolidateMemories } from '../core/consolidate.js';
+import { distillMemories } from '../core/distill.js';
 const PORT = parseInt(process.env.NEXUS_PORT ?? '3210', 10);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_DIR = path.resolve(__dirname, '../../dist-frontend');
@@ -30,19 +39,82 @@ setInterval(() => {
         runFullIndex(db).catch(() => { });
     }
     catch { }
+    try {
+        flagStaleMemories(db, getNexusConfig().recall.min_confidence);
+    }
+    catch { }
 }, 60_000);
+// Build the session-message search index shortly after startup (off the
+// critical path). New sessions become searchable on the next restart.
+setTimeout(() => {
+    try {
+        reindexSessionMessages(db);
+    }
+    catch { }
+}, 3_000);
 const app = express();
 app.use(cors({
     origin: [
         'http://localhost:3210',
         'http://127.0.0.1:3210',
-        'tauri://localhost',
-        'https://tauri.localhost',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
     ],
 }));
 app.use(express.json());
 // Serve the built frontend
 app.use(express.static(FRONTEND_DIR));
+// --- Capture (Reflector) ---
+// Runs the Reflector over a session transcript. Returns 202 immediately;
+// extraction + write + export happen in the background.
+app.post('/api/reflect', (req, res) => {
+    const { session_id, transcript_path, project, cwd } = (req.body ?? {});
+    if (!session_id || !transcript_path) {
+        return res.status(400).json({ error: 'session_id and transcript_path are required' });
+    }
+    res.status(202).json({ status: 'accepted', session_id });
+    void (async () => {
+        try {
+            const result = await reflect(db, {
+                session_id,
+                transcript_path,
+                project: project ?? (cwd ? cwdToProjectSlug(cwd) : null),
+                cwd,
+            });
+            if (!result.skipped && (result.inserted > 0 || result.merged > 0))
+                exportAll(db);
+            console.log('[web] reflect:', JSON.stringify(result));
+        }
+        catch (err) {
+            console.warn('[web] reflect error:', err.message);
+        }
+    })();
+});
+// --- Recall ---
+// Budgeted memory retrieval. Synchronous (pure read). Used by the nexus-load
+// SessionStart hook and the dashboard.
+app.post('/api/recall', (req, res) => {
+    const { project, cwd, query, maxTokens } = (req.body ?? {});
+    const effectiveProject = project ?? (cwd ? cwdToProjectSlug(cwd) : null);
+    res.json(recallMemories(db, { project: effectiveProject, query, maxTokens }));
+});
+// --- Memory lifecycle ---
+app.post('/api/memories/:id/verify', (req, res) => {
+    res.json({ ok: verifyMemory(db, req.params.id) });
+});
+app.post('/api/memories/:id/feedback', (req, res) => {
+    res.json({ ok: recordFeedback(db, req.params.id, !!(req.body?.helped)) });
+});
+app.post('/api/consolidate', (_req, res) => {
+    consolidateMemories(db)
+        .then(r => res.json(r))
+        .catch(err => res.status(500).json({ error: err.message }));
+});
+app.post('/api/distill', (_req, res) => {
+    distillMemories(db)
+        .then(r => res.json(r))
+        .catch(err => res.status(500).json({ error: err.message }));
+});
 // --- Dashboard ---
 app.get('/api/dashboard', (_req, res) => {
     const stats = getStats(db);
@@ -79,8 +151,20 @@ app.get('/api/dashboard', (_req, res) => {
 // --- Sessions ---
 app.get('/api/sessions', (req, res) => {
     const { project, status } = req.query;
-    const sessions = listSessions(db, { project, status });
-    res.json(sessions.map(toSessionInfo));
+    const limit = Math.min(parseInt(req.query.limit ?? '100', 10) || 100, 500);
+    const offset = parseInt(req.query.offset ?? '0', 10) || 0;
+    const all = listSessions(db, { project, status });
+    res.json({
+        sessions: all.slice(offset, offset + limit).map(toSessionInfo),
+        total: all.length,
+        limit,
+        offset,
+    });
+});
+// Full-text search over raw session messages (user-facing — browse session history)
+app.get('/api/sessions/search', (req, res) => {
+    const q = req.query.q ?? '';
+    res.json({ results: searchSessionMessages(db, q) });
 });
 app.get('/api/sessions/:id', (req, res) => {
     const row = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(req.params.id);
@@ -98,23 +182,91 @@ app.patch('/api/sessions/:id', (req, res) => {
     const row = db.prepare('SELECT * FROM sessions WHERE session_id = ?').get(req.params.id);
     res.json(toSessionInfo(row));
 });
-// --- Memories / Atoms ---
+// --- Memories (the v2 autonomous memory store) ---
+function toMemoryResponse(row) {
+    return {
+        ...row,
+        tags: JSON.parse(row.tags || '[]'),
+        load_at_init: !!row.load_at_init,
+        effective_confidence: Number(effectiveConfidence(row).toFixed(3)),
+    };
+}
 app.get('/api/memories', (req, res) => {
-    const { project, type, scope } = req.query;
-    const atoms = listAtoms(db, { project, type, scope });
-    res.json(atoms.map(toAtomResponse));
+    const { review_status, memory_type, project, scope } = req.query;
+    const limit = Math.min(parseInt(req.query.limit ?? '100', 10) || 100, 500);
+    const offset = parseInt(req.query.offset ?? '0', 10) || 0;
+    const where = ['superseded_by IS NULL'];
+    const params = {};
+    if (review_status) {
+        where.push('review_status = @review_status');
+        params.review_status = review_status;
+    }
+    if (memory_type) {
+        where.push('memory_type = @memory_type');
+        params.memory_type = memory_type;
+    }
+    if (project) {
+        where.push('project = @project');
+        params.project = project;
+    }
+    if (scope) {
+        where.push('scope = @scope');
+        params.scope = scope;
+    }
+    const whereSql = where.join(' AND ');
+    const total = db.prepare(`SELECT COUNT(*) AS c FROM memories WHERE ${whereSql}`).get(params).c;
+    const rows = db.prepare(`
+    SELECT * FROM memories WHERE ${whereSql}
+    ORDER BY confidence DESC, updated_at DESC
+    LIMIT @limit OFFSET @offset
+  `).all({ ...params, limit, offset });
+    res.json({ memories: rows.map(toMemoryResponse), total, limit, offset });
 });
 app.get('/api/memories/:id', (req, res) => {
-    const row = db.prepare('SELECT * FROM atoms WHERE id = ?').get(req.params.id);
+    const row = db.prepare('SELECT * FROM memories WHERE id = ?').get(req.params.id);
     if (!row)
-        return res.status(404).json({ error: 'Atom not found' });
-    const links = getAtomLinks(db, row.id);
-    const linked = links.map((l) => {
-        const otherId = l.source_id === row.id ? l.target_id : l.source_id;
-        const other = db.prepare('SELECT title FROM atoms WHERE id = ?').get(otherId);
-        return { id: otherId, title: other?.title ?? otherId, type: l.link_type };
+        return res.status(404).json({ error: 'Memory not found' });
+    res.json(toMemoryResponse(row));
+});
+app.put('/api/memories/:id', (req, res) => {
+    const { title, body, tags } = req.body;
+    const existing = db.prepare('SELECT id FROM memories WHERE id = ?').get(req.params.id);
+    if (!existing)
+        return res.status(404).json({ error: 'Memory not found' });
+    db.prepare(`
+    UPDATE memories SET
+      title = COALESCE(@title, title),
+      body = COALESCE(@body, body),
+      tags = COALESCE(@tags, tags),
+      updated_at = datetime('now')
+    WHERE id = @id
+  `).run({
+        id: req.params.id,
+        title: title ?? null,
+        body: body ?? null,
+        tags: tags ? JSON.stringify(tags) : null,
     });
-    res.json({ ...toAtomResponse(row), links: linked });
+    if (body !== undefined)
+        embedMemory(db, req.params.id).catch(() => { }); // body changed -> re-embed
+    const updated = db.prepare('SELECT * FROM memories WHERE id = ?').get(req.params.id);
+    res.json(toMemoryResponse(updated));
+});
+app.post('/api/memories/:id/review', (req, res) => {
+    const { status } = req.body;
+    if (status !== 'approved' && status !== 'rejected' && status !== 'pending') {
+        return res.status(400).json({ error: 'status must be approved, rejected, or pending' });
+    }
+    const r = db.prepare(`UPDATE memories SET review_status = ?, updated_at = datetime('now') WHERE id = ?`)
+        .run(status, req.params.id);
+    if (r.changes === 0)
+        return res.status(404).json({ error: 'Memory not found' });
+    res.json({ ok: true, status });
+});
+app.delete('/api/memories/:id', (req, res) => {
+    const r = db.prepare('DELETE FROM memories WHERE id = ?').run(req.params.id);
+    if (r.changes === 0)
+        return res.status(404).json({ error: 'Memory not found' });
+    res.json({ ok: true });
 });
 // --- Plans, Agents, Skills (filtered atom lists) ---
 app.get('/api/plans', (_req, res) => {

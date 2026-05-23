@@ -57,6 +57,55 @@ export interface MemoryAtom {
     links: AtomLink[];
     updatedAt: string;
 }
+export type MemoryType = "preference" | "convention" | "failure" | "correction" | "decision" | "insight" | "tool_quirk" | "reference" | "handoff";
+export type MemoryScope = "global" | "shared" | "project";
+export type ReviewStatus = "pending" | "approved" | "rejected";
+export type DecayClass = "stable" | "architecture" | "api_contract" | "implementation";
+export interface Memory {
+    id: string;
+    title: string;
+    body: string;
+    memory_type: MemoryType;
+    scope: MemoryScope;
+    project: string;
+    confidence: number;
+    effective_confidence: number;
+    decay_class: DecayClass;
+    last_verified_at: string;
+    use_count: number;
+    help_count: number;
+    review_status: ReviewStatus;
+    tags: string[];
+    source_session_id: string;
+    created_at: string;
+    updated_at: string;
+    load_at_init: boolean;
+}
+export interface MemoryListResponse {
+    memories: Memory[];
+    total: number;
+    limit: number;
+    offset: number;
+}
+export interface MemoryQuery {
+    review_status?: ReviewStatus;
+    memory_type?: MemoryType;
+    project?: string;
+    scope?: MemoryScope;
+    limit?: number;
+    offset?: number;
+}
+export interface TranscriptSearchResult {
+    session_id: string;
+    role: string;
+    snippet: string;
+}
+export interface SessionListResponse {
+    sessions: SessionInfo[];
+    total: number;
+    limit: number;
+    offset: number;
+}
 export interface SearchResult {
     id: string;
     path: string;
@@ -124,8 +173,41 @@ export declare const api: {
     deleteSession: (id: string) => Promise<{
         success: boolean;
     }>;
-    memories: (project?: string) => Promise<MemoryAtom[]>;
-    memory: (id: string) => Promise<MemoryAtom>;
+    searchTranscripts: (q: string) => Promise<{
+        results: TranscriptSearchResult[];
+    }>;
+    memories: (params?: MemoryQuery) => Promise<MemoryListResponse>;
+    memory: (id: string) => Promise<Memory>;
+    updateMemory: (id: string, body: {
+        title?: string;
+        body?: string;
+        tags?: string[];
+    }) => Promise<Memory>;
+    reviewMemory: (id: string, status: ReviewStatus) => Promise<{
+        ok: boolean;
+        status: string;
+    }>;
+    verifyMemory: (id: string) => Promise<{
+        ok: boolean;
+    }>;
+    memoryFeedback: (id: string, helped: boolean) => Promise<{
+        ok: boolean;
+    }>;
+    deleteMemory: (id: string) => Promise<{
+        ok: boolean;
+    }>;
+    consolidate: () => Promise<{
+        embedded: number;
+        merged: number;
+        pruned: number;
+    }>;
+    distill: () => Promise<{
+        embedded: number;
+        clusters: number;
+        merged: number;
+        created: number;
+        sanitized: number;
+    }>;
     search: (q: string, type?: string) => Promise<SearchResult[]>;
     projects: () => Promise<string[]>;
     plans: () => Promise<MemoryAtom[]>;

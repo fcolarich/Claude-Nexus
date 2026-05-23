@@ -1,13 +1,19 @@
 import Database from 'better-sqlite3';
-import type { Atom, AtomLink, SearchResult, Diagnostic, Session } from './types.js';
+import type { Atom, AtomLink, SearchResult, Diagnostic, Session, Memory } from './types.js';
 import { generateEmbedding } from './embeddings.js';
+
+export interface MemorySearchResult {
+  memory: Memory;
+  rank: number;
+  snippet: string;
+}
 
 /**
  * Sanitize a query for FTS5 MATCH. Wraps each token in double quotes
  * to prevent special characters from crashing the query parser.
  * Passes through explicit FTS5 operators (AND, OR, NOT) and quoted phrases.
  */
-function sanitizeFts5Query(raw: string): string {
+export function sanitizeFts5Query(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return '""';
 
@@ -188,6 +194,173 @@ export async function hybridSearch(
 }
 
 /**
+ * FTS5 search over the memories table (approved, non-superseded).
+ */
+export function searchMemories(
+  db: Database.Database,
+  query: string,
+  options?: { project?: string; scope?: string; limit?: number }
+): MemorySearchResult[] {
+  const sanitized = sanitizeFts5Query(query);
+  const limit = options?.limit ?? 20;
+
+  const ftsExists = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'`
+  ).get();
+  if (!ftsExists) return [];
+
+  let sql = `
+    SELECT m.*, f.rank,
+      snippet(memories_fts, 1, '<mark>', '</mark>', '...', 40) as snippet
+    FROM memories_fts f
+    JOIN memories m ON m.rowid = f.rowid
+    WHERE memories_fts MATCH ?
+      AND m.review_status = 'approved'
+      AND m.superseded_by IS NULL
+  `;
+  const params: unknown[] = [sanitized];
+
+  if (options?.project) { sql += ` AND m.project = ?`; params.push(options.project); }
+  if (options?.scope)   { sql += ` AND m.scope = ?`;   params.push(options.scope); }
+
+  sql += ` ORDER BY f.rank LIMIT ?`;
+  params.push(limit);
+
+  const rows = db.prepare(sql).all(...params) as (Record<string, unknown> & { rank: number; snippet: string })[];
+  return rows.map(row => ({
+    memory: { ...(row as unknown as Memory), tags: JSON.parse((row.tags as string) || '[]') },
+    rank: row.rank as number,
+    snippet: row.snippet as string,
+  }));
+}
+
+/**
+ * Hybrid (FTS5 + vector) search over memories, fused with RRF.
+ * Falls back to FTS5-only if Ollama is unavailable or memories_vec does not exist.
+ */
+export async function hybridSearchMemories(
+  db: Database.Database,
+  query: string,
+  options?: { project?: string; scope?: string; limit?: number }
+): Promise<MemorySearchResult[]> {
+  const limit = options?.limit ?? 20;
+  const RRF_K = 60;
+
+  const ftsResults = searchMemories(db, query, { ...options, limit });
+  const ftsRank = new Map<string, number>();
+  for (let i = 0; i < ftsResults.length; i++) {
+    ftsRank.set(ftsResults[i].memory.id, i);
+  }
+
+  let vecRank = new Map<string, number>();
+  let vecMemIds: string[] = [];
+
+  const queryVec = await generateEmbedding(query);
+  if (queryVec !== null) {
+    const tableExists = db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='memories_vec'`
+    ).get();
+    if (tableExists) {
+      try {
+        const vecRows = db.prepare(`
+          SELECT rowid, distance FROM memories_vec
+          WHERE embedding MATCH json(?)
+          ORDER BY distance
+          LIMIT ?
+        `).all(JSON.stringify(Array.from(queryVec)), limit) as { rowid: number; distance: number }[];
+
+        for (let i = 0; i < vecRows.length; i++) {
+          const memRow = db.prepare(`
+            SELECT id FROM memories
+            WHERE rowid = ? AND review_status = 'approved' AND superseded_by IS NULL
+          `).get(vecRows[i].rowid) as { id: string } | undefined;
+          if (memRow) {
+            vecRank.set(memRow.id, i);
+            vecMemIds.push(memRow.id);
+          }
+        }
+      } catch (err) {
+        console.warn('[hybridSearchMemories] Vector query failed:', (err as Error).message);
+      }
+    }
+  }
+
+  if (vecRank.size === 0) return ftsResults;
+
+  const allIds = new Set<string>([
+    ...ftsResults.map(r => r.memory.id),
+    ...vecMemIds,
+  ]);
+
+  const rrfScores = new Map<string, number>();
+  for (const id of allIds) {
+    const ftsPosScore = ftsRank.has(id) ? 1 / (RRF_K + ftsRank.get(id)!) : 0;
+    const vecPosScore = vecRank.has(id) ? 1 / (RRF_K + vecRank.get(id)!) : 0;
+    rrfScores.set(id, ftsPosScore + vecPosScore);
+  }
+
+  const resultByMemId = new Map<string, MemorySearchResult>();
+  for (const r of ftsResults) resultByMemId.set(r.memory.id, r);
+
+  for (const id of vecMemIds) {
+    if (!resultByMemId.has(id)) {
+      const row = db.prepare(`
+        SELECT * FROM memories WHERE id = ? AND review_status = 'approved' AND superseded_by IS NULL
+      `).get(id) as Record<string, unknown> | undefined;
+      if (row) {
+        resultByMemId.set(id, {
+          memory: { ...(row as unknown as Memory), tags: JSON.parse((row.tags as string) || '[]') },
+          rank: 0,
+          snippet: '',
+        });
+      }
+    }
+  }
+
+  const sorted = Array.from(allIds)
+    .filter(id => resultByMemId.has(id))
+    .sort((a, b) => (rrfScores.get(b) ?? 0) - (rrfScores.get(a) ?? 0))
+    .slice(0, limit);
+
+  return sorted.map(id => ({
+    ...resultByMemId.get(id)!,
+    rank: -(rrfScores.get(id) ?? 0),
+  }));
+}
+
+/**
+ * Multi-topic smart fetch over the memories table.
+ */
+export function fetchMemoryContext(
+  db: Database.Database,
+  topics: string[],
+  options?: { project?: string }
+): string | null {
+  const seenIds = new Set<string>();
+  const allResults: MemorySearchResult[] = [];
+
+  for (const topic of topics) {
+    for (const r of searchMemories(db, topic, { project: options?.project, limit: 5 })) {
+      if (!seenIds.has(r.memory.id)) {
+        seenIds.add(r.memory.id);
+        allResults.push(r);
+      }
+    }
+  }
+
+  allResults.sort((a, b) => a.rank - b.rank);
+  if (allResults.length === 0) return null;
+
+  const parts = allResults.map(r => {
+    const badge = r.memory.scope === 'global' ? ' [GLOBAL]' : r.memory.scope === 'shared' ? ' [SHARED]' : '';
+    const conf = (r.memory.confidence * 100).toFixed(0);
+    return `## [${r.memory.memory_type}] ${r.memory.title}${badge}\n_Captured memory | confidence: ${conf}% | ${r.memory.decay_class}_\n\n${r.memory.body}`;
+  });
+
+  return parts.join('\n\n---\n\n');
+}
+
+/**
  * "Smart fetch" — search for multiple topics and merge results into one markdown block.
  * This is the key MCP optimization: one tool call, all relevant context.
  */
@@ -226,19 +399,41 @@ export function fetchContext(
 }
 
 /**
- * Get all atoms with global or shared scope.
+ * Get shared/global knowledge for session start.
+ * Returns full content for atoms flagged load_at_init=true,
+ * plus a compact titles-only index for all others.
  */
 export function getSharedKnowledge(db: Database.Database): string | null {
   const atoms = db.prepare(`
-    SELECT * FROM atoms WHERE scope IN ('global', 'shared') ORDER BY scope, atom_type, title
+    SELECT * FROM atoms WHERE scope IN ('global', 'shared')
+    ORDER BY load_at_init DESC, atom_type, title
   `).all() as Atom[];
 
   if (atoms.length === 0) return null;
 
+  const initAtoms = atoms.filter(a => a.load_at_init);
+  const indexAtoms = atoms.filter(a => !a.load_at_init);
+
   const parts: string[] = [];
-  for (const a of atoms) {
-    const scopeBadge = a.scope === 'global' ? '[GLOBAL]' : '[SHARED]';
-    parts.push(`## ${a.title} ${scopeBadge}\n_Type: ${a.atom_type}_\n\n${a.body}`);
+
+  if (initAtoms.length > 0) {
+    parts.push('# Session-Init Knowledge');
+    for (const a of initAtoms) {
+      const badge = a.scope === 'global' ? '[GLOBAL]' : '[SHARED]';
+      parts.push(`## ${a.title} ${badge}\n_Type: ${a.atom_type}_\n\n${a.body}`);
+    }
+  }
+
+  if (indexAtoms.length > 0) {
+    parts.push('# Available Knowledge Index\n_Use nexus_search to load any of these:_');
+    const byType = new Map<string, string[]>();
+    for (const a of indexAtoms) {
+      if (!byType.has(a.atom_type)) byType.set(a.atom_type, []);
+      byType.get(a.atom_type)!.push(a.title);
+    }
+    for (const [type, titles] of byType) {
+      parts.push(`**${type}**: ${titles.join(', ')}`);
+    }
   }
 
   return parts.join('\n\n---\n\n');
@@ -337,13 +532,33 @@ export function listSessions(
 }
 
 /**
+ * Count rows in a table, returning 0 if the table does not exist
+ * (e.g. *_vec tables when sqlite-vec failed to load).
+ */
+function countTable(db: Database.Database, table: string): number {
+  const exists = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+  ).get(table);
+  if (!exists) return 0;
+  try {
+    return (db.prepare(`SELECT COUNT(*) as c FROM ${table}`).get() as { c: number }).c;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Get database statistics for the dashboard.
  */
 export function getStats(db: Database.Database): {
   totalAtoms: number;
+  embeddedAtoms: number;
   atomsByType: Record<string, number>;
   atomsByScope: Record<string, number>;
   atomsByProject: Record<string, number>;
+  totalMemories: number;
+  embeddedMemories: number;
+  memoriesByReview: Record<string, number>;
   totalLinks: number;
   totalSessions: number;
   totalDiagnostics: number;
@@ -359,11 +574,20 @@ export function getStats(db: Database.Database): {
   const byProject = db.prepare(`SELECT COALESCE(project, 'global') as project, COUNT(*) as c FROM atoms GROUP BY project`).all() as { project: string; c: number }[];
   const diagByType = db.prepare(`SELECT type, COUNT(*) as c FROM diagnostics GROUP BY type`).all() as { type: string; c: number }[];
 
+  const totalMemories = countTable(db, 'memories');
+  const memReview = totalMemories > 0
+    ? db.prepare(`SELECT review_status, COUNT(*) as c FROM memories GROUP BY review_status`).all() as { review_status: string; c: number }[]
+    : [];
+
   return {
     totalAtoms,
+    embeddedAtoms: countTable(db, 'atoms_vec'),
     atomsByType: Object.fromEntries(byType.map(r => [r.atom_type, r.c])),
     atomsByScope: Object.fromEntries(byScope.map(r => [r.scope, r.c])),
     atomsByProject: Object.fromEntries(byProject.map(r => [r.project, r.c])),
+    totalMemories,
+    embeddedMemories: countTable(db, 'memories_vec'),
+    memoriesByReview: Object.fromEntries(memReview.map(r => [r.review_status, r.c])),
     totalLinks,
     totalSessions,
     totalDiagnostics,

@@ -1,11 +1,13 @@
 <script lang="ts">
   import { currentRoute, navigate, type Route } from "../lib/router";
+  import { pendingReviewCount } from "../lib/reviewStore";
 
   const navItems: { route: Route; label: string; icon: string }[] = [
     { route: "dashboard", label: "Dashboard", icon: "⌂" },
     { route: "tasks", label: "Tasks", icon: "✓" },
     { route: "sessions", label: "Sessions", icon: "◉" },
     { route: "memories", label: "Memories", icon: "◈" },
+    { route: "review", label: "Review", icon: "⚖" },
     { route: "plans", label: "Plans", icon: "▤" },
     { route: "agents", label: "Agents", icon: "◎" },
     { route: "skills", label: "Skills", icon: "⚡" },
@@ -28,6 +30,9 @@
       >
         <span class="nav-icon">{item.icon}</span>
         <span class="nav-label">{item.label}</span>
+        {#if item.route === "review" && $pendingReviewCount > 0}
+          <span class="nav-badge">{$pendingReviewCount}</span>
+        {/if}
       </button>
     {/each}
   </div>
@@ -107,6 +112,22 @@
     font-size: 15px;
     width: 20px;
     text-align: center;
+  }
+
+  .nav-badge {
+    margin-left: auto;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    background: var(--warning);
+    color: var(--bg-base);
+    border-radius: 9px;
   }
 
   .sidebar-footer {

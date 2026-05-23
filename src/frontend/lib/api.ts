@@ -92,6 +92,71 @@ export interface MemoryAtom {
   updatedAt: string;
 }
 
+export type MemoryType =
+  | "preference"
+  | "convention"
+  | "failure"
+  | "correction"
+  | "decision"
+  | "insight"
+  | "tool_quirk"
+  | "reference"
+  | "handoff";
+
+export type MemoryScope = "global" | "shared" | "project";
+export type ReviewStatus = "pending" | "approved" | "rejected";
+export type DecayClass = "stable" | "architecture" | "api_contract" | "implementation";
+
+export interface Memory {
+  id: string;
+  title: string;
+  body: string;
+  memory_type: MemoryType;
+  scope: MemoryScope;
+  project: string;
+  confidence: number;
+  effective_confidence: number;
+  decay_class: DecayClass;
+  last_verified_at: string;
+  use_count: number;
+  help_count: number;
+  review_status: ReviewStatus;
+  tags: string[];
+  source_session_id: string;
+  created_at: string;
+  updated_at: string;
+  load_at_init: boolean;
+}
+
+export interface MemoryListResponse {
+  memories: Memory[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface MemoryQuery {
+  review_status?: ReviewStatus;
+  memory_type?: MemoryType;
+  project?: string;
+  scope?: MemoryScope;
+  limit?: number;
+  offset?: number;
+}
+
+export interface TranscriptSearchResult {
+  session_id: string;
+  role: string;
+  snippet: string;
+}
+
+export interface SessionListResponse {
+  sessions: SessionInfo[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface SearchResult {
   id: string;
   path: string;
@@ -154,14 +219,44 @@ export interface CreateTaskParams {
 
 export const api = {
   dashboard: () => get<DashboardData>("/api/dashboard"),
-  sessions: (project?: string) => get<SessionInfo[]>(`/api/sessions${project ? `?project=${encodeURIComponent(project)}` : ""}`),
+  sessions: async (project?: string): Promise<SessionInfo[]> => {
+    const res = await get<SessionListResponse>(
+      `/api/sessions${project ? `?project=${encodeURIComponent(project)}` : ""}`,
+    );
+    return res.sessions;
+  },
   session: (id: string) => get<SessionInfo>(`/api/sessions/${id}`),
   renameSession: (id: string, title: string) => patch<SessionInfo>(`/api/sessions/${id}`, { title }),
   sessionMessages: (id: string) => get<{ messages: ConversationMessage[] }>(`/api/sessions/${encodeURIComponent(id)}/messages`),
   sessionReferences: (id: string) => get<{ references: SessionReference[] }>(`/api/sessions/${encodeURIComponent(id)}/references`),
   deleteSession: (id: string) => del<{ success: boolean }>(`/api/sessions/${encodeURIComponent(id)}`),
-  memories: (project?: string) => get<MemoryAtom[]>(`/api/memories${project ? `?project=${encodeURIComponent(project)}` : ""}`),
-  memory: (id: string) => get<MemoryAtom>(`/api/memories/${encodeURIComponent(id)}`),
+  searchTranscripts: (q: string) =>
+    get<{ results: TranscriptSearchResult[] }>(`/api/sessions/search?q=${encodeURIComponent(q)}`),
+  memories: (params?: MemoryQuery) => {
+    const q = new URLSearchParams();
+    if (params?.review_status) q.set("review_status", params.review_status);
+    if (params?.memory_type) q.set("memory_type", params.memory_type);
+    if (params?.project) q.set("project", params.project);
+    if (params?.scope) q.set("scope", params.scope);
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    if (params?.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    return get<MemoryListResponse>(`/api/memories${qs ? `?${qs}` : ""}`);
+  },
+  memory: (id: string) => get<Memory>(`/api/memories/${encodeURIComponent(id)}`),
+  updateMemory: (id: string, body: { title?: string; body?: string; tags?: string[] }) =>
+    put<Memory>(`/api/memories/${encodeURIComponent(id)}`, body),
+  reviewMemory: (id: string, status: ReviewStatus) =>
+    post<{ ok: boolean; status: string }>(`/api/memories/${encodeURIComponent(id)}/review`, { status }),
+  verifyMemory: (id: string) =>
+    post<{ ok: boolean }>(`/api/memories/${encodeURIComponent(id)}/verify`, {}),
+  memoryFeedback: (id: string, helped: boolean) =>
+    post<{ ok: boolean }>(`/api/memories/${encodeURIComponent(id)}/feedback`, { helped }),
+  deleteMemory: (id: string) => del<{ ok: boolean }>(`/api/memories/${encodeURIComponent(id)}`),
+  consolidate: () =>
+    post<{ embedded: number; merged: number; pruned: number }>("/api/consolidate", {}),
+  distill: () =>
+    post<{ embedded: number; clusters: number; merged: number; created: number; sanitized: number }>("/api/distill", {}),
   search: (q: string, type?: string) => get<SearchResult[]>(`/api/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ""}`),
   projects: () => get<string[]>("/api/projects"),
   plans: () => get<MemoryAtom[]>("/api/plans"),

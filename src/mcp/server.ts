@@ -8,13 +8,15 @@ import { homedir } from 'os';
 import { createHash } from 'crypto';
 import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
-import { runFullIndex, reindexFile } from '../indexer/indexer.js';
+import { runFullIndex, reindexFile, cwdToProjectSlug } from '../indexer/indexer.js';
 import { computeAtomId, computeHash } from '../indexer/parser.js';
 import type { Atom, TaskAtom, TaskStatus } from '../core/types.js';
 import {
   search,
   hybridSearch,
+  hybridSearchMemories,
   fetchContext,
+  fetchMemoryContext,
   getSharedKnowledge,
   getProjectContext,
   listSessions,
@@ -22,6 +24,12 @@ import {
   getStats,
   listAtoms,
 } from '../core/search.js';
+import { recallMemories } from '../core/recall.js';
+import { verifyMemory, recordFeedback, insertMemory, embedMemory } from '../core/memories.js';
+import type { MemoryType, DecayClass } from '../core/types.js';
+import { consolidateMemories } from '../core/consolidate.js';
+import { distillMemories } from '../core/distill.js';
+import { backfillSessions } from '../capture/backfill.js';
 
 // Initialize database and index on startup
 const db = openDatabase();
@@ -29,38 +37,83 @@ initializeSchema(db);
 // runFullIndex is now async (embedding pass runs after sync indexing)
 runFullIndex(db).catch(err => console.warn('[server] runFullIndex error:', err));
 
+
 const server = new McpServer({
   name: 'claude-nexus',
   version: '0.1.0',
 });
 
+/**
+ * Resolve a project slug from a working-directory path.
+ * 1. Derived slug via cwdToProjectSlug (full path convention, e.g. "C--Fran-Monster-Hotel").
+ * 2. Short-name fallback (last path segment lowercased, e.g. "monster-hotel"). Handles projects
+ *    whose tasks were created with a short name rather than the full path slug.
+ * Each candidate is checked against atoms AND sessions so backfill resolution works too.
+ */
+function resolveProjectFromCwd(cwd: string): string {
+  const known = (slug: string) =>
+    !!db.prepare(`SELECT 1 FROM atoms    WHERE project = ? LIMIT 1`).get(slug) ||
+    !!db.prepare(`SELECT 1 FROM sessions WHERE project = ? LIMIT 1`).get(slug);
+
+  const derived = cwdToProjectSlug(cwd);
+  if (derived && known(derived)) return derived;
+
+  const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+  const shortName = parts[parts.length - 1]?.toLowerCase().replace(/_/g, '-');
+  if (shortName && shortName !== derived?.toLowerCase() && known(shortName)) return shortName;
+
+  return derived ?? shortName ?? cwd;
+}
+
 // ── nexus_search ─────────────────────────────────────────────────────
 
 server.tool(
   'nexus_search',
-  'Cross-project full-text search across all Claude knowledge (memories, agents, skills, plans). Returns relevant atoms merged into one markdown response.',
+  'Cross-project full-text search across all Claude knowledge: captured memories AND agents/skills/plans/notes. Returns both stores merged into one markdown response.',
   {
-    query: z.string().describe('Search query (supports FTS5 syntax: AND, OR, NOT, "phrases", prefix*)'),
-    project: z.string().optional().describe('Filter by project slug'),
-    type: z.string().optional().describe('Filter by atom type: memory, agent, skill, plan, feedback, reference, project_note'),
-    scope: z.string().optional().describe('Filter by scope: global, shared, project'),
-    limit: z.number().optional().describe('Max results (default: 10)'),
+    query:   z.string().describe('Search query (supports FTS5 syntax: AND, OR, NOT, "phrases", prefix*)'),
+    project: z.string().optional().describe('Filter by full project slug (e.g. "C--Fran-Monster-Hotel"). Prefer cwd to avoid guessing the slug.'),
+    cwd:     z.string().optional().describe('Caller working directory — derives the project slug automatically. Use instead of project when searching within the current project.'),
+    type:    z.string().optional().describe('Filter atoms by type: agent, skill, plan, task, project_note, architecture (omit to include all)'),
+    scope:   z.string().optional().describe('Filter by scope: global, shared, project'),
+    limit:   z.coerce.number().optional().describe('Max results per store (default: 10)'),
   },
-  async ({ query, project, type, scope, limit }) => {
-    const results = await hybridSearch(db, query, { project, type, scope, limit: limit ?? 10 });
+  async ({ query, project, cwd, type, scope, limit }) => {
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const cap = limit ?? 10;
 
-    if (results.length === 0) {
+    const [atomResults, memResults] = await Promise.all([
+      hybridSearch(db, query, { project: effectiveProject, type, scope, limit: cap }),
+      hybridSearchMemories(db, query, { project: effectiveProject, scope, limit: cap }),
+    ]);
+
+    if (atomResults.length === 0 && memResults.length === 0) {
       return { content: [{ type: 'text', text: 'No results found.' }] };
     }
 
-    const parts = results.map(r => {
-      const scopeBadge = r.atom.scope === 'global' ? '[GLOBAL]' : r.atom.scope === 'shared' ? '[SHARED]' : '';
-      const source = r.atom.project || 'global';
-      return `## ${r.atom.title} ${scopeBadge}\n_Source: ${source} | ${r.atom.atom_type}_\n\n${r.atom.body}`;
-    });
+    const parts: string[] = [];
+
+    if (memResults.length > 0) {
+      parts.push('## Captured Memories');
+      for (const r of memResults) {
+        const badge = r.memory.scope === 'global' ? ' [GLOBAL]' : r.memory.scope === 'shared' ? ' [SHARED]' : '';
+        const conf = (r.memory.confidence * 100).toFixed(0);
+        parts.push(`### [${r.memory.memory_type}] ${r.memory.title}${badge}\n_Confidence: ${conf}% | ${r.memory.decay_class}_\n\n${r.memory.body}`);
+      }
+    }
+
+    if (atomResults.length > 0) {
+      if (parts.length > 0) parts.push('---');
+      parts.push('## Knowledge Atoms (agents, skills, plans, notes)');
+      for (const r of atomResults) {
+        const badge = r.atom.scope === 'global' ? ' [GLOBAL]' : r.atom.scope === 'shared' ? ' [SHARED]' : '';
+        const source = r.atom.project || 'global';
+        parts.push(`### ${r.atom.title}${badge ? ' ' + badge : ''}\n_Source: ${source} | ${r.atom.atom_type}_\n\n${r.atom.body}`);
+      }
+    }
 
     return {
-      content: [{ type: 'text', text: parts.join('\n\n---\n\n') }],
+      content: [{ type: 'text', text: parts.join('\n\n') }],
     };
   }
 );
@@ -69,19 +122,49 @@ server.tool(
 
 server.tool(
   'nexus_context',
-  'Smart fetch: request multiple topics and receive one merged response with all relevant knowledge. Use this instead of reading multiple files — one tool call, precisely targeted context.',
+  'Smart fetch: request multiple topics and receive one merged response with all relevant knowledge from both captured memories and knowledge atoms. One tool call, precisely targeted context.',
   {
-    topics: z.array(z.string()).describe('List of topics to fetch (e.g., ["ECS architecture", "coding preferences", "WebGL bridge"])'),
-    project: z.string().optional().describe('Optionally scope to a specific project'),
+    topics:  z.array(z.string()).describe('List of topics to fetch (e.g., ["ECS architecture", "coding preferences", "WebGL bridge"])'),
+    project: z.string().optional().describe('Scope to a full project slug (e.g. "C--Fran-Monster-Hotel"). Prefer cwd to avoid guessing the slug.'),
+    cwd:     z.string().optional().describe('Caller working directory — derives the project slug automatically. Use instead of project when scoping to the current project.'),
   },
-  async ({ topics, project }) => {
-    const merged = fetchContext(db, topics, { project });
+  async ({ topics, project, cwd }) => {
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
 
-    if (!merged) {
-      return { content: [{ type: 'text', text: 'No atoms found for the given topics.' }] };
+    const memMerged = fetchMemoryContext(db, topics, { project: effectiveProject });
+    const atomMerged = fetchContext(db, topics, { project: effectiveProject });
+
+    if (!memMerged && !atomMerged) {
+      return { content: [{ type: 'text', text: 'No knowledge found for the given topics.' }] };
     }
 
-    return { content: [{ type: 'text', text: merged }] };
+    const parts: string[] = [];
+    if (memMerged) parts.push(memMerged);
+    if (atomMerged) parts.push(atomMerged);
+
+    return { content: [{ type: 'text', text: parts.join('\n\n---\n\n') }] };
+  }
+);
+
+// ── nexus_recall ─────────────────────────────────────────────────────
+
+server.tool(
+  'nexus_recall',
+  'Recall the most relevant memories for the current project, budgeted to a token cap. With no query, returns session-start context (preferences, conventions, decisions, handoffs). With a query, restricts to memories matching that topic. Ranked by confidence, recency, and helpfulness; full bodies until the budget is reached, then titles only.',
+  {
+    project:    z.string().optional().describe('Full project slug. Prefer cwd to avoid guessing the slug.'),
+    cwd:        z.string().optional().describe('Caller working directory — derives the project slug automatically.'),
+    query:      z.string().optional().describe('Optional topic to focus recall on. Omit for general session-start recall.'),
+    max_tokens: z.coerce.number().optional().describe('Token budget for injected memory (default from extraction_models.yaml).'),
+  },
+  async ({ project, cwd, query, max_tokens }) => {
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : null);
+    const result = recallMemories(db, { project: effectiveProject, query, maxTokens: max_tokens });
+
+    if (result.items.length === 0) {
+      return { content: [{ type: 'text', text: 'No memories recalled.' }] };
+    }
+    return { content: [{ type: 'text', text: result.markdown }] };
   }
 );
 
@@ -89,7 +172,7 @@ server.tool(
 
 server.tool(
   'nexus_shared',
-  'Get all shared/global knowledge atoms (user preferences, environment info, cross-project patterns). Call at session start for universal context.',
+  'Get global/shared knowledge for session start. Returns full content for atoms flagged load_at_init=true, plus a compact titles-only index of all other global/shared atoms. Use nexus_set_init to flag atoms for full loading.',
   {},
   async () => {
     const merged = getSharedKnowledge(db);
@@ -102,19 +185,57 @@ server.tool(
   }
 );
 
+// ── nexus_set_init ───────────────────────────────────────────────────
+
+server.tool(
+  'nexus_set_init',
+  'Toggle the load_at_init flag on a global or shared atom. When true, nexus_shared returns that atom\'s full content at session start. Use nexus_search to find atom IDs.',
+  {
+    id: z.string().describe('Atom ID to update'),
+    load_at_init: z.boolean().describe('true = load full content at session start; false = titles-only index'),
+  },
+  async ({ id, load_at_init }) => {
+    const atom = db.prepare(`SELECT * FROM atoms WHERE id = ?`).get(id) as Atom | undefined;
+    if (!atom) {
+      return { content: [{ type: 'text', text: `Error: atom not found with id ${id}` }] };
+    }
+    if (atom.scope === 'project') {
+      return { content: [{ type: 'text', text: `Error: load_at_init only applies to global or shared atoms (this atom is project-scoped)` }] };
+    }
+
+    const raw = await readFile(atom.source_path, 'utf-8');
+    const parsed = matter(raw);
+    parsed.data.load_at_init = load_at_init;
+    await writeFile(atom.source_path, matter.stringify(parsed.content, parsed.data), 'utf-8');
+
+    db.prepare(`UPDATE atoms SET load_at_init = ? WHERE id = ?`).run(load_at_init ? 1 : 0, id);
+
+    return {
+      content: [{ type: 'text', text: `"${atom.title}" — load_at_init set to ${load_at_init}` }],
+    };
+  }
+);
+
 // ── nexus_project ────────────────────────────────────────────────────
 
 server.tool(
   'nexus_project',
   'Get all knowledge atoms for a specific project. Returns project memories, notes, and architecture docs merged into one response.',
   {
-    project: z.string().describe('Project slug (e.g., "C--Fran-RRDestructible")'),
+    project: z.string().optional().describe('Full project slug (e.g. "C--Fran-RRDestructible"). Prefer cwd to avoid guessing the slug.'),
+    cwd:     z.string().optional().describe('Caller working directory — derives the project slug automatically.'),
   },
-  async ({ project }) => {
-    const merged = getProjectContext(db, project);
+  async ({ project, cwd }) => {
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+
+    if (!effectiveProject) {
+      return { content: [{ type: 'text', text: 'Error: provide project or cwd.' }] };
+    }
+
+    const merged = getProjectContext(db, effectiveProject);
 
     if (!merged) {
-      return { content: [{ type: 'text', text: `No atoms found for project: ${project}` }] };
+      return { content: [{ type: 'text', text: `No atoms found for project: ${effectiveProject}` }] };
     }
 
     return { content: [{ type: 'text', text: merged }] };
@@ -178,63 +299,82 @@ ${diags.map(d => `- **[${d.type}]** ${d.message}${d.details ? `\n  ${d.details}`
 
 // ── nexus_remember ───────────────────────────────────────────────────
 
+// Maps legacy atom_type values to memory_type for the memories store.
+const ATOM_TYPE_TO_MEMORY_TYPE: Record<string, MemoryType> = {
+  memory: 'insight',
+  feedback: 'correction',
+  reference: 'reference',
+  project_note: 'decision',
+  architecture: 'decision',
+};
+
+// Default decay class per memory type.
+const MEMORY_TYPE_DECAY: Record<MemoryType, DecayClass> = {
+  preference: 'stable',
+  convention: 'stable',
+  reference: 'stable',
+  decision: 'architecture',
+  insight: 'implementation',
+  correction: 'api_contract',
+  failure: 'api_contract',
+  tool_quirk: 'api_contract',
+  handoff: 'implementation',
+};
+
 server.tool(
   'nexus_remember',
-  'Store a new knowledge atom in the zettelkasten. Use this to proactively save insights, decisions, or patterns that should persist across sessions. Also use with atom_type="task" to create task atoms.',
+  'Store knowledge in the memories store (or a task atom). For knowledge: writes to the memories table so it is searchable by nexus_search and recallable by nexus_recall. Use atom_type="task" for task atoms (stored in atoms table).',
   {
-    title: z.string().describe('Short title for the knowledge atom'),
-    content: z.string().describe('Markdown content of the atom'),
-    scope: z.enum(['global', 'shared', 'project']).describe('Scope: global (all projects), shared (related projects), project (current only)'),
-    atom_type: z.enum(['memory', 'feedback', 'reference', 'project_note', 'architecture', 'task']).describe('Type of knowledge'),
-    tags: z.array(z.string()).optional().describe('Tags for searchability'),
-    project: z.string().optional().describe('Project slug (required for project scope)'),
+    title:       z.string().describe('Short title for the memory'),
+    content:     z.string().describe('Body — 1–4 self-contained sentences with the durable lesson and its why'),
+    scope:       z.enum(['global', 'shared', 'project']).describe('Scope: global (all projects), shared (related projects), project (current only)'),
+    memory_type: z.enum(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference', 'handoff']).optional()
+      .describe('Memory type (knowledge store). Omit only when using atom_type=task.'),
+    atom_type:   z.enum(['memory', 'feedback', 'reference', 'project_note', 'architecture', 'task']).optional()
+      .describe('Legacy atom type — use memory_type instead for knowledge; atom_type=task still creates a task atom.'),
+    tags:        z.array(z.string()).optional().describe('Tags for searchability'),
+    project:     z.string().optional().describe('Project slug (required for project scope). Prefer cwd.'),
+    cwd:         z.string().optional().describe('Caller working directory — derives project slug automatically.'),
+    confidence:  z.coerce.number().min(0).max(1).optional().describe('Intrinsic confidence 0–1 (default: 0.85)'),
+    load_at_init: z.boolean().optional().default(false).describe('If true, always recalled at session start regardless of decay'),
     // Task-specific fields
-    status: z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('Task status (task atoms only, default: ready)'),
-    priority: z.number().min(1).max(3).optional().describe('Task priority 1-3 (task atoms only, default: 2)'),
-    blocks: z.array(z.string()).optional().describe('Atom IDs this task blocks (task atoms only)'),
-    blocked_by: z.array(z.string()).optional().describe('Atom IDs that must be done before this task (task atoms only)'),
+    status:       z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('Task status (task atoms only, default: ready)'),
+    priority:     z.coerce.number().min(1).max(3).optional().describe('Task priority 1-3 (task atoms only, default: 2)'),
+    blocks:       z.array(z.string()).optional().describe('Atom IDs this task blocks (task atoms only)'),
+    blocked_by:   z.array(z.string()).optional().describe('Atom IDs blocking this task (task atoms only)'),
     discovered_from: z.string().optional().describe('Atom ID of the task that discovered this one (task atoms only)'),
   },
-  async ({ title, content, scope, atom_type, tags, project, status, priority, blocks, blocked_by, discovered_from }) => {
-    // Determine where to store the file
-    const claudeDir = join(homedir(), '.claude');
-    let targetDir: string;
+  async ({ title, content, scope, memory_type, atom_type, tags, project, cwd, confidence, load_at_init, status, priority, blocks, blocked_by, discovered_from }) => {
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const isTask = atom_type === 'task';
 
-    if (scope === 'global' || !project) {
-      targetDir = join(claudeDir, 'nexus-atoms');
-    } else {
-      targetDir = join(claudeDir, 'projects', project, 'memory');
-    }
+    // ── Task path (atoms table, file-based) ───────────────────────────
+    if (isTask) {
+      const claudeDir = join(homedir(), '.claude');
+      const targetDir = effectiveProject
+        ? join(claudeDir, 'projects', effectiveProject, 'memory')
+        : join(claudeDir, 'nexus-atoms');
 
-    if (!existsSync(targetDir)) {
-      await mkdir(targetDir, { recursive: true });
-    }
+      if (!existsSync(targetDir)) await mkdir(targetDir, { recursive: true });
 
-    // Generate filename from title, with collision avoidance
-    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-    let filename = `${atom_type}_${slug}.md`;
-    let filePath = join(targetDir, filename);
-
-    if (existsSync(filePath)) {
+      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+      let filename = `task_${slug}.md`;
+      let filePath = join(targetDir, filename);
       let counter = 2;
       while (existsSync(filePath)) {
-        filename = `${atom_type}_${slug}_${counter}.md`;
+        filename = `task_${slug}_${counter}.md`;
         filePath = join(targetDir, filename);
         counter++;
       }
-    }
 
-    const now = new Date().toISOString();
-    let fileContent: string;
-
-    if (atom_type === 'task') {
+      const now = new Date().toISOString();
       const frontmatterLines = [
         '---',
         `title: "${title}"`,
         `atom_type: task`,
         `status: ${status ?? 'ready'}`,
         `priority: ${priority ?? 2}`,
-        project ? `project: ${project}` : null,
+        effectiveProject ? `project: ${effectiveProject}` : null,
         tags && tags.length > 0 ? `tags: [${tags.map(t => `"${t}"`).join(', ')}]` : `tags: []`,
         `blocks: [${(blocks ?? []).map(b => `"${b}"`).join(', ')}]`,
         `blocked_by: [${(blocked_by ?? []).map(b => `"${b}"`).join(', ')}]`,
@@ -243,30 +383,38 @@ server.tool(
         `updated_at: ${now}`,
         '---',
       ].filter(Boolean).join('\n');
-      fileContent = `${frontmatterLines}\n\n${content}`;
-    } else {
-      const frontmatterLines = [
-        '---',
-        `name: "${title}"`,
-        `type: ${atom_type}`,
-        `scope: ${scope}`,
-        tags && tags.length > 0 ? `tags: [${tags.map(t => `"${t}"`).join(', ')}]` : null,
-        '---',
-      ].filter(Boolean).join('\n');
-      fileContent = `${frontmatterLines}\n\n${content}`;
+
+      await writeFile(filePath, `${frontmatterLines}\n\n${content}`, 'utf-8');
+      reindexFile(db, filePath, effectiveProject ? 'memory_file' : 'nexus_native');
+
+      const row = db.prepare(`SELECT id FROM atoms WHERE source_path = ? LIMIT 1`).get(filePath) as { id: string } | undefined;
+      return { content: [{ type: 'text', text: `Task created: "${title}"\nID: ${row?.id ?? '(pending index)'}\nPath: ${filePath}` }] };
     }
 
-    await writeFile(filePath, fileContent, 'utf-8');
+    // ── Knowledge path (memories table) ───────────────────────────────
+    const resolvedMemType: MemoryType =
+      memory_type ?? (atom_type ? ATOM_TYPE_TO_MEMORY_TYPE[atom_type] ?? 'insight' : 'insight');
 
-    // Index the new file
-    reindexFile(db, filePath, scope === 'global' ? 'nexus_native' : 'memory_file');
+    const { id, inserted } = insertMemory(db, {
+      title,
+      body: content,
+      memory_type: resolvedMemType,
+      scope,
+      project: effectiveProject ?? null,
+      confidence: confidence ?? 0.85,
+      decay_class: MEMORY_TYPE_DECAY[resolvedMemType],
+      review_status: 'approved',
+      source_session_id: null,
+      discovered_from: null,
+      tags: tags ?? [],
+      load_at_init: load_at_init ?? false,
+    });
 
-    // Return the atom ID for task atoms so callers can reference them
-    const atomId = db.prepare(`SELECT id FROM atoms WHERE source_path = ? LIMIT 1`).get(filePath) as { id: string } | undefined;
+    // Embed in background — best effort, non-blocking for the caller
+    embedMemory(db, id).catch(() => {});
 
-    return {
-      content: [{ type: 'text', text: `Atom created: "${title}" at ${filePath}${atomId ? `\nID: ${atomId.id}` : ''}` }],
-    };
+    const status_msg = inserted ? 'Memory stored' : 'Memory already exists (content-addressed dedup)';
+    return { content: [{ type: 'text', text: `${status_msg}: "${title}"\nID: ${id}\nType: ${resolvedMemType} | Scope: ${scope} | Confidence: ${(confidence ?? 0.85) * 100}%` }] };
   }
 );
 
@@ -280,7 +428,7 @@ server.tool(
       title: z.string().describe('Short title for the task'),
       content: z.string().describe('Markdown body / description of the task'),
       project: z.string().optional().describe('Project slug; omit to store in global nexus-atoms/'),
-      priority: z.number().min(1).max(3).optional().describe('Priority 1-3 (default 2)'),
+      priority: z.coerce.number().min(1).max(3).optional().describe('Priority 1-3 (default 2)'),
       tags: z.array(z.string()).optional().describe('Tags for searchability'),
       status: z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('Initial status (default: ready)'),
       blocks: z.array(z.string()).optional().describe('Atom IDs this task blocks'),
@@ -385,27 +533,35 @@ function toTaskAtom(task: Atom, effectiveStatus: TaskStatus): TaskAtom {
 
 server.tool(
   'nexus_tasks',
-  'List task atoms with dependency resolution. status="ready" returns only genuinely unblocked tasks.',
+  'List task atoms for the current project by default. Pass cwd or project to scope, or all_projects=true to see all. status="ready" resolves dependency chains.',
   {
-    project: z.string().optional().describe('Filter by project slug; omit for all projects'),
-    status: z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('Filter by effective status'),
-    priority: z.number().min(1).max(3).optional().describe('Filter by priority (1-3)'),
-    include_done: z.boolean().optional().describe('Include done tasks (default: false)'),
+    project:      z.string().optional().describe('Explicit project slug filter'),
+    cwd:          z.string().optional().describe('Caller working directory — used to derive project slug when project is omitted'),
+    all_projects: z.coerce.boolean().optional().describe('Set true to return tasks across all projects (default: false)'),
+    status:       z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('Filter by effective status'),
+    priority:     z.coerce.number().min(1).max(3).optional().describe('Filter by priority (1-3)'),
+    include_done: z.coerce.boolean().optional().describe('Include done tasks (default: false)'),
   },
-  async ({ project, status, priority, include_done }) => {
-    // Fetch all task atoms for dependency resolution
+  async ({ project, cwd, all_projects, status, priority, include_done }) => {
+    // Resolve effective project: explicit > cwd-derived > all (if opted in)
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+
+    if (!effectiveProject && !all_projects) {
+      return { content: [{ type: 'text', text: JSON.stringify({ warning: 'No project context. Pass cwd, project, or all_projects: true.', tasks: [] }) }] };
+    }
+
+    // Phase 1: display candidates (filtered)
     let sql = `SELECT * FROM atoms WHERE atom_type = 'task'`;
     const params: unknown[] = [];
-    if (project) { sql += ` AND project = ?`; params.push(project); }
-    if (priority) { sql += ` AND priority = ?`; params.push(priority); }
-
+    if (effectiveProject) { sql += ` AND project = ?`; params.push(effectiveProject); }
+    if (priority)         { sql += ` AND priority = ?`; params.push(priority); }
     const rows = db.prepare(sql).all(...params) as Atom[];
 
-    // Build lookup map for dependency resolution
-    const allTasksById = new Map<string, Atom>(rows.map(r => [r.id, r]));
+    // Phase 2: full task set for cross-project dependency resolution
+    const allRows = db.prepare(`SELECT * FROM atoms WHERE atom_type = 'task'`).all() as Atom[];
+    const allTasksById = new Map<string, Atom>(allRows.map(r => [r.id, r]));
 
-    // Resolve effective status and filter
-    let tasks = rows
+    const tasks = rows
       .map(r => ({ task: r, eff: resolveEffectiveStatus(r, allTasksById) }))
       .filter(({ task, eff }) => {
         if (!include_done && (task.status === 'done' || eff === 'done')) return false;
@@ -432,13 +588,19 @@ server.tool(
 
 server.tool(
   'nexus_task_update',
-  'Update a task status on disk and re-index. Optionally file a newly discovered task.',
+  'Update a task: change status, edit blocked_by/blocks dependency lists, or file a discovered task.',
   {
-    id: z.string().describe('Atom ID of the task to update'),
-    status: z.enum(['ready', 'in_progress', 'blocked', 'done']).describe('New status'),
+    id:         z.string().describe('Atom ID of the task to update'),
+    status:     z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('New status'),
+    blocked_by: z.array(z.string()).optional().describe('Replace blocked_by list with these atom IDs'),
+    blocks:     z.array(z.string()).optional().describe('Replace blocks list with these atom IDs'),
     discovered: z.string().optional().describe('Title of a new task discovered while working on this one'),
   },
-  async ({ id, status, discovered }) => {
+  async ({ id, status, blocked_by, blocks, discovered }) => {
+    if (!status && !blocked_by && !blocks && !discovered) {
+      return { content: [{ type: 'text', text: 'Error: provide at least one of status, blocked_by, blocks, or discovered' }] };
+    }
+
     const task = db.prepare(`SELECT * FROM atoms WHERE id = ? AND atom_type = 'task'`).get(id) as Atom | undefined;
     if (!task) {
       return { content: [{ type: 'text', text: `Error: task not found with id ${id}` }] };
@@ -450,19 +612,26 @@ server.tool(
     const fileContent = await readFile(task.source_path, 'utf-8');
     const parsed = matter(fileContent);
 
-    // Update status and updated_at
-    parsed.data.status = status;
+    // Update only the fields that were provided
+    if (status)     { parsed.data.status = status; }
+    if (blocked_by) { parsed.data.blocked_by = blocked_by; }
+    if (blocks)     { parsed.data.blocks = blocks; }
     parsed.data.updated_at = now;
 
     // Serialize back
     const newContent = matter.stringify(parsed.content, parsed.data);
     await writeFile(task.source_path, newContent, 'utf-8');
 
-    // Update DB directly so the status is immediately visible to both the MCP
-    // response and the web server. reindexFile alone is insufficient because the
-    // unchanged-hash check skips upserts when only frontmatter changed.
-    db.prepare(`UPDATE atoms SET status = ?, updated_at = ? WHERE id = ?`)
-      .run(status, now, id);
+    // Update DB directly so changes are immediately visible.
+    // reindexFile alone is insufficient because the unchanged-hash check skips
+    // upserts when only frontmatter changed.
+    const sets: string[] = ['updated_at = ?'];
+    const dbParams: unknown[] = [now];
+    if (status)     { sets.unshift('status = ?');  dbParams.unshift(status); }
+    if (blocked_by) { sets.push('blocked_by = ?'); dbParams.push(JSON.stringify(blocked_by)); }
+    if (blocks)     { sets.push('blocks = ?');     dbParams.push(JSON.stringify(blocks)); }
+    dbParams.push(id);
+    db.prepare(`UPDATE atoms SET ${sets.join(', ')} WHERE id = ?`).run(...dbParams);
 
     // Full re-index to update content_hash so the next periodic scan is accurate
     reindexFile(db, task.source_path, task.source_type as any);
@@ -536,16 +705,107 @@ server.tool(
   async () => {
     const stats = getStats(db);
 
+    const reviewSummary = Object.entries(stats.memoriesByReview).map(([s, c]) => `${s}(${c})`).join(', ') || 'none';
+
     const text = `# Nexus Stats
 
-**Total Atoms:** ${stats.totalAtoms}
+**Total Atoms:** ${stats.totalAtoms} (${stats.embeddedAtoms} embedded)
 **By Type:** ${Object.entries(stats.atomsByType).map(([t, c]) => `${t}(${c})`).join(', ')}
 **By Scope:** ${Object.entries(stats.atomsByScope).map(([s, c]) => `${s}(${c})`).join(', ')}
 **By Project:** ${Object.entries(stats.atomsByProject).map(([p, c]) => `${p}(${c})`).join(', ')}
+**Memories:** ${stats.totalMemories} (${stats.embeddedMemories} embedded) — review: ${reviewSummary}
 **Links:** ${stats.totalLinks}
 **Sessions:** ${stats.totalSessions}
 **Diagnostics:** ${stats.totalDiagnostics}`;
 
+    return { content: [{ type: 'text', text }] };
+  }
+);
+
+// ── nexus_verify ─────────────────────────────────────────────────────
+
+server.tool(
+  'nexus_verify',
+  'Reconfirm a memory is still accurate. Resets its decay clock and nudges confidence up — use after checking a decayed or stale memory still holds.',
+  {
+    id: z.string().describe('Memory id (from the dashboard or nexus_health diagnostics)'),
+  },
+  async ({ id }) => {
+    const ok = verifyMemory(db, id);
+    return { content: [{ type: 'text', text: ok ? `Memory ${id} reverified — decay clock reset.` : `Error: memory not found: ${id}` }] };
+  }
+);
+
+// ── nexus_feedback ───────────────────────────────────────────────────
+
+server.tool(
+  'nexus_feedback',
+  'Record whether a recalled memory was actually useful. Feeds the help-rate term in recall ranking so memories that help surface more often.',
+  {
+    id:     z.string().describe('Memory id'),
+    helped: z.boolean().describe('true if the memory was useful this session, false if not'),
+  },
+  async ({ id, helped }) => {
+    const ok = recordFeedback(db, id, helped);
+    return { content: [{ type: 'text', text: ok ? `Feedback recorded for ${id} (helped=${helped}).` : `Error: memory not found: ${id}` }] };
+  }
+);
+
+// ── nexus_consolidate ────────────────────────────────────────────────
+
+server.tool(
+  'nexus_consolidate',
+  'Run a memory cleanup sweep: backfill missing embeddings, prune rejected memories, and merge near-duplicates. Safe — decayed memories are never deleted, only superseded duplicates and rejected memories.',
+  {},
+  async () => {
+    const r = await consolidateMemories(db);
+    return {
+      content: [{
+        type: 'text',
+        text: `Consolidation complete: ${r.embedded} embedded, ${r.merged} duplicate(s) merged, ${r.pruned} rejected pruned.`,
+      }],
+    };
+  }
+);
+
+// ── nexus_distill ────────────────────────────────────────────────────
+
+server.tool(
+  'nexus_distill',
+  'Deep cleanup of existing memories: clusters related memories and rewrites each cluster into one tighter, non-redundant memory; tightens verbose ones. Use to clean up legacy or hand-written memories. Heavier than nexus_consolidate — it makes LLM rewrite calls.',
+  {},
+  async () => {
+    const r = await distillMemories(db);
+    return {
+      content: [{
+        type: 'text',
+        text: `Distill complete: ${r.clusters} cluster(s) → ${r.created} consolidated memories (${r.merged} folded in), ${r.sanitized} tightened, ${r.embedded} embedded.`,
+      }],
+    };
+  }
+);
+
+// ── nexus_backfill ───────────────────────────────────────────────────
+
+server.tool(
+  'nexus_backfill',
+  'Retroactively extract memories from past sessions that predate the capture hooks. Bounded — processes recent un-analyzed sessions for a project. For a full backfill across all history, use the `nexus backfill` CLI command.',
+  {
+    project: z.string().optional().describe('Project slug. Prefer cwd to avoid guessing the slug.'),
+    cwd:     z.string().optional().describe('Working directory — derives the project slug automatically.'),
+    limit:   z.coerce.number().optional().describe('Max sessions to process (capped at 30)'),
+    dry_run: z.boolean().optional().describe('Report how many sessions would be processed, run nothing'),
+  },
+  async ({ project, cwd, limit, dry_run }) => {
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const r = await backfillSessions(db, {
+      project: effectiveProject,
+      limit: Math.min(limit ?? 10, 30),
+      dryRun: dry_run,
+    });
+    const text = r.dryRun
+      ? `${r.selected} session(s) would be backfilled.`
+      : `Backfill: ${r.processed}/${r.selected} sessions processed — ${r.inserted} memories created, ${r.merged} merged, ${r.skippedNoSignal} had nothing durable.`;
     return { content: [{ type: 'text', text }] };
   }
 );

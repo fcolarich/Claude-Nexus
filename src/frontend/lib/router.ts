@@ -4,6 +4,7 @@ export type Route =
   | "dashboard"
   | "sessions"
   | "memories"
+  | "review"
   | "search"
   | "plans"
   | "agents"

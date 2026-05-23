@@ -4,7 +4,7 @@ import { generateEmbedding } from './embeddings.js';
  * to prevent special characters from crashing the query parser.
  * Passes through explicit FTS5 operators (AND, OR, NOT) and quoted phrases.
  */
-function sanitizeFts5Query(raw) {
+export function sanitizeFts5Query(raw) {
     const trimmed = raw.trim();
     if (!trimmed)
         return '""';
@@ -158,6 +158,145 @@ export async function hybridSearch(db, query, options) {
     }));
 }
 /**
+ * FTS5 search over the memories table (approved, non-superseded).
+ */
+export function searchMemories(db, query, options) {
+    const sanitized = sanitizeFts5Query(query);
+    const limit = options?.limit ?? 20;
+    const ftsExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='memories_fts'`).get();
+    if (!ftsExists)
+        return [];
+    let sql = `
+    SELECT m.*, f.rank,
+      snippet(memories_fts, 1, '<mark>', '</mark>', '...', 40) as snippet
+    FROM memories_fts f
+    JOIN memories m ON m.rowid = f.rowid
+    WHERE memories_fts MATCH ?
+      AND m.review_status = 'approved'
+      AND m.superseded_by IS NULL
+  `;
+    const params = [sanitized];
+    if (options?.project) {
+        sql += ` AND m.project = ?`;
+        params.push(options.project);
+    }
+    if (options?.scope) {
+        sql += ` AND m.scope = ?`;
+        params.push(options.scope);
+    }
+    sql += ` ORDER BY f.rank LIMIT ?`;
+    params.push(limit);
+    const rows = db.prepare(sql).all(...params);
+    return rows.map(row => ({
+        memory: { ...row, tags: JSON.parse(row.tags || '[]') },
+        rank: row.rank,
+        snippet: row.snippet,
+    }));
+}
+/**
+ * Hybrid (FTS5 + vector) search over memories, fused with RRF.
+ * Falls back to FTS5-only if Ollama is unavailable or memories_vec does not exist.
+ */
+export async function hybridSearchMemories(db, query, options) {
+    const limit = options?.limit ?? 20;
+    const RRF_K = 60;
+    const ftsResults = searchMemories(db, query, { ...options, limit });
+    const ftsRank = new Map();
+    for (let i = 0; i < ftsResults.length; i++) {
+        ftsRank.set(ftsResults[i].memory.id, i);
+    }
+    let vecRank = new Map();
+    let vecMemIds = [];
+    const queryVec = await generateEmbedding(query);
+    if (queryVec !== null) {
+        const tableExists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='memories_vec'`).get();
+        if (tableExists) {
+            try {
+                const vecRows = db.prepare(`
+          SELECT rowid, distance FROM memories_vec
+          WHERE embedding MATCH json(?)
+          ORDER BY distance
+          LIMIT ?
+        `).all(JSON.stringify(Array.from(queryVec)), limit);
+                for (let i = 0; i < vecRows.length; i++) {
+                    const memRow = db.prepare(`
+            SELECT id FROM memories
+            WHERE rowid = ? AND review_status = 'approved' AND superseded_by IS NULL
+          `).get(vecRows[i].rowid);
+                    if (memRow) {
+                        vecRank.set(memRow.id, i);
+                        vecMemIds.push(memRow.id);
+                    }
+                }
+            }
+            catch (err) {
+                console.warn('[hybridSearchMemories] Vector query failed:', err.message);
+            }
+        }
+    }
+    if (vecRank.size === 0)
+        return ftsResults;
+    const allIds = new Set([
+        ...ftsResults.map(r => r.memory.id),
+        ...vecMemIds,
+    ]);
+    const rrfScores = new Map();
+    for (const id of allIds) {
+        const ftsPosScore = ftsRank.has(id) ? 1 / (RRF_K + ftsRank.get(id)) : 0;
+        const vecPosScore = vecRank.has(id) ? 1 / (RRF_K + vecRank.get(id)) : 0;
+        rrfScores.set(id, ftsPosScore + vecPosScore);
+    }
+    const resultByMemId = new Map();
+    for (const r of ftsResults)
+        resultByMemId.set(r.memory.id, r);
+    for (const id of vecMemIds) {
+        if (!resultByMemId.has(id)) {
+            const row = db.prepare(`
+        SELECT * FROM memories WHERE id = ? AND review_status = 'approved' AND superseded_by IS NULL
+      `).get(id);
+            if (row) {
+                resultByMemId.set(id, {
+                    memory: { ...row, tags: JSON.parse(row.tags || '[]') },
+                    rank: 0,
+                    snippet: '',
+                });
+            }
+        }
+    }
+    const sorted = Array.from(allIds)
+        .filter(id => resultByMemId.has(id))
+        .sort((a, b) => (rrfScores.get(b) ?? 0) - (rrfScores.get(a) ?? 0))
+        .slice(0, limit);
+    return sorted.map(id => ({
+        ...resultByMemId.get(id),
+        rank: -(rrfScores.get(id) ?? 0),
+    }));
+}
+/**
+ * Multi-topic smart fetch over the memories table.
+ */
+export function fetchMemoryContext(db, topics, options) {
+    const seenIds = new Set();
+    const allResults = [];
+    for (const topic of topics) {
+        for (const r of searchMemories(db, topic, { project: options?.project, limit: 5 })) {
+            if (!seenIds.has(r.memory.id)) {
+                seenIds.add(r.memory.id);
+                allResults.push(r);
+            }
+        }
+    }
+    allResults.sort((a, b) => a.rank - b.rank);
+    if (allResults.length === 0)
+        return null;
+    const parts = allResults.map(r => {
+        const badge = r.memory.scope === 'global' ? ' [GLOBAL]' : r.memory.scope === 'shared' ? ' [SHARED]' : '';
+        const conf = (r.memory.confidence * 100).toFixed(0);
+        return `## [${r.memory.memory_type}] ${r.memory.title}${badge}\n_Captured memory | confidence: ${conf}% | ${r.memory.decay_class}_\n\n${r.memory.body}`;
+    });
+    return parts.join('\n\n---\n\n');
+}
+/**
  * "Smart fetch" — search for multiple topics and merge results into one markdown block.
  * This is the key MCP optimization: one tool call, all relevant context.
  */
@@ -187,18 +326,38 @@ export function fetchContext(db, topics, options) {
     return parts.join('\n\n---\n\n');
 }
 /**
- * Get all atoms with global or shared scope.
+ * Get shared/global knowledge for session start.
+ * Returns full content for atoms flagged load_at_init=true,
+ * plus a compact titles-only index for all others.
  */
 export function getSharedKnowledge(db) {
     const atoms = db.prepare(`
-    SELECT * FROM atoms WHERE scope IN ('global', 'shared') ORDER BY scope, atom_type, title
+    SELECT * FROM atoms WHERE scope IN ('global', 'shared')
+    ORDER BY load_at_init DESC, atom_type, title
   `).all();
     if (atoms.length === 0)
         return null;
+    const initAtoms = atoms.filter(a => a.load_at_init);
+    const indexAtoms = atoms.filter(a => !a.load_at_init);
     const parts = [];
-    for (const a of atoms) {
-        const scopeBadge = a.scope === 'global' ? '[GLOBAL]' : '[SHARED]';
-        parts.push(`## ${a.title} ${scopeBadge}\n_Type: ${a.atom_type}_\n\n${a.body}`);
+    if (initAtoms.length > 0) {
+        parts.push('# Session-Init Knowledge');
+        for (const a of initAtoms) {
+            const badge = a.scope === 'global' ? '[GLOBAL]' : '[SHARED]';
+            parts.push(`## ${a.title} ${badge}\n_Type: ${a.atom_type}_\n\n${a.body}`);
+        }
+    }
+    if (indexAtoms.length > 0) {
+        parts.push('# Available Knowledge Index\n_Use nexus_search to load any of these:_');
+        const byType = new Map();
+        for (const a of indexAtoms) {
+            if (!byType.has(a.atom_type))
+                byType.set(a.atom_type, []);
+            byType.get(a.atom_type).push(a.title);
+        }
+        for (const [type, titles] of byType) {
+            parts.push(`**${type}**: ${titles.join(', ')}`);
+        }
     }
     return parts.join('\n\n---\n\n');
 }
@@ -275,6 +434,21 @@ export function listSessions(db, options) {
     return db.prepare(sql).all(...params);
 }
 /**
+ * Count rows in a table, returning 0 if the table does not exist
+ * (e.g. *_vec tables when sqlite-vec failed to load).
+ */
+function countTable(db, table) {
+    const exists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).get(table);
+    if (!exists)
+        return 0;
+    try {
+        return db.prepare(`SELECT COUNT(*) as c FROM ${table}`).get().c;
+    }
+    catch {
+        return 0;
+    }
+}
+/**
  * Get database statistics for the dashboard.
  */
 export function getStats(db) {
@@ -286,11 +460,19 @@ export function getStats(db) {
     const byScope = db.prepare(`SELECT scope, COUNT(*) as c FROM atoms GROUP BY scope`).all();
     const byProject = db.prepare(`SELECT COALESCE(project, 'global') as project, COUNT(*) as c FROM atoms GROUP BY project`).all();
     const diagByType = db.prepare(`SELECT type, COUNT(*) as c FROM diagnostics GROUP BY type`).all();
+    const totalMemories = countTable(db, 'memories');
+    const memReview = totalMemories > 0
+        ? db.prepare(`SELECT review_status, COUNT(*) as c FROM memories GROUP BY review_status`).all()
+        : [];
     return {
         totalAtoms,
+        embeddedAtoms: countTable(db, 'atoms_vec'),
         atomsByType: Object.fromEntries(byType.map(r => [r.atom_type, r.c])),
         atomsByScope: Object.fromEntries(byScope.map(r => [r.scope, r.c])),
         atomsByProject: Object.fromEntries(byProject.map(r => [r.project, r.c])),
+        totalMemories,
+        embeddedMemories: countTable(db, 'memories_vec'),
+        memoriesByReview: Object.fromEntries(memReview.map(r => [r.review_status, r.c])),
         totalLinks,
         totalSessions,
         totalDiagnostics,

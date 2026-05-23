@@ -3,13 +3,14 @@ import { discoverSources, discoverSessions, discoverCoworkSessions } from './sca
 import { importSessionTitles, backfillTitlesFromSummary, generateTitle } from './session-titles.js';
 import { readFileSync, statSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
-import { generateEmbedding } from '../core/embeddings.js';
+import { generateEmbedding, ensureEmbeddingModelReady } from '../core/embeddings.js';
+import { vecToBlob } from '../core/memories.js';
 function prepareStatements(db) {
     return {
         getAtomBySourceAndIndex: db.prepare(`SELECT id, content_hash FROM atoms WHERE source_path = ? AND id = ?`),
         upsertAtom: db.prepare(`
-      INSERT INTO atoms (id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, updated_at, status, priority, blocks, blocked_by, discovered_from)
-      VALUES (@id, @title, @body, @atom_type, @scope, @source_path, @source_type, @project, @tags, @content_hash, @frontmatter, datetime('now'), @status, @priority, @blocks, @blocked_by, @discovered_from)
+      INSERT INTO atoms (id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, updated_at, status, priority, blocks, blocked_by, discovered_from, load_at_init)
+      VALUES (@id, @title, @body, @atom_type, @scope, @source_path, @source_type, @project, @tags, @content_hash, @frontmatter, datetime('now'), @status, @priority, @blocks, @blocked_by, @discovered_from, @load_at_init)
       ON CONFLICT(id) DO UPDATE SET
         title = @title,
         body = @body,
@@ -23,7 +24,8 @@ function prepareStatements(db) {
         priority = @priority,
         blocks = @blocks,
         blocked_by = @blocked_by,
-        discovered_from = @discovered_from
+        discovered_from = @discovered_from,
+        load_at_init = @load_at_init
     `),
         deleteAtomsBySource: db.prepare(`DELETE FROM atoms WHERE source_path = ?`),
         insertLink: db.prepare(`
@@ -99,9 +101,18 @@ export function indexFile(db, stmts, filePath, sourceType) {
             blocks: atom.blocks ?? null,
             blocked_by: atom.blocked_by ?? null,
             discovered_from: atom.discovered_from ?? null,
+            load_at_init: atom.load_at_init ? 1 : 0,
         });
         if (existing) {
             result.updated++;
+            // content_hash changed — drop the stale vector so embedUnindexed re-embeds it.
+            // (An AFTER UPDATE trigger can't regenerate an embedding, so handle it here.)
+            try {
+                db.prepare(`DELETE FROM atoms_vec WHERE rowid = (SELECT rowid FROM atoms WHERE id = ?)`).run(id);
+            }
+            catch {
+                // atoms_vec absent (sqlite-vec not loaded) — nothing to invalidate
+            }
         }
         else {
             result.created++;
@@ -217,10 +228,11 @@ export function indexSession(db, stmts, jsonlPath, projectSlug) {
 }
 /**
  * Derive the project slug from a cwd path using the same convention Claude Code uses
- * for ~/.claude/projects/ directory names (replace : and path separators with -).
+ * for ~/.claude/projects/ directory names (replace :, path separators, and underscores with -).
+ * Claude Code converts underscores to dashes: "LLM_Workflow_Optimization" → "C--Fran-LLM-Workflow-Optimization".
  */
-function cwdToProjectSlug(cwd) {
-    return cwd.replace(/[:\\/]/g, '-').replace(/^-+|-+$/g, '');
+export function cwdToProjectSlug(cwd) {
+    return cwd.replace(/[:\\/]/g, '-').replace(/_/g, '-').replace(/^-+|-+$/g, '');
 }
 /**
  * Index a Cowork (desktop app) audit.jsonl session.
@@ -337,8 +349,14 @@ export async function embedUnindexed(db) {
   `).all();
     if (unembedded.length === 0)
         return;
+    // Warm up the model once — waits for cold load rather than flooding the loop
+    // with 500s while Ollama loads mxbai-embed-large.
+    const ready = await ensureEmbeddingModelReady();
+    if (!ready) {
+        console.warn(`[embedder] embedding model unavailable, skipping ${unembedded.length} atoms`);
+        return;
+    }
     console.log(`[embedder] Embedding ${unembedded.length} unindexed atoms...`);
-    const insertVec = db.prepare(`INSERT INTO atoms_vec(rowid, embedding) VALUES (?, ?)`);
     let embedded = 0;
     let skipped = 0;
     for (const atom of unembedded) {
@@ -349,7 +367,9 @@ export async function embedUnindexed(db) {
             continue;
         }
         try {
-            insertVec.run(atom.rowid, vec);
+            // sqlite-vec requires the rowid primary key as a SQL literal, not a bound
+            // parameter. atom.rowid is a SQLite integer, so interpolation is safe.
+            db.prepare(`INSERT INTO atoms_vec(rowid, embedding) VALUES (${atom.rowid}, ?)`).run(vecToBlob(vec));
             embedded++;
         }
         catch (err) {

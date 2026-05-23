@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type SessionInfo, type ConversationMessage, type MessageBlock, type SessionReference } from "../lib/api";
+  import { api, type SessionInfo, type ConversationMessage, type MessageBlock, type SessionReference, type TranscriptSearchResult } from "../lib/api";
   import { poll, POLL } from "../lib/poll";
   import MemoryCreateModal from "../components/MemoryCreateModal.svelte";
 
@@ -27,6 +27,13 @@
   let selectedText = $state("");
   let showCreateModal = $state(false);
   let conversationPanel: HTMLElement | null = $state(null);
+
+  // Transcript search
+  let searchQuery = $state("");
+  let searchResults: TranscriptSearchResult[] = $state([]);
+  let searching = $state(false);
+  let searchError: string | null = $state(null);
+  let searched = $state(false);
 
   const filtered = $derived(
     filter === "all" ? sessions : sessions.filter((s) => s.status === filter)
@@ -62,6 +69,40 @@
       messagesError = e.message;
     } finally {
       loadingMessages = false;
+    }
+  }
+
+  async function runSearch() {
+    const q = searchQuery.trim();
+    if (!q) { searchResults = []; searched = false; return; }
+    searching = true;
+    searchError = null;
+    try {
+      const res = await api.searchTranscripts(q);
+      searchResults = res.results;
+      searched = true;
+    } catch (e: any) {
+      searchError = e.message;
+    } finally {
+      searching = false;
+    }
+  }
+
+  function clearSearch() {
+    searchQuery = "";
+    searchResults = [];
+    searched = false;
+    searchError = null;
+  }
+
+  async function openSessionById(id: string) {
+    const existing = sessions.find((s) => s.id === id);
+    if (existing) { selectSession(existing); return; }
+    try {
+      const session = await api.session(id);
+      selectSession(session);
+    } catch (e: any) {
+      messagesError = e.message;
     }
   }
 
@@ -182,7 +223,47 @@
         {/each}
       </select>
 
-      {#if error}
+      <div class="search-box">
+        <input
+          class="search-input"
+          placeholder="Search transcripts…"
+          bind:value={searchQuery}
+          onkeydown={(e) => { if (e.key === "Enter") runSearch(); if (e.key === "Escape") clearSearch(); }}
+        />
+        <button class="search-btn" onclick={runSearch} disabled={searching}>
+          {searching ? "…" : "Search"}
+        </button>
+        {#if searched}
+          <button class="search-clear" onclick={clearSearch} title="Clear search">✕</button>
+        {/if}
+      </div>
+
+      {#if searched}
+        <!-- Transcript search results -->
+        {#if searchError}
+          <p class="list-error">Search failed: {searchError}</p>
+        {:else}
+          <div class="search-results">
+            {#each searchResults as r}
+              <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+              <div
+                class="result-row"
+                onclick={() => openSessionById(r.session_id)}
+                onkeydown={(e) => e.key === "Enter" && openSessionById(r.session_id)}
+                tabindex="0"
+                role="button"
+              >
+                <span class="result-role result-role-{r.role}">{r.role}</span>
+                <span class="result-snippet">{@html r.snippet}</span>
+                <span class="result-session">{r.session_id.slice(0, 8)}</span>
+              </div>
+            {/each}
+            {#if searchResults.length === 0}
+              <p class="empty">No transcript matches.</p>
+            {/if}
+          </div>
+        {/if}
+      {:else if error}
         <p class="list-error">API unavailable: {error}</p>
       {:else}
         <div class="session-list">
@@ -383,6 +464,87 @@
     color: var(--text-primary);
     font-family: var(--font-sans);
     font-size: 12px;
+  }
+
+  /* ---- Transcript search ---- */
+  .search-box { display: flex; gap: 6px; align-items: center; }
+  .search-input {
+    flex: 1; min-width: 0;
+    padding: 6px 10px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    outline: none;
+  }
+  .search-input:focus { border-color: var(--accent-dim); }
+  .search-btn {
+    padding: 6px 12px;
+    background: var(--accent-dim);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .search-btn:hover:not(:disabled) { background: var(--accent); }
+  .search-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .search-clear {
+    padding: 6px 9px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    font-size: 11px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .search-clear:hover { color: var(--error); border-color: var(--error); }
+
+  .search-results { display: flex; flex-direction: column; gap: 4px; }
+  .result-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background 0.12s;
+    outline: none;
+  }
+  .result-row:hover { background: var(--bg-hover); }
+  .result-row:focus-visible { border-color: var(--accent-dim); }
+  .result-role {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .result-role-user { color: var(--accent); }
+  .result-role-assistant { color: var(--text-secondary); }
+  .result-snippet {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    word-break: break-word;
+  }
+  .result-snippet :global(mark) {
+    background: rgba(251, 191, 36, 0.3);
+    color: var(--text-primary);
+    border-radius: 2px;
+    padding: 0 1px;
+  }
+  .result-session {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
   }
 
   .filter-chip {

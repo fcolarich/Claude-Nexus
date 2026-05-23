@@ -35,15 +35,201 @@ export function openDatabase(dbPath?: string): Database.Database {
   return db;
 }
 
+// ── Migration framework ──────────────────────────────────────────────
+//
+// Every schema change is a numbered migration. `schema_version` records which
+// have run. On init, migrations with version > current are applied in order.
+// Migrations must be idempotent (IF NOT EXISTS / guarded ALTER) so a partial
+// failure followed by a retry is safe — the version is only recorded on success.
+
+interface Migration {
+  version: number;
+  name: string;
+  up: (db: Database.Database) => void;
+}
+
+const MIGRATIONS: Migration[] = [
+  { version: 1, name: 'baseline-v1-schema', up: migrateBaseline },
+  { version: 2, name: 'memories-tables', up: migrateMemories },
+  { version: 3, name: 'session-reflection-cursor', up: migrateReflectionCursor },
+  { version: 4, name: 'import-legacy-memory-atoms', up: migrateImportLegacyMemories },
+  { version: 5, name: 'session-messages-fts', up: migrateSessionMessagesFts },
+];
+
+export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
+
+function getSchemaVersion(db: Database.Database): number {
+  const row = db.prepare(`SELECT MAX(version) AS v FROM schema_version`).get() as { v: number | null };
+  return row?.v ?? 0;
+}
+
+export function initializeSchema(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_version (
+      version    INTEGER PRIMARY KEY,
+      name       TEXT NOT NULL,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  const current = getSchemaVersion(db);
+  const record = db.prepare(`INSERT INTO schema_version (version, name) VALUES (?, ?)`);
+
+  for (const m of MIGRATIONS) {
+    if (m.version <= current) continue;
+    m.up(db);
+    record.run(m.version, m.name);
+  }
+}
+
+// ── Migration 1: baseline v1 schema ──────────────────────────────────
+// Builds the v1 schema on a fresh DB; brings a pre-versioning DB current.
+// Every statement is idempotent.
+
+function migrateBaseline(db: Database.Database): void {
+  db.exec(`
+    -- Atoms: file-indexed knowledge artifacts (agents, skills, plans, tasks, notes)
+    CREATE TABLE IF NOT EXISTS atoms (
+      id            TEXT PRIMARY KEY,
+      title         TEXT NOT NULL,
+      body          TEXT NOT NULL,
+      atom_type     TEXT NOT NULL CHECK(atom_type IN (
+        'memory', 'agent', 'skill', 'plan', 'feedback', 'reference', 'project_note', 'architecture', 'task'
+      )),
+      scope         TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('global', 'shared', 'project')),
+      source_path   TEXT NOT NULL,
+      source_type   TEXT NOT NULL CHECK(source_type IN (
+        'memory_file', 'agent_def', 'skill_def', 'plan_file', 'nexus_native'
+      )),
+      project       TEXT,
+      tags          TEXT NOT NULL DEFAULT '[]',
+      content_hash  TEXT NOT NULL,
+      frontmatter   TEXT,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      status        TEXT,
+      priority      INTEGER,
+      blocks        TEXT,
+      blocked_by    TEXT,
+      discovered_from TEXT,
+      load_at_init  INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS atom_links (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_id   TEXT NOT NULL REFERENCES atoms(id) ON DELETE CASCADE,
+      target_id   TEXT NOT NULL REFERENCES atoms(id) ON DELETE CASCADE,
+      link_type   TEXT NOT NULL CHECK(link_type IN (
+        'references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related'
+      )),
+      confidence  REAL NOT NULL DEFAULT 1.0,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(source_id, target_id, link_type)
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      session_id      TEXT PRIMARY KEY,
+      project         TEXT NOT NULL,
+      git_branch      TEXT,
+      slug            TEXT,
+      jsonl_path      TEXT NOT NULL,
+      started_at      TEXT,
+      last_active     TEXT,
+      status          TEXT NOT NULL DEFAULT 'dead' CHECK(status IN (
+        'active', 'waiting_input', 'processing', 'idle', 'dead'
+      )),
+      input_tokens    INTEGER DEFAULT 0,
+      output_tokens   INTEGER DEFAULT 0,
+      estimated_cost  REAL DEFAULT 0.0,
+      subagent_count  INTEGER DEFAULT 0,
+      summary         TEXT,
+      message_count   INTEGER DEFAULT 0,
+      title           TEXT,
+      custom_title    TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS diagnostics (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      type        TEXT NOT NULL CHECK(type IN ('broken_reference', 'missing_frontmatter', 'duplicate', 'orphan', 'stale')),
+      atom_id     TEXT REFERENCES atoms(id) ON DELETE CASCADE,
+      source_path TEXT,
+      message     TEXT NOT NULL,
+      details     TEXT,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS atoms_fts USING fts5(
+      title, body, tags,
+      content='atoms',
+      content_rowid='rowid',
+      tokenize='porter unicode61'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS atoms_ai AFTER INSERT ON atoms BEGIN
+      INSERT INTO atoms_fts(rowid, title, body, tags)
+      VALUES (new.rowid, new.title, new.body, new.tags);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS atoms_ad AFTER DELETE ON atoms BEGIN
+      INSERT INTO atoms_fts(atoms_fts, rowid, title, body, tags)
+      VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS atoms_au AFTER UPDATE ON atoms BEGIN
+      INSERT INTO atoms_fts(atoms_fts, rowid, title, body, tags)
+      VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+      INSERT INTO atoms_fts(rowid, title, body, tags)
+      VALUES (new.rowid, new.title, new.body, new.tags);
+    END;
+  `);
+
+  // Vector search table — created separately because vec0 may not be loaded
+  try {
+    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS atoms_vec USING vec0(embedding float[1024])`);
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS atoms_vec_ad AFTER DELETE ON atoms BEGIN
+        DELETE FROM atoms_vec WHERE rowid = old.rowid;
+      END;
+    `);
+  } catch (err) {
+    console.warn('[claude-nexus] Could not create atoms_vec table — vector search disabled:', (err as Error).message);
+  }
+
+  // Bring pre-versioning databases current (all guarded / idempotent)
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN title TEXT`); } catch {}
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN custom_title TEXT`); } catch {}
+  migrateTaskSupport(db);
+  migrateCoworkSupport(db);
+  migrateLoadAtInit(db);
+
+  // One-time FTS rebuild to clear any stale entries from prior versions.
+  // Triggers keep it in sync afterwards, so this no longer runs every startup.
+  try { db.exec(`INSERT INTO atoms_fts(atoms_fts) VALUES('rebuild')`); } catch {}
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_atoms_project ON atoms(project);
+    CREATE INDEX IF NOT EXISTS idx_atoms_type ON atoms(atom_type);
+    CREATE INDEX IF NOT EXISTS idx_atoms_scope ON atoms(scope);
+    CREATE INDEX IF NOT EXISTS idx_atoms_source ON atoms(source_path);
+    CREATE INDEX IF NOT EXISTS idx_atoms_hash ON atoms(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_links_source ON atom_links(source_id);
+    CREATE INDEX IF NOT EXISTS idx_links_target ON atom_links(target_id);
+    CREATE INDEX IF NOT EXISTS idx_links_type ON atom_links(link_type);
+    CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+    CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+    CREATE INDEX IF NOT EXISTS idx_diagnostics_type ON diagnostics(type);
+  `);
+}
+
 function migrateTaskSupport(db: Database.Database): void {
   const schemaRow = db.prepare(
     `SELECT sql FROM sqlite_master WHERE type='table' AND name='atoms'`
   ).get() as { sql: string } | undefined;
 
-  if (!schemaRow) return; // table doesn't exist yet (fresh DB) - CREATE TABLE already has task
+  if (!schemaRow) return;
 
   if (!schemaRow.sql.includes("'task'")) {
-    // Recreate atoms table to add 'task' to CHECK constraint
+    // Recreate atoms table to add 'task' to the CHECK constraint
     db.pragma('foreign_keys = OFF');
     try {
       db.transaction(() => {
@@ -88,7 +274,6 @@ function migrateTaskSupport(db: Database.Database): void {
       db.pragma('foreign_keys = ON');
     }
   } else {
-    // Table has 'task' already — just add new columns if missing
     try { db.exec(`ALTER TABLE atoms ADD COLUMN status TEXT`); } catch {}
     try { db.exec(`ALTER TABLE atoms ADD COLUMN priority INTEGER`); } catch {}
     try { db.exec(`ALTER TABLE atoms ADD COLUMN blocks TEXT`); } catch {}
@@ -103,39 +288,49 @@ function migrateCoworkSupport(db: Database.Database): void {
   try { db.exec(`ALTER TABLE sessions ADD COLUMN participant_id TEXT`); } catch {}
 }
 
-export function initializeSchema(db: Database.Database): void {
+function migrateLoadAtInit(db: Database.Database): void {
+  try { db.exec(`ALTER TABLE atoms ADD COLUMN load_at_init INTEGER NOT NULL DEFAULT 0`); } catch {}
+}
+
+// ── Migration 2: memories tables ─────────────────────────────────────
+// The autonomous memory engine's core. Memories are DB-owned (written by the
+// Reflector), distinct from `atoms` which mirror on-disk file artifacts.
+
+function migrateMemories(db: Database.Database): void {
   db.exec(`
-    -- Atoms: single units of knowledge
-    CREATE TABLE IF NOT EXISTS atoms (
-      id            TEXT PRIMARY KEY,
-      title         TEXT NOT NULL,
-      body          TEXT NOT NULL,
-      atom_type     TEXT NOT NULL CHECK(atom_type IN (
-        'memory', 'agent', 'skill', 'plan', 'feedback', 'reference', 'project_note', 'architecture', 'task'
+    CREATE TABLE IF NOT EXISTS memories (
+      id                TEXT PRIMARY KEY,
+      title             TEXT NOT NULL,
+      body              TEXT NOT NULL,
+      memory_type       TEXT NOT NULL CHECK(memory_type IN (
+        'preference', 'convention', 'failure', 'correction', 'decision',
+        'insight', 'tool_quirk', 'reference', 'handoff'
       )),
-      scope         TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('global', 'shared', 'project')),
-      source_path   TEXT NOT NULL,
-      source_type   TEXT NOT NULL CHECK(source_type IN (
-        'memory_file', 'agent_def', 'skill_def', 'plan_file', 'nexus_native'
+      scope             TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('global', 'shared', 'project')),
+      project           TEXT,
+      confidence        REAL NOT NULL DEFAULT 0.6,
+      decay_class       TEXT NOT NULL DEFAULT 'implementation' CHECK(decay_class IN (
+        'stable', 'architecture', 'api_contract', 'implementation'
       )),
-      project       TEXT,
-      tags          TEXT NOT NULL DEFAULT '[]',
-      content_hash  TEXT NOT NULL,
-      frontmatter   TEXT,
-      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
-      status        TEXT,
-      priority      INTEGER,
-      blocks        TEXT,
-      blocked_by    TEXT,
-      discovered_from TEXT
+      last_verified_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      use_count         INTEGER NOT NULL DEFAULT 0,
+      help_count        INTEGER NOT NULL DEFAULT 0,
+      source_session_id TEXT,
+      discovered_from   TEXT,
+      superseded_by     TEXT REFERENCES memories(id) ON DELETE SET NULL,
+      review_status     TEXT NOT NULL DEFAULT 'pending' CHECK(review_status IN ('pending', 'approved', 'rejected')),
+      tags              TEXT NOT NULL DEFAULT '[]',
+      content_hash      TEXT NOT NULL,
+      created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      load_at_init      INTEGER NOT NULL DEFAULT 0
     );
 
-    -- Semantic links between atoms
-    CREATE TABLE IF NOT EXISTS atom_links (
+    -- Links spanning memories and atoms. No FK: target may live in either table.
+    CREATE TABLE IF NOT EXISTS memory_links (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      source_id   TEXT NOT NULL REFERENCES atoms(id) ON DELETE CASCADE,
-      target_id   TEXT NOT NULL REFERENCES atoms(id) ON DELETE CASCADE,
+      source_id   TEXT NOT NULL,
+      target_id   TEXT NOT NULL,
       link_type   TEXT NOT NULL CHECK(link_type IN (
         'references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related'
       )),
@@ -144,113 +339,101 @@ export function initializeSchema(db: Database.Database): void {
       UNIQUE(source_id, target_id, link_type)
     );
 
-    -- Sessions from JSONL files
-    CREATE TABLE IF NOT EXISTS sessions (
-      session_id      TEXT PRIMARY KEY,
-      project         TEXT NOT NULL,
-      git_branch      TEXT,
-      slug            TEXT,
-      jsonl_path      TEXT NOT NULL,
-      started_at      TEXT,
-      last_active     TEXT,
-      status          TEXT NOT NULL DEFAULT 'dead' CHECK(status IN (
-        'active', 'waiting_input', 'processing', 'idle', 'dead'
-      )),
-      input_tokens    INTEGER DEFAULT 0,
-      output_tokens   INTEGER DEFAULT 0,
-      estimated_cost  REAL DEFAULT 0.0,
-      subagent_count  INTEGER DEFAULT 0,
-      summary         TEXT,
-      message_count   INTEGER DEFAULT 0,
-      title           TEXT,
-      custom_title    TEXT
-    );
-
-    -- Diagnostics for health checks
-    CREATE TABLE IF NOT EXISTS diagnostics (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      type        TEXT NOT NULL CHECK(type IN ('broken_reference', 'missing_frontmatter', 'duplicate', 'orphan', 'stale')),
-      atom_id     TEXT REFERENCES atoms(id) ON DELETE CASCADE,
-      source_path TEXT,
-      message     TEXT NOT NULL,
-      details     TEXT,
-      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    -- FTS5 full-text search index
-    CREATE VIRTUAL TABLE IF NOT EXISTS atoms_fts USING fts5(
-      title,
-      body,
-      tags,
-      content='atoms',
+    CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+      title, body, tags,
+      content='memories',
       content_rowid='rowid',
       tokenize='porter unicode61'
     );
 
-    -- Triggers to keep FTS5 in sync with atoms table
-    -- Uses new.rowid/old.rowid which is the implicit integer rowid,
-    -- matching the content_rowid='rowid' declaration above.
-    CREATE TRIGGER IF NOT EXISTS atoms_ai AFTER INSERT ON atoms BEGIN
-      INSERT INTO atoms_fts(rowid, title, body, tags)
+    CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+      INSERT INTO memories_fts(rowid, title, body, tags)
       VALUES (new.rowid, new.title, new.body, new.tags);
     END;
 
-    CREATE TRIGGER IF NOT EXISTS atoms_ad AFTER DELETE ON atoms BEGIN
-      INSERT INTO atoms_fts(atoms_fts, rowid, title, body, tags)
+    CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, title, body, tags)
       VALUES ('delete', old.rowid, old.title, old.body, old.tags);
     END;
 
-    -- For UPDATE: the upsert (INSERT ... ON CONFLICT DO UPDATE) keeps the
-    -- same rowid, so old.rowid == new.rowid. Delete old FTS entry, insert new.
-    CREATE TRIGGER IF NOT EXISTS atoms_au AFTER UPDATE ON atoms BEGIN
-      INSERT INTO atoms_fts(atoms_fts, rowid, title, body, tags)
+    CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+      INSERT INTO memories_fts(memories_fts, rowid, title, body, tags)
       VALUES ('delete', old.rowid, old.title, old.body, old.tags);
-      INSERT INTO atoms_fts(rowid, title, body, tags)
+      INSERT INTO memories_fts(rowid, title, body, tags)
       VALUES (new.rowid, new.title, new.body, new.tags);
     END;
 
-    -- Migrate: add title columns if missing (for existing DBs)
-    -- SQLite ignores ALTER TABLE if column already exists via this pattern
+    CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project);
+    CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memory_type);
+    CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
+    CREATE INDEX IF NOT EXISTS idx_memories_review ON memories(review_status);
+    CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_memory_links_source ON memory_links(source_id);
+    CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_id);
   `);
 
-  // Vector search table — created separately because vec0 may not be loaded
   try {
-    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS atoms_vec USING vec0(embedding float[1024])`);
-    // Keep atoms_vec in sync: remove vec entry when atom is deleted
+    db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS memories_vec USING vec0(embedding float[1024])`);
     db.exec(`
-      CREATE TRIGGER IF NOT EXISTS atoms_vec_ad AFTER DELETE ON atoms BEGIN
-        DELETE FROM atoms_vec WHERE rowid = old.rowid;
+      CREATE TRIGGER IF NOT EXISTS memories_vec_ad AFTER DELETE ON memories BEGIN
+        DELETE FROM memories_vec WHERE rowid = old.rowid;
       END;
     `);
   } catch (err) {
-    console.warn('[claude-nexus] Could not create atoms_vec table — vector search disabled:', (err as Error).message);
+    console.warn('[claude-nexus] Could not create memories_vec table — vector search disabled:', (err as Error).message);
   }
+}
 
-  // Safe migration for existing databases
-  try { db.exec(`ALTER TABLE sessions ADD COLUMN title TEXT`); } catch {}
-  try { db.exec(`ALTER TABLE sessions ADD COLUMN custom_title TEXT`); } catch {}
+// ── Migration 3: session reflection cursor ───────────────────────────
+// Tracks how far the Reflector has processed each session's transcript.
 
-  // Migration: add 'task' atom_type support and task-specific columns
-  migrateTaskSupport(db);
+function migrateReflectionCursor(db: Database.Database): void {
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN last_reflected_index INTEGER NOT NULL DEFAULT 0`); } catch {}
+}
 
-  // Migration: add Cowork session columns
-  migrateCoworkSupport(db);
+// ── Migration 4: import legacy memory atoms ──────────────────────────
+// One-time copy of v1 knowledge atoms (memory/feedback/architecture) into the
+// `memories` table. Source atoms are left in place — the indexer cut happens in
+// a later phase once readers consume `memories`. Idempotent via INSERT OR IGNORE.
 
-  // Rebuild FTS5 index to fix any stale entries from prior versions
-  try { db.exec(`INSERT INTO atoms_fts(atoms_fts) VALUES('rebuild')`); } catch {}
+function migrateImportLegacyMemories(db: Database.Database): void {
+  const atomsExists = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='atoms'`
+  ).get();
+  if (!atomsExists) return;
 
+  db.transaction(() => {
+    db.exec(`
+      INSERT OR IGNORE INTO memories
+        (id, title, body, memory_type, scope, project, confidence, decay_class,
+         last_verified_at, use_count, help_count, source_session_id, discovered_from,
+         superseded_by, review_status, tags, content_hash, created_at, updated_at, load_at_init)
+      SELECT
+        id, title, body,
+        CASE atom_type
+          WHEN 'feedback'     THEN 'correction'
+          WHEN 'architecture' THEN 'decision'
+          ELSE 'insight'
+        END,
+        scope, project, 0.6,
+        CASE atom_type WHEN 'architecture' THEN 'architecture' ELSE 'implementation' END,
+        updated_at, 0, 0, NULL, discovered_from,
+        NULL, 'approved', tags, content_hash, created_at, updated_at, load_at_init
+      FROM atoms
+      WHERE atom_type IN ('memory', 'feedback', 'architecture');
+    `);
+  })();
+}
+
+// ── Migration 5: session-messages FTS ────────────────────────────────
+// Full-text index over raw session message text. A user-facing feature
+// (search past sessions in the dashboard) — never fed to the LLM.
+
+function migrateSessionMessagesFts(db: Database.Database): void {
   db.exec(`
-    -- Indexes for common queries
-    CREATE INDEX IF NOT EXISTS idx_atoms_project ON atoms(project);
-    CREATE INDEX IF NOT EXISTS idx_atoms_type ON atoms(atom_type);
-    CREATE INDEX IF NOT EXISTS idx_atoms_scope ON atoms(scope);
-    CREATE INDEX IF NOT EXISTS idx_atoms_source ON atoms(source_path);
-    CREATE INDEX IF NOT EXISTS idx_atoms_hash ON atoms(content_hash);
-    CREATE INDEX IF NOT EXISTS idx_links_source ON atom_links(source_id);
-    CREATE INDEX IF NOT EXISTS idx_links_target ON atom_links(target_id);
-    CREATE INDEX IF NOT EXISTS idx_links_type ON atom_links(link_type);
-    CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
-    CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
-    CREATE INDEX IF NOT EXISTS idx_diagnostics_type ON diagnostics(type);
+    CREATE VIRTUAL TABLE IF NOT EXISTS session_messages_fts USING fts5(
+      session_id, role, text,
+      tokenize='porter unicode61'
+    );
   `);
 }

@@ -1,312 +1,622 @@
 <script lang="ts">
-  import { api, type MemoryAtom } from "../lib/api";
-  import { routeParams, navigate } from "../lib/router";
+  import { api, type Memory, type MemoryType, type MemoryScope } from "../lib/api";
   import { poll, POLL } from "../lib/poll";
-  import AtomEditor from "../components/AtomEditor.svelte";
-  import MemoryCreateModal from "../components/MemoryCreateModal.svelte";
 
-  let memories: MemoryAtom[] = $state([]);
-  let showCreateModal = $state(false);
-  let projects: string[] = $state([]);
-  let selectedProject: string = $state("");
-  let selectedMemory: MemoryAtom | null = $state(null);
+  const MEMORY_TYPES: MemoryType[] = [
+    "preference", "convention", "failure", "correction",
+    "decision", "insight", "tool_quirk", "reference", "handoff",
+  ];
+  const SCOPES: MemoryScope[] = ["global", "shared", "project"];
+  const PAGE_SIZE = 100;
+
+  let memories: Memory[] = $state([]);
+  let total = $state(0);
+  let offset = $state(0);
   let error: string | null = $state(null);
+  let loading = $state(false);
 
-  const grouped = $derived.by(() => {
-    const map = new Map<string, MemoryAtom[]>();
-    for (const m of memories) {
-      const key = m.project;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(m);
-    }
-    return map;
+  // Filters
+  let filterType: string = $state("");
+  let filterScope: string = $state("");
+  let textFilter: string = $state("");
+
+  // Per-memory UI state
+  let expanded: Set<string> = $state(new Set());
+  let editingId: string | null = $state(null);
+  let editTitle: string = $state("");
+  let editBody: string = $state("");
+  let editTags: string = $state("");
+  let savingId: string | null = $state(null);
+  let confirmDeleteId: string | null = $state(null);
+  let busyId: string | null = $state(null);
+
+  // Consolidate
+  let consolidating = $state(false);
+  let consolidateResult: { embedded: number; merged: number; pruned: number } | null = $state(null);
+
+  // Distill
+  let distilling = $state(false);
+  let distillResult: { clusters: number; created: number; merged: number; sanitized: number } | null = $state(null);
+
+  const visible = $derived.by(() => {
+    const q = textFilter.trim().toLowerCase();
+    if (!q) return memories;
+    return memories.filter(
+      (m) =>
+        m.title.toLowerCase().includes(q) ||
+        m.body.toLowerCase().includes(q) ||
+        m.tags.some((t) => t.toLowerCase().includes(q)),
+    );
   });
 
-  async function load() {
+  function isDecaying(m: Memory): boolean {
+    return m.effective_confidence < m.confidence * 0.6;
+  }
+
+  async function load(reset = true) {
+    loading = true;
     try {
-      const [mems, projs] = await Promise.all([
-        api.memories(selectedProject || undefined),
-        api.projects(),
-      ]);
-      memories = mems;
-      projects = projs;
+      if (reset) offset = 0;
+      const res = await api.memories({
+        memory_type: (filterType || undefined) as MemoryType | undefined,
+        scope: (filterScope || undefined) as MemoryScope | undefined,
+        limit: PAGE_SIZE,
+        offset: reset ? 0 : offset,
+      });
+      memories = reset ? res.memories : [...memories, ...res.memories];
+      total = res.total;
+      error = null;
     } catch (e: any) {
       error = e.message;
+    } finally {
+      loading = false;
     }
   }
 
-  async function selectMemory(m: MemoryAtom) {
+  async function loadMore() {
+    offset += PAGE_SIZE;
+    await load(false);
+  }
+
+  function toggleExpand(id: string) {
+    const next = new Set(expanded);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    expanded = next;
+  }
+
+  async function verify(m: Memory) {
+    busyId = m.id;
     try {
-      selectedMemory = await api.memory(m.id);
-    } catch {
-      selectedMemory = m;
+      await api.verifyMemory(m.id);
+      const fresh = await api.memory(m.id);
+      memories = memories.map((x) => (x.id === m.id ? fresh : x));
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      busyId = null;
     }
   }
 
-  function handleDeleted() {
-    selectedMemory = null;
-    load();
+  function startEdit(m: Memory) {
+    editingId = m.id;
+    editTitle = m.title;
+    editBody = m.body;
+    editTags = m.tags.join(", ");
   }
 
-  function handleSaved(updated: MemoryAtom) {
-    selectedMemory = updated;
-    load();
+  function cancelEdit() {
+    editingId = null;
   }
 
-  poll(load, POLL.NORMAL);
+  async function saveEdit(m: Memory) {
+    savingId = m.id;
+    try {
+      const updated = await api.updateMemory(m.id, {
+        title: editTitle.trim(),
+        body: editBody,
+        tags: editTags.split(",").map((t) => t.trim()).filter(Boolean),
+      });
+      memories = memories.map((x) => (x.id === m.id ? updated : x));
+      editingId = null;
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      savingId = null;
+    }
+  }
+
+  async function remove(m: Memory) {
+    busyId = m.id;
+    try {
+      await api.deleteMemory(m.id);
+      memories = memories.filter((x) => x.id !== m.id);
+      total = Math.max(0, total - 1);
+      confirmDeleteId = null;
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      busyId = null;
+    }
+  }
+
+  async function runConsolidate() {
+    consolidating = true;
+    consolidateResult = null;
+    try {
+      consolidateResult = await api.consolidate();
+      await load(true);
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      consolidating = false;
+    }
+  }
+
+  async function runDistill() {
+    distilling = true;
+    distillResult = null;
+    try {
+      distillResult = await api.distill();
+      await load(true);
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      distilling = false;
+    }
+  }
 
   $effect(() => {
-    const p = $routeParams;
-    if (p.project) selectedProject = p.project;
-    load().then(() => {
-      if (p.id) {
-        const target = memories.find((m) => String(m.id) === p.id);
-        if (target) selectMemory(target);
-      }
-    });
+    const stop = poll(() => load(true), POLL.NORMAL);
+    return stop;
+  });
+
+  // Re-load on filter change
+  $effect(() => {
+    filterType;
+    filterScope;
+    load(true);
   });
 </script>
 
 <div class="page">
-  <div class="memory-layout">
-    <aside class="tree-panel">
-      <div class="panel-header">
-        <h2 class="panel-title">Memory Browser</h2>
-        <button class="new-btn" onclick={() => (showCreateModal = true)}>+ New</button>
-      </div>
-      <select class="project-select" bind:value={selectedProject} onchange={() => load()}>
-        <option value="">All projects</option>
-        {#each projects as p}
-          <option value={p}>{p}</option>
+  <div class="toolbar">
+    <h1 class="page-title">Memories</h1>
+    <div class="filters">
+      <select class="filter-select" bind:value={filterType}>
+        <option value="">All types</option>
+        {#each MEMORY_TYPES as t}
+          <option value={t}>{t}</option>
         {/each}
       </select>
-
-      <div class="tree">
-        {#each [...grouped.entries()] as [project, atoms]}
-          <div class="tree-group">
-            <span class="tree-project">{project}</span>
-            {#each atoms as atom}
-              <button
-                class="tree-item"
-                class:active={selectedMemory?.id === atom.id}
-                onclick={() => selectMemory(atom)}
-              >
-                <span class="type-badge type-{atom.type}">{atom.type.slice(0, 3)}</span>
-                <span class="tree-label">{atom.title}</span>
-              </button>
-            {/each}
-          </div>
+      <select class="filter-select" bind:value={filterScope}>
+        <option value="">All scopes</option>
+        {#each SCOPES as s}
+          <option value={s}>{s}</option>
         {/each}
-        {#if memories.length === 0 && !error}
-          <p class="empty">No memories indexed yet.</p>
-        {/if}
-      </div>
-    </aside>
+      </select>
+      <input class="text-filter" placeholder="Filter text…" bind:value={textFilter} />
+    </div>
+    <button class="btn-consolidate" onclick={runConsolidate} disabled={consolidating || distilling}>
+      {consolidating ? "Consolidating…" : "Consolidate"}
+    </button>
+    <button class="btn-consolidate" onclick={runDistill} disabled={distilling || consolidating}>
+      {distilling ? "Distilling…" : "Distill"}
+    </button>
+  </div>
 
-    <div class="detail-panel">
-      {#if error}
-        <p class="error">API unavailable: {error}</p>
-      {:else if selectedMemory}
-        <div class="detail-header">
-          <h2 class="detail-title">{selectedMemory.title}</h2>
-          <div class="detail-meta">
-            <span class="type-badge type-{selectedMemory.type}">{selectedMemory.type}</span>
-            <span class="detail-project">{selectedMemory.project}</span>
-            <span class="detail-path">{selectedMemory.path}</span>
+  {#if consolidateResult}
+    <p class="consolidate-result">
+      Consolidation done — embedded {consolidateResult.embedded},
+      merged {consolidateResult.merged}, pruned {consolidateResult.pruned}.
+    </p>
+  {/if}
+
+  {#if distillResult}
+    <p class="consolidate-result">
+      Distill done — {distillResult.clusters} cluster(s) → {distillResult.created} consolidated,
+      {distillResult.merged} folded in, {distillResult.sanitized} tightened.
+    </p>
+  {/if}
+
+  {#if error}
+    <p class="error">{error}</p>
+  {/if}
+
+  <div class="count-bar">
+    Showing {visible.length} of {total}
+  </div>
+
+  <div class="memory-list">
+    {#each visible as m (m.id)}
+      <div class="memory-card" class:decaying={isDecaying(m)}>
+        {#if editingId === m.id}
+          <!-- Edit mode -->
+          <input class="edit-title" bind:value={editTitle} placeholder="Title" />
+          <textarea class="edit-body" bind:value={editBody} rows="6"></textarea>
+          <input class="edit-tags" bind:value={editTags} placeholder="Tags (comma-separated)" />
+          <div class="card-actions">
+            <button class="btn btn-save" onclick={() => saveEdit(m)} disabled={savingId === m.id}>
+              {savingId === m.id ? "Saving…" : "Save"}
+            </button>
+            <button class="btn btn-cancel" onclick={cancelEdit} disabled={savingId === m.id}>Cancel</button>
           </div>
-        </div>
-        {#if selectedMemory.links.length > 0}
-          <div class="links-panel">
-            <h3 class="links-title">Links</h3>
-            <div class="links-list">
-              {#each selectedMemory.links as link}
-                <button class="link-chip" onclick={() => navigate("memories", { id: String(link.id) })}>
-                  <span class="link-type">{link.type}</span>
-                  {link.title}
-                </button>
+        {:else}
+          <!-- View mode -->
+          <div class="card-head">
+            <span class="type-badge type-{m.memory_type}">{m.memory_type}</span>
+            <span class="scope-badge">{m.scope}</span>
+            {#if isDecaying(m)}
+              <span class="decay-badge" title="effective confidence dropped well below intrinsic — needs reverification">
+                ⚠ decaying
+              </span>
+            {/if}
+            <span class="confidence" title="effective / intrinsic confidence">
+              <span class="conf-bar">
+                <span class="conf-fill" style="width: {Math.round(m.effective_confidence * 100)}%"></span>
+              </span>
+              {Math.round(m.effective_confidence * 100)}%
+              {#if isDecaying(m)}
+                <span class="conf-intrinsic">(was {Math.round(m.confidence * 100)}%)</span>
+              {/if}
+            </span>
+          </div>
+
+          <h3 class="card-title">{m.title}</h3>
+
+          {#if m.project}
+            <span class="card-project">{m.project}</span>
+          {/if}
+
+          <div class="card-body" class:clamped={!expanded.has(m.id)}>{m.body}</div>
+          {#if m.body.length > 200}
+            <button class="expand-btn" onclick={() => toggleExpand(m.id)}>
+              {expanded.has(m.id) ? "Show less" : "Show more"}
+            </button>
+          {/if}
+
+          {#if m.tags.length > 0}
+            <div class="card-tags">
+              {#each m.tags as tag}
+                <span class="tag">{tag}</span>
               {/each}
             </div>
-          </div>
+          {/if}
+
+          {#if confirmDeleteId === m.id}
+            <div class="confirm-row">
+              <span>Delete this memory permanently?</span>
+              <button class="btn btn-confirm-delete" onclick={() => remove(m)} disabled={busyId === m.id}>
+                {busyId === m.id ? "Deleting…" : "Yes, delete"}
+              </button>
+              <button class="btn btn-cancel" onclick={() => (confirmDeleteId = null)}>Cancel</button>
+            </div>
+          {:else}
+            <div class="card-actions">
+              <button class="btn btn-verify" onclick={() => verify(m)} disabled={busyId === m.id}>
+                {busyId === m.id ? "…" : "Verify"}
+              </button>
+              <button class="btn btn-edit" onclick={() => startEdit(m)}>Edit</button>
+              <button class="btn btn-delete" onclick={() => (confirmDeleteId = m.id)}>Delete</button>
+            </div>
+          {/if}
         {/if}
-        <AtomEditor atom={selectedMemory} onDeleted={handleDeleted} onSaved={handleSaved} />
-      {:else}
-        <div class="placeholder">
-          <p>Select a memory from the sidebar to view its contents.</p>
-        </div>
-      {/if}
-    </div>
+      </div>
+    {/each}
+
+    {#if visible.length === 0 && !loading && !error}
+      <p class="empty">No memories match the current filters.</p>
+    {/if}
   </div>
+
+  {#if memories.length < total}
+    <button class="btn-load-more" onclick={loadMore} disabled={loading}>
+      {loading ? "Loading…" : `Load more (${total - memories.length} remaining)`}
+    </button>
+  {/if}
 </div>
 
-{#if showCreateModal}
-  <MemoryCreateModal
-    onClose={() => (showCreateModal = false)}
-    onSaved={() => { showCreateModal = false; load(); }}
-  />
-{/if}
-
 <style>
-  .page { height: calc(100vh - 56px); }
-
-  .memory-layout {
-    display: flex;
-    height: 100%;
-    gap: 1px;
-    background: var(--border-subtle);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-  }
-
-  .tree-panel {
-    width: 280px;
-    min-width: 280px;
-    background: var(--bg-surface);
-    padding: 16px;
-    overflow-y: auto;
+  .page {
+    height: calc(100vh - 56px);
     display: flex;
     flex-direction: column;
     gap: 12px;
+    overflow-y: auto;
   }
 
-  .panel-header {
+  .toolbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
   }
 
-  .panel-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-secondary);
-  }
+  .page-title { font-size: 18px; font-weight: 700; flex-shrink: 0; }
 
-  .new-btn {
-    padding: 3px 10px;
-    font-size: 12px;
-    font-weight: 600;
-    background: var(--accent-dim);
-    color: white;
-    border: none;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font-family: var(--font-sans);
-  }
-  .new-btn:hover { background: var(--accent); }
+  .filters { display: flex; gap: 8px; align-items: center; flex: 1; }
 
-  .project-select {
-    width: 100%;
-    padding: 7px 10px;
-    background: var(--bg-elevated);
+  .filter-select {
+    background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-family: var(--font-sans);
+    font-size: 12px;
+    padding: 5px 8px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .text-filter {
+    flex: 1;
+    max-width: 260px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+  }
+
+  .btn-consolidate {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
     font-size: 13px;
-  }
-
-  .tree { display: flex; flex-direction: column; gap: 12px; }
-
-  .tree-group { display: flex; flex-direction: column; gap: 2px; }
-
-  .tree-project {
-    font-size: 11px;
     font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 4px 8px;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .btn-consolidate:hover:not(:disabled) { opacity: 0.85; }
+  .btn-consolidate:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .consolidate-result {
+    font-size: 12px;
+    color: var(--success);
+    background: rgba(74, 222, 128, 0.08);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    flex-shrink: 0;
   }
 
-  .tree-item {
+  .count-bar {
+    font-size: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .memory-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .memory-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .memory-card.decaying {
+    border-color: var(--warning);
+    background: rgba(251, 191, 36, 0.04);
+  }
+
+  .card-head {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 8px;
-    border: none;
-    background: none;
-    color: var(--text-secondary);
-    font-family: var(--font-sans);
-    font-size: 13px;
-    border-radius: 4px;
-    cursor: pointer;
-    text-align: left;
-    width: 100%;
+    flex-wrap: wrap;
   }
-
-  .tree-item:hover { background: var(--bg-hover); color: var(--text-primary); }
-  .tree-item.active { background: var(--accent-bg); color: var(--accent); }
 
   .type-badge {
     font-size: 10px;
     font-weight: 600;
-    padding: 1px 5px;
-    border-radius: 3px;
+    padding: 2px 7px;
+    border-radius: 4px;
     text-transform: uppercase;
-    flex-shrink: 0;
+    letter-spacing: 0.03em;
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+  .type-failure, .type-correction { background: rgba(248, 113, 113, 0.15); color: var(--error); }
+  .type-preference, .type-convention { background: rgba(96, 165, 250, 0.15); color: var(--info); }
+  .type-decision, .type-insight { background: rgba(192, 132, 252, 0.15); color: var(--accent); }
+  .type-tool_quirk { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
+  .type-reference, .type-handoff { background: rgba(74, 222, 128, 0.15); color: var(--success); }
+
+  .scope-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
   }
 
-  .type-project { background: rgba(96, 165, 250, 0.15); color: var(--info); }
-  .type-feedback { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
-  .type-reference { background: rgba(74, 222, 128, 0.15); color: var(--success); }
-  .type-memory { background: rgba(192, 132, 252, 0.15); color: var(--accent); }
-  .type-plan { background: rgba(248, 113, 113, 0.15); color: var(--error); }
-  .type-agent { background: rgba(96, 165, 250, 0.15); color: var(--info); }
-  .type-skill { background: rgba(74, 222, 128, 0.15); color: var(--success); }
-
-  .tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-  .detail-panel {
-    flex: 1;
-    background: var(--bg-base);
-    padding: 24px;
-    overflow-y: auto;
+  .decay-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(251, 191, 36, 0.18);
+    color: var(--warning);
   }
 
-  .detail-header { margin-bottom: 16px; }
-  .detail-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
-  .detail-meta { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-muted); }
-  .detail-project { font-weight: 500; }
-  .detail-path { font-family: var(--font-mono); font-size: 11px; }
+  .confidence {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .conf-bar {
+    width: 60px;
+    height: 5px;
+    background: var(--bg-hover);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .conf-fill {
+    display: block;
+    height: 100%;
+    background: var(--success);
+    border-radius: 3px;
+  }
+  .decaying .conf-fill { background: var(--warning); }
+  .conf-intrinsic { color: var(--text-muted); opacity: 0.7; }
 
-  .links-panel {
-    margin-bottom: 16px;
-    padding: 12px;
-    background: var(--bg-surface);
+  .card-title { font-size: 14px; font-weight: 600; line-height: 1.4; }
+
+  .card-project {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .card-body {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .card-body.clamped {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .expand-btn {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+  }
+  .expand-btn:hover { text-decoration: underline; }
+
+  .card-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag {
+    font-size: 10px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+
+  .card-actions { display: flex; gap: 8px; }
+
+  .confirm-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--error);
+    padding: 8px;
+    background: rgba(248, 113, 113, 0.08);
     border-radius: var(--radius-sm);
   }
 
-  .links-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; }
-  .links-list { display: flex; flex-wrap: wrap; gap: 6px; }
-  .link-chip {
-    padding: 3px 10px;
-    font-size: 12px;
-    background: var(--accent-bg);
-    color: var(--accent);
-    border-radius: 12px;
-    border: none;
-    cursor: pointer;
+  .btn {
+    padding: 5px 14px;
+    border-radius: var(--radius-sm);
     font-family: var(--font-sans);
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    transition: background 0.15s;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.15s;
   }
-  .link-chip:hover { background: var(--accent-dim); color: white; }
-  .link-type {
-    font-size: 10px;
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .btn-verify { background: rgba(74, 222, 128, 0.12); color: var(--success); border-color: var(--success); }
+  .btn-verify:hover:not(:disabled) { background: var(--success); color: var(--bg-base); }
+
+  .btn-edit { background: var(--accent-bg); color: var(--accent); border-color: var(--accent-dim); }
+  .btn-edit:hover { background: var(--accent-dim); color: white; }
+
+  .btn-delete { background: none; color: var(--text-muted); border-color: var(--border); }
+  .btn-delete:hover { color: var(--error); border-color: var(--error); }
+
+  .btn-save { background: var(--accent); color: white; border-color: var(--accent); }
+  .btn-save:hover:not(:disabled) { opacity: 0.85; }
+
+  .btn-cancel { background: none; color: var(--text-secondary); border-color: var(--border); }
+  .btn-cancel:hover:not(:disabled) { background: var(--bg-hover); }
+
+  .btn-confirm-delete { background: var(--error); color: white; border-color: var(--error); }
+  .btn-confirm-delete:hover:not(:disabled) { opacity: 0.85; }
+
+  .edit-title {
+    background: var(--bg-elevated);
+    border: 1px solid var(--accent-dim);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 14px;
     font-weight: 600;
-    text-transform: uppercase;
-    opacity: 0.7;
+    padding: 7px 10px;
+    border-radius: var(--radius-sm);
+    outline: none;
+  }
+  .edit-body {
+    background: var(--bg-elevated);
+    border: 1px solid var(--accent-dim);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 10px;
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    outline: none;
+  }
+  .edit-tags {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: var(--radius-sm);
+    outline: none;
   }
 
-  .placeholder {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: var(--text-muted);
+  .btn-load-more {
+    align-self: center;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    padding: 8px 20px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    margin: 8px 0;
   }
+  .btn-load-more:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+  .btn-load-more:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .error { color: var(--error); padding: 20px; }
-  .empty { color: var(--text-muted); padding: 12px 8px; font-size: 13px; }
+  .error {
+    color: var(--error);
+    font-size: 13px;
+    padding: 8px;
+    background: rgba(248, 113, 113, 0.1);
+    border-radius: var(--radius-sm);
+  }
+  .empty { color: var(--text-muted); padding: 24px; font-size: 13px; text-align: center; }
 </style>

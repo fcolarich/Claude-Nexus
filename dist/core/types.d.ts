@@ -5,6 +5,9 @@ export type SourceType = 'memory_file' | 'agent_def' | 'skill_def' | 'plan_file'
 export type LinkType = 'references' | 'extends' | 'refines' | 'contradicts' | 'supports' | 'duplicates' | 'related';
 export type SessionStatus = 'active' | 'waiting_input' | 'processing' | 'idle' | 'dead';
 export type DiagnosticType = 'broken_reference' | 'missing_frontmatter' | 'duplicate' | 'orphan' | 'stale';
+export type MemoryType = 'preference' | 'convention' | 'failure' | 'correction' | 'decision' | 'insight' | 'tool_quirk' | 'reference' | 'handoff';
+export type DecayClass = 'stable' | 'architecture' | 'api_contract' | 'implementation';
+export type ReviewStatus = 'pending' | 'approved' | 'rejected';
 export interface Atom {
     id: string;
     title: string;
@@ -24,6 +27,7 @@ export interface Atom {
     blocks: string | null;
     blocked_by: string | null;
     discovered_from: string | null;
+    load_at_init: number;
 }
 export interface TaskAtom {
     id: string;
@@ -47,6 +51,32 @@ export interface AtomLink {
     confidence: number;
     created_at: string;
 }
+/**
+ * A distilled, typed memory — the unit of the v2 autonomous memory engine.
+ * DB-owned (written by the Reflector), distinct from file-mirrored Atoms.
+ */
+export interface Memory {
+    id: string;
+    title: string;
+    body: string;
+    memory_type: MemoryType;
+    scope: AtomScope;
+    project: string | null;
+    confidence: number;
+    decay_class: DecayClass;
+    last_verified_at: string;
+    use_count: number;
+    help_count: number;
+    source_session_id: string | null;
+    discovered_from: string | null;
+    superseded_by: string | null;
+    review_status: ReviewStatus;
+    tags: string[];
+    content_hash: string;
+    created_at: string;
+    updated_at: string;
+    load_at_init: number;
+}
 export interface Session {
     session_id: string;
     project: string;
@@ -67,6 +97,7 @@ export interface Session {
     is_cowork: boolean | null;
     workspace_id: string | null;
     participant_id: string | null;
+    last_reflected_index: number;
 }
 export interface Diagnostic {
     id: number;

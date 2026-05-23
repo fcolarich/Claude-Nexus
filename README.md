@@ -1,155 +1,118 @@
 # Claude Nexus
 
-A Zettelkasten-style knowledge hub for Claude Code with three layers:
+An **autonomous memory engine** for Claude Code. Nexus watches your sessions,
+distills durable knowledge into typed memories, and injects the relevant ones
+back at the start of future sessions — no manual note-taking, no agent cooperation.
 
-- **CLI** — index, search, and inspect your Claude knowledge from the terminal
-- **Web dashboard** — Svelte SPA (served by an Express API) with views for Sessions, Memories, Search, Plans, Tasks, Agents, and Skills
-- **MCP server** — 12 tools that let Claude Code agents query and write knowledge without leaving a conversation
+It also indexes your Claude knowledge files (agents, skills, plans, tasks) and
+ships a web dashboard for browsing memories, sessions, and the review queue.
 
-**Database:** SQLite + FTS5 at `~/.claude-nexus/nexus.db`
+**Storage:** SQLite + FTS5 + sqlite-vec at `~/.claude-nexus/nexus.db`
 
 ---
 
-## Quick Start
+## How it works
+
+```
+SessionStart ─► nexus-load hook ─► budgeted recall ─► injected as context
+                                   (rank: confidence x decay x help-rate)
+
+  ...your session runs, transcript is written to disk...
+
+Stop / PreCompact / SessionEnd ─► nexus-capture hook ─► Reflector
+        (background, non-blocking)   reads new transcript lines
+                                     ─► Haiku extracts typed memories
+                                     ─► dedup / merge vs existing
+                                     ─► writes to the memories table
+                                     ─► exports markdown mirror
+```
+
+- **Capture** — the Reflector reads what changed in the transcript, asks Haiku
+  to extract durable memories (preferences, conventions, decisions, failures,
+  …), dedup-merges them, and stores them. Low-confidence memories land in a
+  **review queue** for human approval.
+- **Recall** — at session start, the highest-value memories for the project are
+  ranked and injected up to a token budget; the rest are listed by title.
+- **Lifecycle** — memories **decay** with age (per type), can be **reverified**
+  to reset the clock, accumulate **feedback** (did recall help?), and are swept
+  by **consolidation** (merge duplicates, prune rejected).
+
+Memories are the system of record in the DB; a markdown mirror is exported for
+human review and git.
+
+---
+
+## Setup
+
+### 1. Prerequisites
+
+- **Node.js 22+**
+- **Ollama** with the embedding model: `ollama pull mxbai-embed-large`
+- **Authenticated `claude` CLI** — the Reflector calls Haiku through the Claude
+  Agent SDK, which drives the local `claude` binary (OAuth, no API key):
+  ```bash
+  claude login
+  ```
+  A `401` in the capture logs means the CLI needs a fresh login.
+
+### 2. Build
 
 ```bash
 cd C:\Fran\claude-nexus
 npm install
-
-# Index all Claude data
-npx tsx src/cli/index.ts index
-
-# Search across all projects
-npx tsx src/cli/index.ts search "WebGL bridge"
-
-# Smart fetch: merge multiple topics into one response
-npx tsx src/cli/index.ts context "ECS architecture" "coding preferences"
-
-# Check health (broken refs, orphans, missing frontmatter)
-npx tsx src/cli/index.ts health
-
-# List all atoms
-npx tsx src/cli/index.ts list
-
-# Show statistics
-npx tsx src/cli/index.ts stats
-
-# List sessions
-npx tsx src/cli/index.ts sessions
-
-# Watch for changes (live re-indexing)
-npx tsx src/cli/index.ts watch
+npm run build          # compiles TypeScript -> dist/  (required by the hooks + MCP server)
 ```
+
+### 3. Enable the plugin
+
+Nexus ships as the **`claude-nexus` plugin** in the local marketplace. Enabling
+it auto-registers both the MCP server (`.mcp.json`) and the capture/recall hooks
+(`hooks/hooks.json`) — no manual `settings.json` editing. Restart Claude Code
+after enabling so it loads the plugin's hooks.
+
+### 4. Configure (optional)
+
+`extraction_models.yaml` at the repo root controls the embedding model, the
+extraction model, recall budget, and capture thresholds. It falls back to sane
+defaults if absent.
 
 ---
 
-## Developer Commands
+## Hooks
 
-| Command | Purpose |
-|---------|---------|
-| `npm run dev:api` | Start Express API server on port 3210 |
-| `npm run dev:frontend` | Start Vite dev server for the Svelte SPA |
-| `npm run build:frontend` | Production build of the frontend → `dist-frontend/` |
-| `npm run dev` | API + Tauri desktop app concurrently |
-| `npm run build` | Compile TypeScript → `dist/` |
-| `npm run test` | Run Vitest test suite once |
-| `npm run test:watch` | Run Vitest in watch mode |
+| Event | Hook | Action |
+|-------|------|--------|
+| `SessionStart` | nexus-load | Recall budgeted memories, inject as `additionalContext` |
+| `Stop` / `PreCompact` / `SessionEnd` | nexus-capture | Spawn the Reflector (detached, non-blocking) |
 
-Stop any server: `Ctrl+C` in the terminal running it.
+Capture is self-throttling — a per-session cursor means each run only processes
+new transcript lines, and trivial windows skip the LLM call entirely.
 
 ---
 
-## MCP Server Setup
-
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "claude-nexus": {
-      "command": "npx",
-      "args": ["tsx", "C:\\Fran\\claude-nexus\\src\\mcp\\server.ts"]
-    }
-  }
-}
-```
-
-### Available MCP Tools
+## MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `nexus_search` | Cross-project full-text search across all Claude knowledge |
-| `nexus_context` | Smart fetch: request multiple topics, receive one merged response |
-| `nexus_shared` | Get all global/shared knowledge atoms (call at session start) |
-| `nexus_project` | Get all knowledge atoms for a specific project |
-| `nexus_sessions` | List sessions with status, project, branch, and message count |
-| `nexus_tasks` | List task atoms with dependency resolution (`status=ready` for unblocked only) |
-| `nexus_task_update` | Update a task status on disk and optionally file a new task |
-| `nexus_remember` | Store a new knowledge atom or task atom |
-| `nexus_tasks_create` | Batch-create multiple task atoms in one call |
-| `nexus_health` | Diagnostics: broken refs, duplicates, orphan atoms, missing frontmatter |
-| `nexus_stats` | Atom/link/session counts by type, scope, and project |
-| `nexus_reindex` | Force full re-index of all Claude knowledge files |
-
----
-
-## REST API
-
-Base URL: `http://localhost:3210`
-
-### Dashboard & Stats
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/dashboard` | Overview: projects, sessions, memory stats |
-| `GET` | `/api/stats` | Atom counts by type/scope/project |
-| `GET` | `/api/diagnostics` | Knowledge graph diagnostics |
-
-### Sessions
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/sessions` | List sessions (filter: `project`, `status`) |
-| `GET` | `/api/sessions/:id` | Get session details |
-| `GET` | `/api/sessions/:id/messages` | Full conversation with tool use blocks |
-| `GET` | `/api/sessions/:id/references` | Atoms that reference this session |
-| `PATCH` | `/api/sessions/:id` | Rename session |
-| `DELETE` | `/api/sessions/:id` | Delete session |
-
-### Memories / Atoms
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/memories` | List atoms (filter: `project`, `type`, `scope`) |
-| `GET` | `/api/memories/:id` | Get atom with links |
-| `GET` | `/api/atoms/:id/raw` | Raw file body (no frontmatter) |
-| `PUT` | `/api/atoms/:id` | Update atom body |
-| `DELETE` | `/api/atoms/:id` | Delete atom |
-| `POST` | `/api/atoms/create-memory` | Create a new memory file |
-
-### Plans / Agents / Skills
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/plans` | List plan atoms |
-| `GET` | `/api/agents` | List agent definition atoms |
-| `GET` | `/api/skills` | List skill definition atoms |
-
-### Tasks
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/tasks` | List tasks with dependency resolution (filter: `status`, `priority`) |
-| `POST` | `/api/tasks` | Create a new task atom |
-| `PATCH` | `/api/tasks/:id` | Update task status |
-
-### Search & Projects
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/search` | Full-text search (params: `q`, `type`, `project`, `limit`) |
-| `GET` | `/api/projects` | List all distinct projects |
-| `DELETE` | `/api/projects/:name` | Delete entire project and its files |
+| `nexus_recall` | Budgeted recall of the most relevant memories for the project |
+| `nexus_search` | Cross-project full-text + vector search over all knowledge |
+| `nexus_context` | Smart fetch: multiple topics merged into one response |
+| `nexus_project` | All knowledge atoms for a project |
+| `nexus_remember` | Store a memory or task atom manually |
+| `nexus_verify` | Reconfirm a memory — reset its decay clock |
+| `nexus_feedback` | Record whether a recalled memory helped |
+| `nexus_consolidate` | Cleanup sweep: backfill embeddings, merge duplicates, prune rejected |
+| `nexus_distill` | Deeper cleanup: cluster related memories and rewrite each cluster into one |
+| `nexus_backfill` | Retroactively extract memories from past sessions (predating the hooks) |
+| `nexus_shared` | Global/shared knowledge for session start |
+| `nexus_set_init` | Toggle the load-at-init flag on a global/shared atom |
+| `nexus_sessions` | List Claude Code sessions |
+| `nexus_tasks` | List task atoms with dependency resolution |
+| `nexus_tasks_create` | Batch-create task atoms |
+| `nexus_task_update` | Update a task's status / dependencies |
+| `nexus_health` | Diagnostics: broken refs, duplicates, orphans, stale memories |
+| `nexus_stats` | Atom / memory / link / session counts |
+| `nexus_reindex` | Force a full re-index of knowledge files |
 
 ---
 
@@ -157,11 +120,44 @@ Base URL: `http://localhost:3210`
 
 | Layer | Detail |
 |-------|--------|
-| **Database** | SQLite + FTS5 at `~/.claude-nexus/nexus.db`; tables for atoms, links, sessions, diagnostics |
-| **Indexer** | Scans `~/.claude/` for agents, skills, plans, per-project memory files, and JSONL session transcripts; also indexes Cowork desktop-app `audit.jsonl` sessions from the Windows Claude package directory |
-| **Parser** | Extracts YAML frontmatter, splits multi-section files, detects inter-atom links |
-| **Search** | BM25 ranking via FTS5, scoped by project / type / scope |
-| **Backend** | Express 5.x on port 3210; 60 s re-index cycle, 10 s session status refresh |
-| **Frontend** | Svelte 5 SPA; client-side routing via stores; views: Dashboard, Sessions, Memories, Search, Plans, Tasks, Agents, Skills |
-| **MCP Server** | Stdio transport; 12 tools returning merged markdown responses |
-| **CLI** | Commander.js with chalk output; mirrors MCP tools for terminal use |
+| **Database** | SQLite at `~/.claude-nexus/nexus.db`. Numbered migrations via `schema_version`. |
+| **`memories`** | The autonomous engine's store — typed, confidence-scored, decaying. FTS5 + sqlite-vec mirrors. |
+| **`atoms`** | File-indexed artifacts (agents, skills, plans, tasks, notes) — a read-only mirror of `~/.claude/`. |
+| **Capture** | `src/capture/` — transcript condenser, Haiku extractor, Reflector, markdown export. |
+| **Recall** | `src/core/recall.ts` — decay-ranked, token-budgeted retrieval. |
+| **Lifecycle** | `src/core/decay.ts` + `consolidate.ts` — age decay, stale flagging, dedup sweep. |
+| **MCP server** | `src/mcp/server.ts` — stdio transport, 19 tools. |
+| **Web API** | Express on port 3210 (`src/web/server.ts`). |
+| **Dashboard** | Svelte 5 SPA — Memories, Review, Sessions, Search, Tasks, Agents, Skills. Browser-based. |
+| **CLI** | `src/cli/` — index, search, inspect from the terminal. |
+
+**Models:** `mxbai-embed-large` via Ollama (embeddings, vector search, dedup);
+Haiku 4.5 via the Claude Agent SDK (memory extraction).
+
+---
+
+## Developer Commands
+
+| Command | Purpose |
+|---------|---------|
+| `npm run build` | Compile TypeScript → `dist/` |
+| `npm run dev` | Express API + Vite dev server (dashboard at `localhost:5173`) |
+| `npm run dev:api` | Express API only, port 3210 |
+| `npm run build:frontend` | Production build of the dashboard → `dist-frontend/` |
+| `npm test` | Run the Vitest suite |
+
+The web server serves the built dashboard from `dist-frontend/`; open
+`http://localhost:3210` in a browser.
+
+---
+
+## REST API (selected)
+
+Base URL: `http://localhost:3210`
+
+- **Recall / capture** — `POST /api/recall`, `POST /api/reflect`
+- **Memories** — `GET/PUT/DELETE /api/memories[/:id]`, `POST /api/memories/:id/{review,verify,feedback}`
+- **Lifecycle** — `POST /api/consolidate`
+- **Sessions** — `GET /api/sessions` (paginated), `GET /api/sessions/search?q=`, `GET /api/sessions/:id/messages`
+- **Knowledge** — `GET /api/search`, `/api/agents`, `/api/skills`, `/api/plans`, `/api/tasks`
+- **Health** — `GET /api/stats`, `GET /api/diagnostics`

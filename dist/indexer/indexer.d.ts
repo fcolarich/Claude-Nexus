@@ -34,6 +34,12 @@ export declare function indexFile(db: Database.Database, stmts: PreparedStatemen
  */
 export declare function indexSession(db: Database.Database, stmts: PreparedStatements, jsonlPath: string, projectSlug: string): void;
 /**
+ * Derive the project slug from a cwd path using the same convention Claude Code uses
+ * for ~/.claude/projects/ directory names (replace :, path separators, and underscores with -).
+ * Claude Code converts underscores to dashes: "LLM_Workflow_Optimization" → "C--Fran-LLM-Workflow-Optimization".
+ */
+export declare function cwdToProjectSlug(cwd: string): string;
+/**
  * Index a Cowork (desktop app) audit.jsonl session.
  */
 export declare function indexCoworkSession(db: Database.Database, session: CoworkSession): void;
