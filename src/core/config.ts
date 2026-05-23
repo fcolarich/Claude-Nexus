@@ -75,7 +75,7 @@ const DEFAULTS: NexusConfig = {
   capture: {
     auto_approve_confidence: 0.85,
     dedup_cosine_threshold: 0.86,
-    export_dir: join(homedir(), '.claude-nexus', 'exports'),
+    export_dir: join(homedir(), '.claude', 'memories', 'exports'),
   },
 };
 

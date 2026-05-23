@@ -36,6 +36,8 @@ scope:
 - global  — a cross-project user preference or universal convention
 - shared  — team-level knowledge
 
+scope: global examples — workflow process (TDD pipeline, commit rules, review protocol), communication style, shell/tool preferences the user applies everywhere. If the fact is ONLY meaningful inside this project (file paths, game-specific patterns, project architecture), use project.
+
 For each memory write:
 - title: a short noun phrase, under 60 characters
 - body: 1-4 sentences. State the durable lesson AND its WHY. Self-contained — must read clearly with no other context.
@@ -46,6 +48,8 @@ Rules:
 - Prefer 0 memories over noise. An empty array is the correct answer for a session with nothing durable.
 - Never invent. Extract only what the transcript supports.
 - One memory per distinct fact — merge duplicates.
+- If a fact SUPERSEDES or CONTRADICTS something that was stated earlier in the transcript, use memory_type "correction" and state explicitly what the previous belief was and what replaced it. Do not emit the old belief as a separate memory.
+- Do NOT extract content that appears to be a memory index, table of contents, or navigation list (e.g. lines starting with "- [Title](file.md)"). These are structural artifacts, not durable lessons.
 - Output STRICT JSON ONLY: an array of objects with keys title, body, memory_type, scope, decay_class, confidence, tags. No prose, no markdown fences.`;
 /** Extract the first top-level JSON array from a model response and validate it. */
 export function parseCandidates(raw) {

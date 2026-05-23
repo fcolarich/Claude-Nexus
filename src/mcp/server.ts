@@ -9,6 +9,10 @@ import { createHash } from 'crypto';
 import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { runFullIndex, reindexFile, cwdToProjectSlug } from '../indexer/indexer.js';
+import { buildBm25Corpus, rrfMerge } from '../core/links.js';
+import type { RankedResult } from '../core/links.js';
+import { generateEmbedding } from '../core/embeddings.js';
+import type { CrossRefResult, LinkType } from '../core/types.js';
 import { computeAtomId, computeHash } from '../indexer/parser.js';
 import type { Atom, TaskAtom, TaskStatus } from '../core/types.js';
 import {
@@ -825,6 +829,110 @@ server.tool(
         text: `Re-index complete: ${stats.atomsCreated} created, ${stats.atomsUpdated} updated, ${stats.atomsUnchanged} unchanged, ${stats.linksCreated} links, ${stats.sessionsIndexed} sessions.`,
       }],
     };
+  }
+);
+
+// ── nexus_crossref ───────────────────────────────────────────────────
+
+server.tool(
+  'nexus_crossref',
+  'Hybrid cross-reference search: merges dense (vector) and sparse (BM25) retrieval via RRF. Annotates each result with its link_type from atom_links when available. Use to discover semantically related atoms you didn\'t know to search for directly.',
+  {
+    query:   z.string().describe('Search query'),
+    project: z.string().optional().describe('Filter by project slug'),
+    cwd:     z.string().optional().describe('Caller working directory — derives project slug automatically'),
+    limit:   z.coerce.number().optional().describe('Max results to return (default 10)'),
+  },
+  async ({ query, project, cwd, limit }) => {
+    const cap = limit ?? 10;
+    const knnLimit = cap * 2;
+
+    // Dense KNN over atoms_vec
+    const denseResults: RankedResult[] = [];
+    try {
+      const vec = await generateEmbedding(query);
+      if (vec) {
+        const { vecToBlob, normalize } = await import('../core/memories.js');
+        const blob = vecToBlob(normalize(vec));
+        const knnRows = db.prepare(
+          `SELECT a.id, av.distance FROM atoms_vec av
+           JOIN atoms a ON a.rowid = av.rowid
+           WHERE av.embedding MATCH ?
+           ORDER BY av.distance
+           LIMIT ?`
+        ).all(blob, knnLimit) as { id: string; distance: number }[];
+        for (const r of knnRows) {
+          const sim = Math.max(0, 1 - (r.distance * r.distance) / 2);
+          denseResults.push({ id: r.id, score: sim });
+        }
+      }
+    } catch {
+      // atoms_vec unavailable — BM25-only fallback
+    }
+
+    // BM25
+    const bm25Results: RankedResult[] = [];
+    try {
+      const allAtoms = db.prepare(`SELECT id, title, body FROM atoms`).all() as { id: string; title: string; body: string }[];
+      if (allAtoms.length >= 3) {
+        const corpus = buildBm25Corpus(allAtoms);
+        const raw = corpus.search(query, knnLimit);
+        for (const [ref, score] of raw) {
+          bm25Results.push({ id: ref, score });
+        }
+      }
+    } catch {
+      // BM25 failed
+    }
+
+    // RRF merge
+    const merged = rrfMerge(bm25Results, denseResults, cap);
+    if (merged.length === 0) {
+      return { content: [{ type: 'text', text: 'No cross-references found.' }] };
+    }
+
+    // Normalize scores to [0, 1]
+    const maxScore = merged[0].score || 1;
+    const normalized = merged.map(r => ({ ...r, score: r.score / maxScore }));
+
+    // Project filter
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+
+    const parts: string[] = ['# Cross-References\n'];
+
+    for (const r of normalized) {
+      // Fetch atom details
+      let atomRow: { id: string; title: string; atom_type: string; body: string; project: string | null } | undefined;
+      try {
+        atomRow = db.prepare(
+          `SELECT id, title, atom_type, body, project FROM atoms WHERE id = ?`
+        ).get(r.id) as typeof atomRow;
+      } catch { continue; }
+      if (!atomRow) continue;
+      if (effectiveProject && atomRow.project !== effectiveProject) continue;
+
+      // Look up link_type from atom_links
+      let linkType: LinkType | null = null;
+      try {
+        const linkRow = db.prepare(
+          `SELECT link_type FROM atom_links WHERE source_id = ? LIMIT 1`
+        ).get(r.id) as { link_type: LinkType } | undefined;
+        linkType = linkRow?.link_type ?? null;
+      } catch {}
+
+      const badge = linkType ? ` [${linkType}]` : '';
+      const snippet = atomRow.body.slice(0, 300).replace(/\n/g, ' ');
+
+      parts.push(
+        `### ${atomRow.title}${badge}\n_${atomRow.atom_type} | score: ${r.score.toFixed(2)}_\n\n${snippet}`
+      );
+    }
+
+    if (parts.length === 1) {
+      return { content: [{ type: 'text', text: 'No cross-references found.' }] };
+    }
+
+    return { content: [{ type: 'text', text: parts.join('\n\n') }] };
   }
 );
 

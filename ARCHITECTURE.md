@@ -85,6 +85,7 @@ followed by a retry is safe — the version row is recorded only on success.
 | 3 | `session-reflection-cursor` | Adds `sessions.last_reflected_index` (the Reflector transcript cursor) |
 | 4 | `import-legacy-memory-atoms` | One-time copy of v1 `memory`/`feedback`/`architecture` atoms into `memories` (mapped to memory types, `review_status='approved'`). Idempotent `INSERT OR IGNORE`; source atoms left in place |
 | 5 | `session-messages-fts` | Adds `session_messages_fts` — user-facing transcript search, never fed to the LLM |
+| 6 | `corpus-expansion` | **Corpus expansion (v2.1).** Full atoms table recreate to add `'project_doc'` to the `source_type` CHECK constraint + `linked_at INTEGER` column. Guarded `ALTER TABLE memories ADD COLUMN linked_at INTEGER`. Guarded `ALTER TABLE sessions ADD COLUMN cwd TEXT`. Adds `idx_atoms_linked` index. |
 
 ### Tables
 
@@ -92,10 +93,14 @@ followed by a retry is safe — the version row is recorded only on success.
 v1 carryover. One row per indexed `.md` file (agents, skills, plans, tasks,
 project notes). Columns: `id`, `title`, `body`, `atom_type` (`memory`, `agent`,
 `skill`, `plan`, `feedback`, `reference`, `project_note`, `architecture`,
-`task`), `scope` (`global`/`shared`/`project`), `source_path`, `source_type`,
-`project`, `tags` (JSON), `content_hash`, `frontmatter`, `created_at`,
-`updated_at`, `load_at_init`, plus task fields (`status`, `priority`, `blocks`,
-`blocked_by`, `discovered_from`).
+`task`), `scope` (`global`/`shared`/`project`), `source_path`, `source_type`
+(`memory_file`, `agent_def`, `skill_def`, `plan_file`, `nexus_native`,
+`project_doc`), `project`, `tags` (JSON), `content_hash`, `frontmatter`,
+`created_at`, `updated_at`, `linked_at`, `load_at_init`, plus task fields
+(`status`, `priority`, `blocks`, `blocked_by`, `discovered_from`).
+
+`linked_at` (Migration 6): ISO timestamp set after `linkAtom()` runs. The
+auto-linker skips re-linking if `linked_at > updated_at`.
 
 #### `atom_links`
 Semantic edges between atoms. `source_id`/`target_id` FK to `atoms(id)` with
@@ -108,9 +113,12 @@ columns: `session_id`, `project`, `git_branch`, `slug`, `jsonl_path`,
 `started_at`, `last_active`, `status` (`active`/`waiting_input`/`processing`/
 `idle`/`dead`), token/cost/`message_count`/`subagent_count` usage stats,
 `title`/`custom_title`, `summary`, Cowork fields (`is_cowork`, `workspace_id`,
-`participant_id`), and **`last_reflected_index`** — the Reflector's per-session
+`participant_id`), **`last_reflected_index`** — the Reflector's per-session
 cursor: the count of transcript lines already processed. Capture only reads
-lines beyond it.
+lines beyond it — and **`cwd`** (Migration 6): the absolute filesystem path of
+the project directory at session start. Used by `discoverProjectDocs()` to locate
+project `.md` files for indexing. Written by `reflect()` via a guarded
+`UPDATE … WHERE cwd IS NULL`.
 
 #### `memories` — the v2 core
 DB-owned distilled knowledge, written by the Reflector. **Not** file-mirrored
@@ -136,6 +144,7 @@ DB-owned distilled knowledge, written by the Reflector. **Not** file-mirrored
 | `tags` | TEXT | JSON array |
 | `content_hash` | TEXT | `sha256(body)` |
 | `created_at` / `updated_at` | TEXT | timestamps |
+| `linked_at` | INTEGER | Unix timestamp set after `linkMemory()` runs; skip guard prevents re-linking if `linked_at > updated_at` |
 | `load_at_init` | INT | 0/1 — pinned memories are always recalled, bypassing the confidence threshold |
 
 #### `memory_links`
@@ -190,7 +199,10 @@ confidence to [0,1], and caps at 20 candidates.
 
 ### `reflector.ts` — orchestrator
 `reflect(db, opts, deps)`:
-1. Ensure a `sessions` row exists (to hold the cursor).
+1. Ensure a `sessions` row exists (to hold the cursor). **v2.1:** after the
+   `INSERT OR IGNORE`, writes `cwd` via `UPDATE sessions SET cwd = ? WHERE
+   session_id = ? AND cwd IS NULL` — backfills on first reflect, skipped if
+   already set.
 2. Read the transcript window from `last_reflected_index`.
 3. Observer gate: if no new lines or no signal, advance the cursor and return
    `skipped: true` — no LLM call.
@@ -198,7 +210,8 @@ confidence to [0,1], and caps at 20 candidates.
 5. For each candidate: embed the body, find the most similar existing memory;
    if cosine ≥ `dedup_cosine_threshold`, **reconfirm** it (`touchMemory`) instead
    of inserting. Otherwise insert — `review_status='approved'` if confidence ≥
-   `auto_approve_confidence`, else `pending` — and embed it.
+   `auto_approve_confidence`, else `pending` — embed it, then **v2.1:** call
+   `linkMemory(db, id, embedFn)` to auto-link the new memory.
 6. Advance the cursor to the new line count.
 
 Idempotent: re-running only sees new lines; content-addressed ids + semantic
@@ -306,17 +319,53 @@ Hybrid (FTS5 + vector) search over `atoms`, plus the v1 helpers
 `getStats`, `getDiagnostics`). `sanitizeFts5Query()` quotes tokens to prevent
 FTS5 injection while preserving operators and prefix wildcards.
 
+### `links.ts` — auto-linking (v2.1)
+Hybrid BM25 + dense + RRF auto-linking, written after each embed.
+
+- **`buildBm25Corpus(docs)`** — builds an in-memory `wink-bm25-text-search`
+  index over `title + body` of all non-superseded atoms and memories. Requires
+  ≥ 3 documents to `consolidate()` (skipped silently otherwise). Not persisted —
+  rebuilt per call or per full-index run.
+- **`rrfMerge(dense, sparse, k)`** — Reciprocal Rank Fusion (K=60). Merges
+  dense KNN results (by cosine similarity) and sparse BM25 results (by score)
+  into a unified ranking. Returns top-k by combined RRF score.
+- **`upsertLink(db, sourceId, targetId, linkType, confidence)`** — writes two
+  `INSERT OR REPLACE` rows into `atom_links` (bidirectional). Self-links
+  (`sourceId === targetId`) are rejected before calling.
+- **`linkAtom(db, atomId, embedFn, corpus?)`** — embeds the atom, runs KNN
+  against `atoms_vec` + `memories_vec` (TOP_K=12 each), scores against the BM25
+  corpus, RRF-merges, and upserts links. Thresholds: cosine ≥ 0.86 →
+  `'duplicates'`, 0.70–0.86 → `'related'`. `'contradicts'`/`'supports'` are
+  LLM-only — never assigned here. Skip guard: if `atom.linked_at > atom.updated_at`
+  the atom is already linked and skipped. Sets `atoms.linked_at` on completion.
+- **`linkMemory(db, memoryId, embedFn, corpus?)`** — same pattern for memories;
+  sets `memories.linked_at`.
+
+The optional `corpus?` parameter lets callers build the BM25 corpus once
+(O(N)) and pass it to all `linkAtom`/`linkMemory` calls in a batch (prevents
+O(N²) corpus rebuilds during full-index runs).
+
 ---
 
 ## Indexer (`src/indexer/`)
 
-The v1 file-indexer, retained for `atoms`.
+The v1 file-indexer, retained for `atoms`. Extended in v2.1 with project doc discovery and auto-linking.
 
 - `indexer.ts` — `runFullIndex(db)` scans configured directories, hashes files,
   upserts changed atoms, runs an embedding pass; also indexes Cowork sessions.
+  **v2.1:** calls `discoverProjectDocs(db)` after `discoverSources()` to merge
+  project `.md` files into the atom set; calls `linkAtom(db, atom.id, embedFn)`
+  after each successful embed (one BM25 corpus built once per full-index run,
+  passed to all `linkAtom` calls).
 - `parser.ts` — frontmatter parsing (`gray-matter`); atom id / hash helpers.
 - `scanner.ts` — walks the filesystem for `.md` and session JSONL files;
-  discovers Cowork `audit.jsonl` sessions.
+  discovers Cowork `audit.jsonl` sessions. **v2.1:** adds `discoverProjectDocs(db)`
+  — queries `SELECT DISTINCT cwd FROM sessions`, globs `**/*.md` per cwd (absolute
+  paths), applies an ignore list (`node_modules`, `dist`, `build`, `.git`, `.next`,
+  `out`, `coverage`, `__pycache__`, `.venv`), derives `atom_type` from filename
+  (`architecture`/`design`/`adr` → `'architecture'`; `index`/`readme`/`claude` →
+  `'reference'`; default → `'project_note'`), returns `SourceFile[]` with
+  `sourceType: 'project_doc'`.
 - `watcher.ts` — optional filesystem watcher (`nexus watch`); not active in prod.
 - `session-titles.ts` — extracts session titles from JSONL.
 - `session-messages.ts` — builds `session_messages_fts` from raw transcripts and
@@ -375,7 +424,7 @@ The v1 file-indexer, retained for `atoms`.
 
 ## MCP Server (`src/mcp/server.ts`)
 
-Exposes Claude Nexus to Claude Code over the Model Context Protocol — **19 tools**.
+Exposes Claude Nexus to Claude Code over the Model Context Protocol — **20 tools**.
 On startup it opens the DB, runs migrations, and kicks off a full index.
 
 | Tool | Purpose |
@@ -386,6 +435,7 @@ On startup it opens the DB, runs migrations, and kicks off a full index.
 | `nexus_shared` | Global/shared knowledge for session start |
 | `nexus_set_init` | Toggle `load_at_init` on a global/shared atom |
 | `nexus_project` | All knowledge atoms for a project |
+| `nexus_crossref` | Hybrid BM25+dense+RRF cross-reference search; annotates results with `link_type` from `atom_links` |
 | `nexus_sessions` | List sessions with status/usage |
 | `nexus_health` | Diagnostics report |
 | `nexus_remember` | Store a knowledge atom (or a task atom) |
@@ -443,3 +493,9 @@ pipeline changes) so the `dist/` files the plugin references exist.
   embedding, `''` completion) rather than crashing.
 - **Models.** `mxbai-embed-large` via Ollama for embeddings; Haiku 4.5 via the
   Claude Agent SDK for extraction. Both configured in `extraction_models.yaml`.
+- **Corpus expansion (v2.1).** Project `.md` files from all known project cwds
+  are indexed as `source_type='project_doc'` atoms. Every new atom and memory is
+  auto-linked via hybrid BM25 + dense + RRF (`src/core/links.ts`). Links land in
+  `atom_links` with `'related'` or `'duplicates'` type; `'contradicts'`/`'supports'`
+  are LLM-only and never assigned automatically. `nexus_crossref` exposes the link
+  graph to agents.

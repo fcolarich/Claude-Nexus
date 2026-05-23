@@ -1,8 +1,9 @@
 import { globSync } from 'glob';
-import { existsSync, readdirSync, statSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readdirSync } from 'fs';
+import { basename, join } from 'path';
 import { getClaudeConfig } from '../core/config.js';
-import type { SourceType } from '../core/types.js';
+import type { AtomType, SourceType } from '../core/types.js';
+import Database from 'better-sqlite3';
 
 export interface CoworkSession {
   auditPath: string;
@@ -15,6 +16,7 @@ export interface CoworkSession {
 export interface SourceFile {
   path: string;
   sourceType: SourceType;
+  atomTypeOverride?: AtomType;
 }
 
 /**
@@ -141,6 +143,56 @@ export function discoverCoworkSessions(): CoworkSession[] {
           sessionDirName: sd.name,
         });
       }
+    }
+  }
+
+  return results;
+}
+
+const IGNORE_DIRS = ['node_modules', 'dist', 'build', '.git', '.next', 'out', 'coverage', '__pycache__', '.venv'];
+const IGNORE_PATTERNS = IGNORE_DIRS.map(d => `**/${d}/**`);
+
+/**
+ * Derive AtomType for a project doc from its filename.
+ */
+function deriveAtomType(filePath: string): AtomType {
+  const name = basename(filePath);
+  if (/^CLAUDE\.md$/i.test(name) || /^README\.md$/i.test(name)) return 'reference';
+  if (/architecture/i.test(name) || /adr/i.test(name)) return 'architecture';
+  if (/\.plan\.md$/i.test(name) || /^plan/i.test(name)) return 'plan';
+  return 'project_note';
+}
+
+/**
+ * Discover all project .md files from sessions that have a cwd set.
+ * Returns SourceFile[] with sourceType='project_doc' and derived atomTypeOverride.
+ */
+export function discoverProjectDocs(db: Database.Database): SourceFile[] {
+  const cwdRows = db.prepare(
+    `SELECT DISTINCT cwd FROM sessions WHERE cwd IS NOT NULL AND cwd != ''`
+  ).all() as { cwd: string }[];
+
+  const seen = new Set<string>();
+  const results: SourceFile[] = [];
+
+  for (const { cwd } of cwdRows) {
+    if (!existsSync(cwd)) continue;
+
+    const files = globSync('**/*.md', {
+      cwd,
+      absolute: true,
+      nodir: true,
+      ignore: IGNORE_PATTERNS,
+    });
+
+    for (const f of files) {
+      if (seen.has(f)) continue;
+      seen.add(f);
+      results.push({
+        path: f,
+        sourceType: 'project_doc',
+        atomTypeOverride: deriveAtomType(f),
+      });
     }
   }
 

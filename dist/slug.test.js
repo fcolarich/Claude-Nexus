@@ -11,6 +11,11 @@ describe('cwdToProjectSlug', () => {
     it('strips leading and trailing dashes', () => {
         expect(cwdToProjectSlug('/foo')).toBe('foo');
     });
+    it('returns null for degenerate bare-segment paths', () => {
+        expect(cwdToProjectSlug('p')).toBeNull();
+        expect(cwdToProjectSlug('ab')).toBeNull();
+        expect(cwdToProjectSlug('C:\\p')).toBe('C--p'); // full drive path: slug is 4 chars, not degenerate
+    });
     it('collapses colon-drive separator', () => {
         expect(cwdToProjectSlug('C:/Projects/MyApp')).toBe('C--Projects-MyApp');
     });
@@ -50,6 +55,7 @@ function makeAtom(overrides) {
         blocked_by: null,
         discovered_from: null,
         load_at_init: 0,
+        linked_at: null,
         ...overrides,
     };
 }

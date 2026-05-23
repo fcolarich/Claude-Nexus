@@ -1,7 +1,7 @@
 export type AtomType = 'memory' | 'agent' | 'skill' | 'plan' | 'feedback' | 'reference' | 'project_note' | 'architecture' | 'task';
 export type TaskStatus = 'ready' | 'in_progress' | 'blocked' | 'done';
 export type AtomScope = 'global' | 'shared' | 'project';
-export type SourceType = 'memory_file' | 'agent_def' | 'skill_def' | 'plan_file' | 'nexus_native';
+export type SourceType = 'memory_file' | 'agent_def' | 'skill_def' | 'plan_file' | 'nexus_native' | 'project_doc';
 export type LinkType = 'references' | 'extends' | 'refines' | 'contradicts' | 'supports' | 'duplicates' | 'related';
 export type SessionStatus = 'active' | 'waiting_input' | 'processing' | 'idle' | 'dead';
 export type DiagnosticType = 'broken_reference' | 'missing_frontmatter' | 'duplicate' | 'orphan' | 'stale';
@@ -22,6 +22,7 @@ export interface Atom {
     frontmatter: Record<string, unknown> | null;
     created_at: string;
     updated_at: string;
+    linked_at: string | null;
     status: TaskStatus | null;
     priority: number | null;
     blocks: string | null;
@@ -75,6 +76,7 @@ export interface Memory {
     content_hash: string;
     created_at: string;
     updated_at: string;
+    linked_at: string | null;
     load_at_init: number;
 }
 export interface Session {
@@ -98,6 +100,15 @@ export interface Session {
     workspace_id: string | null;
     participant_id: string | null;
     last_reflected_index: number;
+    cwd: string | null;
+}
+export interface CrossRefResult {
+    id: string;
+    title: string;
+    atom_type: string;
+    link_type: LinkType | null;
+    score: number;
+    body_snippet: string;
 }
 export interface Diagnostic {
     id: number;

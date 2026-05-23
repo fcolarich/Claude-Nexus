@@ -1,4 +1,5 @@
-import type { SourceType } from '../core/types.js';
+import type { AtomType, SourceType } from '../core/types.js';
+import Database from 'better-sqlite3';
 export interface CoworkSession {
     auditPath: string;
     metaPath: string | null;
@@ -9,6 +10,7 @@ export interface CoworkSession {
 export interface SourceFile {
     path: string;
     sourceType: SourceType;
+    atomTypeOverride?: AtomType;
 }
 /**
  * Discover all indexable source files in the Claude directory.
@@ -25,6 +27,11 @@ export declare function discoverSessions(): {
  * Discover Cowork (desktop app) audit.jsonl sessions from the Windows Claude package directory.
  */
 export declare function discoverCoworkSessions(): CoworkSession[];
+/**
+ * Discover all project .md files from sessions that have a cwd set.
+ * Returns SourceFile[] with sourceType='project_doc' and derived atomTypeOverride.
+ */
+export declare function discoverProjectDocs(db: Database.Database): SourceFile[];
 /**
  * Get directories to watch for file changes.
  */

@@ -38,10 +38,10 @@ browser dashboard.
 
 ---
 
-## MCP Tools (19)
+## MCP Tools (20)
 
 **Retrieval:** `nexus_recall` (budgeted memory recall) · `nexus_search` · `nexus_context` ·
-`nexus_project` · `nexus_shared`
+`nexus_project` · `nexus_shared` · `nexus_crossref` (hybrid BM25+dense+RRF cross-reference)
 **Capture / lifecycle:** `nexus_remember` · `nexus_verify` · `nexus_feedback` ·
 `nexus_consolidate` · `nexus_distill` · `nexus_backfill`
 **Tasks:** `nexus_tasks` · `nexus_tasks_create` · `nexus_task_update`
@@ -55,13 +55,16 @@ browser dashboard.
 claude-nexus/
 ├── src/
 │   ├── core/         DB + migrations, memories, recall, decay, consolidate,
-│   │                 distill, llm client, embeddings, search, config, types
+│   │                 distill, llm client, embeddings, search, config, types,
+│   │                 links (hybrid BM25+dense+RRF auto-linking)
 │   ├── capture/      transcript (Observer), extract (Haiku), reflector,
 │   │                 export, runner + load-runner (hook entries), backfill
 │   ├── web/          Express API server + session monitor
 │   ├── frontend/     Svelte 5 SPA (Memories, Review, Sessions, Search, …)
-│   ├── indexer/      Filesystem scanner, parser, session-message FTS
-│   ├── mcp/          MCP server (stdio, 19 tools)
+│   ├── indexer/      Filesystem scanner (incl. project .md discovery),
+│   │                 parser, session-message FTS
+│   ├── mcp/          MCP server (stdio, 20 tools)
+│   ├── types/        TypeScript shims (wink-bm25-text-search, etc.)
 │   └── cli/          CLI entry point (Commander.js — incl. `backfill`)
 ├── hooks/            nexus-capture.mjs (capture) + the load runner
 ├── extraction_models.yaml

@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
 import { parseFile, computeAtomId } from './parser.js';
-import { discoverSources, discoverSessions, discoverCoworkSessions } from './scanner.js';
+import { discoverSources, discoverSessions, discoverCoworkSessions, discoverProjectDocs } from './scanner.js';
 import type { CoworkSession } from './scanner.js';
+import { linkAtom, buildBm25Corpus } from '../core/links.js';
 import { importSessionTitles, backfillTitlesFromSummary, generateTitle } from './session-titles.js';
 import { readFileSync, statSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
@@ -425,6 +426,12 @@ export async function embedUnindexed(db: Database.Database): Promise<void> {
 
   console.log(`[embedder] Embedding ${unembedded.length} unindexed atoms...`);
 
+  // Build BM25 corpus once before the loop to avoid O(N²) rebuilds
+  const allAtomsForBm25 = db.prepare(
+    `SELECT id, title, body FROM atoms`
+  ).all() as { id: string; title: string; body: string }[];
+  const corpus = allAtomsForBm25.length >= 3 ? buildBm25Corpus(allAtomsForBm25) : undefined;
+
   let embedded = 0;
   let skipped = 0;
 
@@ -440,6 +447,8 @@ export async function embedUnindexed(db: Database.Database): Promise<void> {
       // parameter. atom.rowid is a SQLite integer, so interpolation is safe.
       db.prepare(`INSERT INTO atoms_vec(rowid, embedding) VALUES (${atom.rowid}, ?)`).run(vecToBlob(vec));
       embedded++;
+      // Link after successful embed
+      await linkAtom(db, atom.id, generateEmbedding, corpus);
     } catch (err) {
       // Row may have been inserted by a concurrent run — ignore
       skipped++;
@@ -476,6 +485,20 @@ export async function runFullIndex(db: Database.Database): Promise<IndexStats> {
     }
   });
   indexAll();
+
+  // Index project docs discovered from sessions.cwd
+  const projectDocs = discoverProjectDocs(db);
+  const indexProjectDocs = db.transaction(() => {
+    for (const source of projectDocs) {
+      const result = indexFile(db, stmts, source.path, source.sourceType);
+      stats.atomsCreated += result.created;
+      stats.atomsUpdated += result.updated;
+      stats.atomsUnchanged += result.unchanged;
+      stats.linksCreated += result.links;
+      stats.diagnosticsCreated += result.diagnostics;
+    }
+  });
+  indexProjectDocs();
 
   // Detect orphans and infer links in a single transaction
   const postProcess = db.transaction(() => {

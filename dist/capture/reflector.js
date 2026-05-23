@@ -12,6 +12,7 @@
 import { getNexusConfig } from '../core/config.js';
 import { generateEmbedding } from '../core/embeddings.js';
 import { insertMemory, touchMemory, embedMemory, findSimilarMemory, normalize, } from '../core/memories.js';
+import { linkMemory } from '../core/links.js';
 import { readTranscriptWindow } from './transcript.js';
 import { extractMemories } from './extract.js';
 /**
@@ -25,6 +26,10 @@ export async function reflect(db, opts, deps = {}) {
     // Ensure a session row exists to hold the reflection cursor. The indexer
     // enriches the other columns later (ON CONFLICT preserves last_reflected_index).
     db.prepare(`INSERT OR IGNORE INTO sessions (session_id, project, jsonl_path, status) VALUES (?, ?, ?, 'dead')`).run(opts.session_id, opts.project ?? 'unknown', opts.transcript_path);
+    // Persist cwd only if not already set (reflector owns cwd, indexer does not overwrite)
+    if (opts.cwd) {
+        db.prepare(`UPDATE sessions SET cwd = ? WHERE session_id = ? AND cwd IS NULL`).run(opts.cwd, opts.session_id);
+    }
     const sessRow = db.prepare(`SELECT last_reflected_index FROM sessions WHERE session_id = ?`).get(opts.session_id);
     const fromIndex = sessRow?.last_reflected_index ?? 0;
     const window = readTranscriptWindow(opts.transcript_path, fromIndex);
@@ -65,7 +70,10 @@ export async function reflect(db, opts, deps = {}) {
         });
         if (res.inserted) {
             inserted++;
-            await embedMemory(db, res.id, embed);
+            const embedded = await embedMemory(db, res.id, embed);
+            if (embedded) {
+                await linkMemory(db, res.id, embed);
+            }
         }
         else {
             // Exact content-id collision — same memory text already stored. Reconfirm.

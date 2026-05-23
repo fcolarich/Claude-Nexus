@@ -15,7 +15,8 @@ import { recallMemories } from '../core/recall.js';
 /** Project slug from a cwd — same convention as the indexer (kept inline to
  *  avoid pulling the indexer module tree into this hot-path hook). */
 function cwdToProjectSlug(cwd) {
-    return cwd.replace(/[:\\/]/g, '-').replace(/_/g, '-').replace(/^-+|-+$/g, '');
+    const slug = cwd.replace(/[:\\/]/g, '-').replace(/_/g, '-').replace(/^-+|-+$/g, '');
+    return slug.length >= 3 ? slug : null;
 }
 async function readStdin() {
     let input = '';
@@ -30,7 +31,7 @@ async function main() {
         payload = JSON.parse((await readStdin()) || '{}');
     }
     catch { /* malformed */ }
-    const project = cwdToProjectSlug(payload.cwd || process.cwd());
+    const project = cwdToProjectSlug(payload.cwd || process.cwd()) ?? null;
     const db = openDatabase(process.env.NEXUS_DB);
     try {
         const result = recallMemories(db, { project });

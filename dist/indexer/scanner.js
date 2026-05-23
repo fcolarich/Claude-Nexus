@@ -1,6 +1,6 @@
 import { globSync } from 'glob';
 import { existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { getClaudeConfig } from '../core/config.js';
 /**
  * Discover all indexable source files in the Claude directory.
@@ -113,6 +113,51 @@ export function discoverCoworkSessions() {
                     sessionDirName: sd.name,
                 });
             }
+        }
+    }
+    return results;
+}
+const IGNORE_DIRS = ['node_modules', 'dist', 'build', '.git', '.next', 'out', 'coverage', '__pycache__', '.venv'];
+const IGNORE_PATTERNS = IGNORE_DIRS.map(d => `**/${d}/**`);
+/**
+ * Derive AtomType for a project doc from its filename.
+ */
+function deriveAtomType(filePath) {
+    const name = basename(filePath);
+    if (/^CLAUDE\.md$/i.test(name) || /^README\.md$/i.test(name))
+        return 'reference';
+    if (/architecture/i.test(name) || /adr/i.test(name))
+        return 'architecture';
+    if (/\.plan\.md$/i.test(name) || /^plan/i.test(name))
+        return 'plan';
+    return 'project_note';
+}
+/**
+ * Discover all project .md files from sessions that have a cwd set.
+ * Returns SourceFile[] with sourceType='project_doc' and derived atomTypeOverride.
+ */
+export function discoverProjectDocs(db) {
+    const cwdRows = db.prepare(`SELECT DISTINCT cwd FROM sessions WHERE cwd IS NOT NULL AND cwd != ''`).all();
+    const seen = new Set();
+    const results = [];
+    for (const { cwd } of cwdRows) {
+        if (!existsSync(cwd))
+            continue;
+        const files = globSync('**/*.md', {
+            cwd,
+            absolute: true,
+            nodir: true,
+            ignore: IGNORE_PATTERNS,
+        });
+        for (const f of files) {
+            if (seen.has(f))
+                continue;
+            seen.add(f);
+            results.push({
+                path: f,
+                sourceType: 'project_doc',
+                atomTypeOverride: deriveAtomType(f),
+            });
         }
     }
     return results;

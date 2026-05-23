@@ -23,6 +23,46 @@ describe('schema migrations', () => {
         expect(columnExists(db, 'sessions', 'last_reflected_index')).toBe(true);
         db.close();
     });
+    it('migration 6: sessions.cwd column exists', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(columnExists(db, 'sessions', 'cwd')).toBe(true);
+        db.close();
+    });
+    it('migration 6: atoms.linked_at column exists', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(columnExists(db, 'atoms', 'linked_at')).toBe(true);
+        db.close();
+    });
+    it('migration 6: memories.linked_at column exists', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(columnExists(db, 'memories', 'linked_at')).toBe(true);
+        db.close();
+    });
+    it("migration 6: source_type='project_doc' atom inserts without CHECK violation", () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(() => {
+            db.prepare(`
+        INSERT INTO atoms (id, title, body, atom_type, scope, source_path, source_type, content_hash)
+        VALUES ('pd1', 'Test Doc', 'body', 'project_note', 'project', '/test/doc.md', 'project_doc', 'abc')
+      `).run();
+        }).not.toThrow();
+        db.close();
+    });
+    it("migration 6: source_type='invalid_type' throws CHECK violation", () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(() => {
+            db.prepare(`
+        INSERT INTO atoms (id, title, body, atom_type, scope, source_path, source_type, content_hash)
+        VALUES ('bad1', 'Bad', 'body', 'project_note', 'project', '/test/bad.md', 'invalid_type', 'xyz')
+      `).run();
+        }).toThrow();
+        db.close();
+    });
     it('is idempotent — re-init applies no migration twice', () => {
         const db = openDatabase(':memory:');
         initializeSchema(db);

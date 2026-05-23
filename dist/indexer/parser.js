@@ -243,6 +243,7 @@ export function parseFile(filePath, sourceType) {
             blocked_by: taskBlockedBy,
             discovered_from: taskDiscoveredFrom,
             load_at_init: loadAtInit,
+            linked_at: null,
         });
         // Extract links from this section
         const sectionLinks = extractLinks(section.body);

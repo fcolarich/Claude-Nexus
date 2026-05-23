@@ -5,15 +5,18 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { writeFileSync, mkdtempSync } from 'fs';
+import { writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { openDatabase, initializeSchema } from './core/database.js';
 import { reflect } from './capture/reflector.js';
 import { recallMemories } from './core/recall.js';
-import { insertMemory, verifyMemory, type MemoryInput } from './core/memories.js';
+import { insertMemory, verifyMemory, type MemoryInput, vecToBlob, normalize } from './core/memories.js';
 import { consolidateMemories } from './core/consolidate.js';
 import type { MemoryCandidate } from './capture/extract.js';
+import { reindexFile } from './indexer/indexer.js';
+import { discoverProjectDocs } from './indexer/scanner.js';
+import { linkAtom, buildBm25Corpus } from './core/links.js';
 
 function freshDb() {
   const db = openDatabase(':memory:');
@@ -98,6 +101,69 @@ describe('integration: decay lifecycle', () => {
     verifyMemory(db, id);
     expect(recallMemories(db, { project: 'proj' }).items).toHaveLength(1);  // decay clock reset
     db.close();
+  });
+});
+
+describe('integration: project_doc corpus expansion', () => {
+  it('indexes project .md files, embeds (fake), links, writes atom_links', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nexus-projdoc-'));
+    try {
+      // 1. Create three .md files (≥3 required for BM25 corpus to consolidate)
+      writeFileSync(join(tempDir, 'notes.md'), `# Project Notes\n\nThis project uses TypeScript and SQLite.`);
+      writeFileSync(join(tempDir, 'architecture.md'), `# Architecture\n\nUses sqlite-vec for vector search.`);
+      writeFileSync(join(tempDir, 'CLAUDE.md'), `# Claude\n\nAlways run tests before committing.`);
+
+      const db = freshDb();
+
+      // 2. Seed sessions table with cwd
+      db.prepare(
+        `INSERT INTO sessions (session_id, project, jsonl_path, status, cwd) VALUES ('s1', 'test', '/fake.jsonl', 'dead', ?)`
+      ).run(tempDir);
+
+      // 3. discoverProjectDocs → verify 3 SourceFiles
+      const projectDocs = discoverProjectDocs(db);
+      expect(projectDocs.length).toBe(3);
+      expect(projectDocs.every(d => d.sourceType === 'project_doc')).toBe(true);
+
+      // 4. indexFile each → verify atoms with source_type='project_doc'
+      for (const doc of projectDocs) {
+        reindexFile(db, doc.path, doc.sourceType);
+      }
+      const atoms = db.prepare(`SELECT id, source_type FROM atoms WHERE source_type = 'project_doc'`).all() as { id: string; source_type: string }[];
+      expect(atoms.length).toBe(3);
+      expect(atoms.every(a => a.source_type === 'project_doc')).toBe(true);
+
+      // 5. Insert fake vectors into atoms_vec for KNN linking
+      const allAtoms = db.prepare(`SELECT id, rowid, title, body FROM atoms`).all() as { id: string; rowid: number; title: string; body: string }[];
+      for (const a of allAtoms) {
+        const vec = vecFromText(`${a.title}\n${a.body}`);
+        try {
+          db.prepare(`INSERT OR IGNORE INTO atoms_vec(rowid, embedding) VALUES (${a.rowid}, ?)`).run(vecToBlob(normalize(vec)));
+        } catch { /* atoms_vec may not be loaded in test env */ }
+      }
+
+      // Build corpus for BM25
+      const corpus = allAtoms.length >= 3 ? buildBm25Corpus(allAtoms) : undefined;
+
+      // 6. linkAtom with fake embedFn for each project_doc atom
+      for (const atom of atoms) {
+        await linkAtom(db, atom.id, async (text) => vecFromText(text), corpus);
+      }
+
+      // 7. Verify atoms.linked_at is set (not null)
+      for (const atom of atoms) {
+        const row = db.prepare(`SELECT linked_at FROM atoms WHERE id = ?`).get(atom.id) as { linked_at: string | null };
+        expect(row.linked_at).not.toBeNull();
+      }
+
+      // 8. Verify atom_links has rows — the core task-011 criterion
+      const linkCount = (db.prepare(`SELECT COUNT(*) AS c FROM atom_links`).get() as { c: number }).c;
+      expect(linkCount).toBeGreaterThan(0);
+
+      db.close();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

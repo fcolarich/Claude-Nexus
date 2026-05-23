@@ -38,7 +38,7 @@ export declare function indexSession(db: Database.Database, stmts: PreparedState
  * for ~/.claude/projects/ directory names (replace :, path separators, and underscores with -).
  * Claude Code converts underscores to dashes: "LLM_Workflow_Optimization" → "C--Fran-LLM-Workflow-Optimization".
  */
-export declare function cwdToProjectSlug(cwd: string): string;
+export declare function cwdToProjectSlug(cwd: string): string | null;
 /**
  * Index a Cowork (desktop app) audit.jsonl session.
  */

@@ -67,6 +67,7 @@ function makeAtom(overrides: Partial<Atom>): Atom {
     blocked_by: null,
     discovered_from: null,
     load_at_init: 0,
+    linked_at: null,
     ...overrides,
   };
 }

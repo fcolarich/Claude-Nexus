@@ -1,0 +1,243 @@
+{
+  "feature": "corpus-expansion-features-1-4",
+  "branch": "feature/corpus-expansion",
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Add wink-bm25-text-search dependency",
+      "description": "Add wink-bm25-text-search (pure JS BM25) to package.json dependencies. Create src/types/wink-bm25-text-search.d.ts type shim if @types/wink-bm25-text-search does not exist on npm. No native compilation required.",
+      "files": [
+        "package.json",
+        "src/types/wink-bm25-text-search.d.ts"
+      ],
+      "depends_on": [],
+      "estimated_tokens": 800,
+      "complexity": "simple",
+      "acceptance_criteria": [
+        "npm install succeeds with wink-bm25-text-search in node_modules",
+        "import BM25 from 'wink-bm25-text-search' compiles without TypeScript errors",
+        "No native add-on compilation required"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "task-002",
+      "title": "Extend src/core/types.ts with new types",
+      "description": "Add 'project_doc' to SourceType union. Add linked_at: string | null to Atom and Memory interfaces. Add cwd?: string | null to Session interface. Add CrossRefResult interface for nexus_crossref output.",
+      "files": [
+        "src/core/types.ts"
+      ],
+      "depends_on": [],
+      "estimated_tokens": 600,
+      "complexity": "simple",
+      "acceptance_criteria": [
+        "SourceType includes 'project_doc'",
+        "Atom interface has linked_at: string | null",
+        "Memory interface has linked_at: string | null",
+        "Session interface has cwd: string | null",
+        "CrossRefResult interface exported with id, title, atom_type, link_type, score, body_snippet fields",
+        "TypeScript compiles with no errors after change"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "task-003",
+      "title": "Add Migration 6 to src/core/database.ts",
+      "description": "Add migrateCorpusExpansion function implementing migration 6: guarded ALTER TABLE memories ADD COLUMN linked_at TEXT, guarded ALTER TABLE sessions ADD COLUMN cwd TEXT, and full atoms table recreate to extend source_type CHECK to include 'project_doc' and add linked_at TEXT column. Uses foreign_keys=OFF + transaction pattern matching migrateTaskSupport. Update MIGRATIONS array and LATEST_SCHEMA_VERSION to 6.",
+      "files": [
+        "src/core/database.ts"
+      ],
+      "depends_on": [],
+      "estimated_tokens": 2400,
+      "complexity": "medium",
+      "acceptance_criteria": [
+        "LATEST_SCHEMA_VERSION === 6",
+        "initializeSchema(openDatabase(':memory:')) runs without error",
+        "atoms table source_type CHECK includes 'project_doc'",
+        "sessions table has cwd column",
+        "atoms table has linked_at column",
+        "memories table has linked_at column",
+        "idx_atoms_linked index exists on atoms(linked_at)",
+        "Migration is idempotent: calling initializeSchema twice does not throw",
+        "Atom insert with source_type='project_doc' succeeds",
+        "Atom insert with source_type='invalid_type' throws CHECK violation"
+      ],
+      "risk": "medium"
+    },
+    {
+      "id": "task-004",
+      "title": "Create src/core/links.ts — hybrid linking core",
+      "description": "New file implementing: buildBm25Corpus (wink-bm25 index from atoms), rrfMerge (RRF rank fusion K=60, returns top topK), upsertLink (bidirectional INSERT OR IGNORE, skips self-links), linkAtom (hybrid BM25+dense KNN, skip guard via linked_at, similarity threshold 0.86/0.70, updates linked_at), linkMemory (same pattern for memories table). All functions exported. Optional corpus parameter on linkAtom/linkMemory to avoid O(N²) cost when called in a loop.",
+      "files": [
+        "src/core/links.ts"
+      ],
+      "depends_on": ["task-001", "task-002", "task-003"],
+      "estimated_tokens": 4000,
+      "complexity": "high",
+      "acceptance_criteria": [
+        "rrfMerge: item in both lists ranks above item in only one list",
+        "rrfMerge: empty dense list returns BM25 results",
+        "rrfMerge: returns no more than topK items",
+        "upsertLink: inserts two rows (A→B and B→A) per call",
+        "upsertLink: second identical call leaves row count unchanged",
+        "upsertLink: self-link (A→A) inserts zero rows",
+        "linkAtom: atom with linked_at > updated_at writes no atom_links rows",
+        "linkAtom: never writes a self-link row",
+        "linkAtom: updates atoms.linked_at after processing",
+        "linkMemory: updates memories.linked_at after processing",
+        "buildBm25Corpus: exact title match scores above unrelated doc",
+        "All functions compile without TypeScript errors"
+      ],
+      "risk": "high"
+    },
+    {
+      "id": "task-005",
+      "title": "Add discoverProjectDocs to src/indexer/scanner.ts",
+      "description": "Add discoverProjectDocs(db: Database.Database): SourceFile[] function. Extend SourceFile interface with optional atomTypeOverride?: AtomType. Implementation: SELECT DISTINCT cwd FROM sessions WHERE cwd IS NOT NULL, existsSync check per cwd, globSync('**/*.md') with node_modules/dist/build/.git ignores, atom_type derivation from filename (CLAUDE.md/README.md→reference, architecture→architecture, plan→plan, default→project_note), return SourceFile[] with sourceType='project_doc'.",
+      "files": [
+        "src/indexer/scanner.ts"
+      ],
+      "depends_on": ["task-002", "task-003"],
+      "estimated_tokens": 1500,
+      "complexity": "medium",
+      "acceptance_criteria": [
+        "discoverProjectDocs exported from scanner.ts",
+        "Returns SourceFile[] for all .md files under each cwd in sessions",
+        "Ignores node_modules/, dist/, build/, .git/ paths",
+        "Two sessions with same cwd: each md file appears once in output",
+        "Missing/nonexistent cwd: skipped silently without throw",
+        "cwd IS NULL sessions excluded from query",
+        "CLAUDE.md gets atomTypeOverride 'reference'",
+        "architecture.md gets atomTypeOverride 'architecture'",
+        "generic notes.md gets atomTypeOverride 'project_note'",
+        "SourceFile interface has atomTypeOverride?: AtomType field"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "task-006",
+      "title": "Update src/indexer/indexer.ts to call discoverProjectDocs and linkAtom",
+      "description": "Two changes: (1) runFullIndex — after indexAll() transaction, call discoverProjectDocs(db) and index results in a new transaction before postProcess(); (2) embedUnindexed — build BM25 corpus once before the atom loop using buildBm25Corpus, then call linkAtom(db, atom.id, generateEmbedding, corpus) after each successful atoms_vec insert. Import discoverProjectDocs from scanner.js and linkAtom/buildBm25Corpus from ../core/links.js.",
+      "files": [
+        "src/indexer/indexer.ts"
+      ],
+      "depends_on": ["task-004", "task-005"],
+      "estimated_tokens": 1200,
+      "complexity": "medium",
+      "acceptance_criteria": [
+        "runFullIndex calls discoverProjectDocs(db) and indexes resulting SourceFiles",
+        "Project doc atoms appear in atoms table with source_type='project_doc'",
+        "embedUnindexed builds BM25 corpus once (not per-atom)",
+        "linkAtom called after each successful atoms_vec insert with pre-built corpus",
+        "Existing embedding behavior unchanged for non-project-doc atoms",
+        "Stats (atomsCreated, atomsUpdated) incremented for project doc atoms"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "task-007",
+      "title": "Update src/capture/reflector.ts to persist cwd and call linkMemory",
+      "description": "Two changes: (1) After INSERT OR IGNORE INTO sessions, add UPDATE sessions SET cwd = ? WHERE session_id = ? when opts.cwd is set; (2) In the if (res.inserted) block, call linkMemory(db, res.id, embed) after embedMemory. Add import for linkMemory from ../core/links.js. Note: check if embedMemory returns boolean to gate linkMemory call, otherwise call unconditionally (linkMemory has its own skip guard).",
+      "files": [
+        "src/capture/reflector.ts"
+      ],
+      "depends_on": ["task-004"],
+      "estimated_tokens": 800,
+      "complexity": "simple",
+      "acceptance_criteria": [
+        "reflect() with cwd option writes cwd to sessions row",
+        "reflect() without cwd option does not error, cwd remains null",
+        "linkMemory called for each newly inserted memory after embed",
+        "linkMemory not called for merged (existing) memories",
+        "TypeScript compiles without errors"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "task-008",
+      "title": "Add nexus_crossref tool to src/mcp/server.ts",
+      "description": "Add nexus_crossref MCP tool after nexus_recall. Tool accepts: query (required), project (optional), cwd (optional), limit (optional, default 10). Implementation: dense KNN over atoms_vec, BM25 over in-memory corpus, rrfMerge, normalize scores to [0,1], JOIN atom_links to annotate link_type (null if no row), return formatted markdown. Import buildBm25Corpus/rrfMerge/RankedResult from links.js, generateEmbedding from embeddings.js, CrossRefResult/LinkType from types.js.",
+      "files": [
+        "src/mcp/server.ts"
+      ],
+      "depends_on": ["task-004"],
+      "estimated_tokens": 2000,
+      "complexity": "medium",
+      "acceptance_criteria": [
+        "nexus_crossref tool registered and callable via MCP",
+        "Returns results ranked by RRF score, formatted as markdown",
+        "link_type field present as string badge when link row exists",
+        "link_type absent/omitted when no link row (null in CrossRefResult)",
+        "Empty result set returns 'No cross-references found.' text",
+        "limit parameter caps result count (default 10)",
+        "TypeScript compiles without errors"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "task-009",
+      "title": "Create src/core/links.test.ts — unit tests for links.ts",
+      "description": "New test file using vitest + in-memory sqlite (openDatabase(':memory:') + initializeSchema). Test: rrfMerge dual-list ranking, rrfMerge empty list handling, rrfMerge topK cap, upsertLink bidirectionality, upsertLink idempotency, upsertLink self-link prevention, linkAtom skip guard, linkAtom link writing when similar atom exists, buildBm25Corpus relevance ordering. Inject fake deterministic embedFn (no real embedding server calls).",
+      "files": [
+        "src/core/links.test.ts"
+      ],
+      "depends_on": ["task-004"],
+      "estimated_tokens": 2500,
+      "complexity": "medium",
+      "acceptance_criteria": [
+        "All tests pass with vitest run",
+        "No real embedding server calls (fake embedFn injected)",
+        "Tests use in-memory DB (no filesystem side effects)",
+        "rrfMerge dual-list test passes",
+        "upsertLink bidirectionality verified (2 rows inserted)",
+        "upsertLink self-link verified (0 rows inserted)",
+        "linkAtom skip guard test passes",
+        "buildBm25Corpus relevance test passes"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "task-010",
+      "title": "Create src/indexer/scanner.test.ts — discoverProjectDocs unit tests",
+      "description": "New test file for discoverProjectDocs using mkdtempSync temp dirs and in-memory DB. Tests: basic discovery, ignore node_modules, ignore dist/build/.git, dedup same cwd, nonexistent cwd handled, NULL cwd excluded, atomTypeOverride for CLAUDE.md/architecture.md/default. Clean up temp dirs in afterEach.",
+      "files": [
+        "src/indexer/scanner.test.ts"
+      ],
+      "depends_on": ["task-005"],
+      "estimated_tokens": 1800,
+      "complexity": "medium",
+      "acceptance_criteria": [
+        "All 9 tests pass with vitest run",
+        "Temp dirs cleaned up after each test via afterEach rmSync",
+        "No real filesystem modification beyond temp dir",
+        "Ignore patterns verified (node_modules, dist, build, .git)",
+        "Dedup: same cwd in two sessions → each file appears once",
+        "atomTypeOverride correctly derived for CLAUDE.md, architecture.md, plan.md, notes.md"
+      ],
+      "risk": "low"
+    },
+    {
+      "id": "task-011",
+      "title": "Extend integration and database tests",
+      "description": "Extend src/core/database.test.ts with 5 migration 6 assertions (column existence for cwd/linked_at on sessions/atoms/memories, CHECK constraint for project_doc valid, CHECK violation for invalid type). Extend src/integration.test.ts with project_doc corpus expansion test: create temp dir + .md files, seed sessions with cwd, call discoverProjectDocs, indexFile, embedUnindexed with fake embedFn, verify atom_links populated and atoms.linked_at set.",
+      "files": [
+        "src/core/database.test.ts",
+        "src/integration.test.ts"
+      ],
+      "depends_on": ["task-003", "task-004", "task-005", "task-006"],
+      "estimated_tokens": 2000,
+      "complexity": "medium",
+      "acceptance_criteria": [
+        "database.test.ts: sessions.cwd column exists after migration 6",
+        "database.test.ts: atoms.linked_at column exists after migration 6",
+        "database.test.ts: memories.linked_at column exists after migration 6",
+        "database.test.ts: source_type='project_doc' atom inserts without error",
+        "database.test.ts: source_type='invalid_type' throws CHECK violation",
+        "integration.test.ts: project_doc atoms indexed from temp dir .md files",
+        "integration.test.ts: atom_links has at least one row after embed+link",
+        "integration.test.ts: atoms.linked_at is non-null after embedUnindexed"
+      ],
+      "risk": "medium"
+    }
+  ]
+}

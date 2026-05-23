@@ -8,6 +8,8 @@ import { homedir } from 'os';
 import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { runFullIndex, reindexFile, cwdToProjectSlug } from '../indexer/indexer.js';
+import { buildBm25Corpus, rrfMerge } from '../core/links.js';
+import { generateEmbedding } from '../core/embeddings.js';
 import { hybridSearch, hybridSearchMemories, fetchContext, fetchMemoryContext, getSharedKnowledge, getProjectContext, listSessions, getDiagnostics, getStats, } from '../core/search.js';
 import { recallMemories } from '../core/recall.js';
 import { verifyMemory, recordFeedback, insertMemory, embedMemory } from '../core/memories.js';
@@ -34,13 +36,13 @@ function resolveProjectFromCwd(cwd) {
     const known = (slug) => !!db.prepare(`SELECT 1 FROM atoms    WHERE project = ? LIMIT 1`).get(slug) ||
         !!db.prepare(`SELECT 1 FROM sessions WHERE project = ? LIMIT 1`).get(slug);
     const derived = cwdToProjectSlug(cwd);
-    if (known(derived))
+    if (derived && known(derived))
         return derived;
     const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
     const shortName = parts[parts.length - 1]?.toLowerCase().replace(/_/g, '-');
-    if (shortName && shortName !== derived.toLowerCase() && known(shortName))
+    if (shortName && shortName !== derived?.toLowerCase() && known(shortName))
         return shortName;
-    return derived;
+    return derived ?? shortName ?? cwd;
 }
 // ── nexus_search ─────────────────────────────────────────────────────
 server.tool('nexus_search', 'Cross-project full-text search across all Claude knowledge: captured memories AND agents/skills/plans/notes. Returns both stores merged into one markdown response.', {
@@ -620,6 +622,91 @@ server.tool('nexus_reindex', 'Force a full re-index of all Claude knowledge file
                 text: `Re-index complete: ${stats.atomsCreated} created, ${stats.atomsUpdated} updated, ${stats.atomsUnchanged} unchanged, ${stats.linksCreated} links, ${stats.sessionsIndexed} sessions.`,
             }],
     };
+});
+// ── nexus_crossref ───────────────────────────────────────────────────
+server.tool('nexus_crossref', 'Hybrid cross-reference search: merges dense (vector) and sparse (BM25) retrieval via RRF. Annotates each result with its link_type from atom_links when available. Use to discover semantically related atoms you didn\'t know to search for directly.', {
+    query: z.string().describe('Search query'),
+    project: z.string().optional().describe('Filter by project slug'),
+    cwd: z.string().optional().describe('Caller working directory — derives project slug automatically'),
+    limit: z.coerce.number().optional().describe('Max results to return (default 10)'),
+}, async ({ query, project, cwd, limit }) => {
+    const cap = limit ?? 10;
+    const knnLimit = cap * 2;
+    // Dense KNN over atoms_vec
+    const denseResults = [];
+    try {
+        const vec = await generateEmbedding(query);
+        if (vec) {
+            const { vecToBlob, normalize } = await import('../core/memories.js');
+            const blob = vecToBlob(normalize(vec));
+            const knnRows = db.prepare(`SELECT a.id, av.distance FROM atoms_vec av
+           JOIN atoms a ON a.rowid = av.rowid
+           WHERE av.embedding MATCH ?
+           ORDER BY av.distance
+           LIMIT ?`).all(blob, knnLimit);
+            for (const r of knnRows) {
+                const sim = Math.max(0, 1 - (r.distance * r.distance) / 2);
+                denseResults.push({ id: r.id, score: sim });
+            }
+        }
+    }
+    catch {
+        // atoms_vec unavailable — BM25-only fallback
+    }
+    // BM25
+    const bm25Results = [];
+    try {
+        const allAtoms = db.prepare(`SELECT id, title, body FROM atoms`).all();
+        if (allAtoms.length >= 3) {
+            const corpus = buildBm25Corpus(allAtoms);
+            const raw = corpus.search(query, knnLimit);
+            for (const [ref, score] of raw) {
+                bm25Results.push({ id: ref, score });
+            }
+        }
+    }
+    catch {
+        // BM25 failed
+    }
+    // RRF merge
+    const merged = rrfMerge(bm25Results, denseResults, cap);
+    if (merged.length === 0) {
+        return { content: [{ type: 'text', text: 'No cross-references found.' }] };
+    }
+    // Normalize scores to [0, 1]
+    const maxScore = merged[0].score || 1;
+    const normalized = merged.map(r => ({ ...r, score: r.score / maxScore }));
+    // Project filter
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const parts = ['# Cross-References\n'];
+    for (const r of normalized) {
+        // Fetch atom details
+        let atomRow;
+        try {
+            atomRow = db.prepare(`SELECT id, title, atom_type, body, project FROM atoms WHERE id = ?`).get(r.id);
+        }
+        catch {
+            continue;
+        }
+        if (!atomRow)
+            continue;
+        if (effectiveProject && atomRow.project !== effectiveProject)
+            continue;
+        // Look up link_type from atom_links
+        let linkType = null;
+        try {
+            const linkRow = db.prepare(`SELECT link_type FROM atom_links WHERE source_id = ? LIMIT 1`).get(r.id);
+            linkType = linkRow?.link_type ?? null;
+        }
+        catch { }
+        const badge = linkType ? ` [${linkType}]` : '';
+        const snippet = atomRow.body.slice(0, 300).replace(/\n/g, ' ');
+        parts.push(`### ${atomRow.title}${badge}\n_${atomRow.atom_type} | score: ${r.score.toFixed(2)}_\n\n${snippet}`);
+    }
+    if (parts.length === 1) {
+        return { content: [{ type: 'text', text: 'No cross-references found.' }] };
+    }
+    return { content: [{ type: 'text', text: parts.join('\n\n') }] };
 });
 // ── Start server ─────────────────────────────────────────────────────
 async function main() {

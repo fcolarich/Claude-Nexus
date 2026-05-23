@@ -261,6 +261,7 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
       blocked_by: taskBlockedBy,
       discovered_from: taskDiscoveredFrom,
       load_at_init: loadAtInit,
+      linked_at: null,
     });
 
     // Extract links from this section

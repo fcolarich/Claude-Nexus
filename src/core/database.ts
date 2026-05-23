@@ -4,7 +4,7 @@ import { dirname, join } from 'path';
 import { homedir } from 'os';
 import * as sqliteVec from 'sqlite-vec';
 
-const NEXUS_DIR = join(homedir(), '.claude-nexus');
+const NEXUS_DIR = join(homedir(), '.claude', 'memories');
 const DB_PATH = join(NEXUS_DIR, 'nexus.db');
 
 export function getDbPath(): string {
@@ -54,6 +54,7 @@ const MIGRATIONS: Migration[] = [
   { version: 3, name: 'session-reflection-cursor', up: migrateReflectionCursor },
   { version: 4, name: 'import-legacy-memory-atoms', up: migrateImportLegacyMemories },
   { version: 5, name: 'session-messages-fts', up: migrateSessionMessagesFts },
+  { version: 6, name: 'corpus-expansion', up: migrateCorpusExpansion },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -436,4 +437,125 @@ function migrateSessionMessagesFts(db: Database.Database): void {
       tokenize='porter unicode61'
     );
   `);
+}
+
+// ── Migration 6: corpus expansion ────────────────────────────────────
+// Adds linked_at to atoms and memories (for hybrid linking skip guard),
+// cwd to sessions (for project doc discovery), and extends atoms.source_type
+// CHECK to include 'project_doc'. The atoms table requires a full recreate
+// to extend the CHECK constraint — uses foreign_keys=OFF + transaction pattern.
+
+function migrateCorpusExpansion(db: Database.Database): void {
+  // Guarded ALTER TABLE for memories.linked_at
+  try { db.exec(`ALTER TABLE memories ADD COLUMN linked_at TEXT`); } catch {}
+
+  // Guarded ALTER TABLE for sessions.cwd
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN cwd TEXT`); } catch {}
+
+  // Full recreate of atoms table to extend source_type CHECK and add linked_at
+  const schemaRow = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='atoms'`
+  ).get() as { sql: string } | undefined;
+
+  if (!schemaRow) return;
+
+  const needsRecreate = !schemaRow.sql.includes("'project_doc'");
+  const needsLinkedAt = !schemaRow.sql.includes('linked_at');
+
+  if (needsRecreate || needsLinkedAt) {
+    db.pragma('foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`CREATE TABLE atoms_new (
+          id            TEXT PRIMARY KEY,
+          title         TEXT NOT NULL,
+          body          TEXT NOT NULL,
+          atom_type     TEXT NOT NULL CHECK(atom_type IN (
+            'memory', 'agent', 'skill', 'plan', 'feedback', 'reference', 'project_note', 'architecture', 'task'
+          )),
+          scope         TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('global', 'shared', 'project')),
+          source_path   TEXT NOT NULL,
+          source_type   TEXT NOT NULL CHECK(source_type IN (
+            'memory_file', 'agent_def', 'skill_def', 'plan_file', 'nexus_native', 'project_doc'
+          )),
+          project       TEXT,
+          tags          TEXT NOT NULL DEFAULT '[]',
+          content_hash  TEXT NOT NULL,
+          frontmatter   TEXT,
+          created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+          linked_at     TEXT,
+          status        TEXT,
+          priority      INTEGER,
+          blocks        TEXT,
+          blocked_by    TEXT,
+          discovered_from TEXT,
+          load_at_init  INTEGER NOT NULL DEFAULT 0
+        )`);
+
+        db.exec(`INSERT INTO atoms_new
+          (id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at, status, priority, blocks, blocked_by, discovered_from, load_at_init)
+          SELECT id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at, status, priority, blocks, blocked_by, discovered_from, load_at_init
+          FROM atoms`);
+
+        db.exec(`DROP TRIGGER IF EXISTS atoms_ai`);
+        db.exec(`DROP TRIGGER IF EXISTS atoms_ad`);
+        db.exec(`DROP TRIGGER IF EXISTS atoms_au`);
+        db.exec(`DROP TRIGGER IF EXISTS atoms_vec_ad`);
+        db.exec(`DROP TABLE IF EXISTS atoms_fts`);
+        db.exec(`DROP TABLE IF EXISTS atoms_vec`);
+        db.exec(`DROP TABLE atoms`);
+        db.exec(`ALTER TABLE atoms_new RENAME TO atoms`);
+      })();
+    } finally {
+      db.pragma('foreign_keys = ON');
+    }
+
+    // Recreate FTS and vec tables (dropped above)
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS atoms_fts USING fts5(
+        title, body, tags,
+        content='atoms',
+        content_rowid='rowid',
+        tokenize='porter unicode61'
+      );
+
+      CREATE TRIGGER IF NOT EXISTS atoms_ai AFTER INSERT ON atoms BEGIN
+        INSERT INTO atoms_fts(rowid, title, body, tags)
+        VALUES (new.rowid, new.title, new.body, new.tags);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS atoms_ad AFTER DELETE ON atoms BEGIN
+        INSERT INTO atoms_fts(atoms_fts, rowid, title, body, tags)
+        VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS atoms_au AFTER UPDATE ON atoms BEGIN
+        INSERT INTO atoms_fts(atoms_fts, rowid, title, body, tags)
+        VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+        INSERT INTO atoms_fts(rowid, title, body, tags)
+        VALUES (new.rowid, new.title, new.body, new.tags);
+      END;
+    `);
+
+    try {
+      db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS atoms_vec USING vec0(embedding float[1024])`);
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS atoms_vec_ad AFTER DELETE ON atoms BEGIN
+          DELETE FROM atoms_vec WHERE rowid = old.rowid;
+        END;
+      `);
+    } catch {
+      // sqlite-vec not loaded — non-fatal
+    }
+
+    try { db.exec(`INSERT INTO atoms_fts(atoms_fts) VALUES('rebuild')`); } catch {}
+  } else {
+    // Table already has project_doc and linked_at — add linked_at column if still missing
+    try { db.exec(`ALTER TABLE atoms ADD COLUMN linked_at TEXT`); } catch {}
+  }
+
+  // Index on linked_at for efficient skip-guard queries
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_linked ON atoms(linked_at)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_linked ON memories(linked_at)`);
 }
