@@ -52,15 +52,30 @@ export async function consolidateMemories(
      VALUES (?, ?, 'duplicates', 1.0)`
   );
 
+  // Pre-load all cached vectors from memories_vec (rowid → Float32Array).
+  // Avoids re-calling the embedding model for memories that already have vectors.
+  const cachedVecs = new Map<string, Float32Array>();
+  const vecRows = db.prepare(`
+    SELECT m.id, mv.embedding
+    FROM memories m
+    JOIN memories_vec mv ON mv.rowid = m.rowid
+    WHERE m.superseded_by IS NULL
+  `).all() as { id: string; embedding: Buffer }[];
+  for (const row of vecRows) {
+    cachedVecs.set(row.id, new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4));
+  }
+
   const gone = new Set<string>();
   let merged = 0;
 
   for (const m of live) {
     if (gone.has(m.id)) continue;
-    const vec = await embedFn(m.body);
+    const cached = cachedVecs.get(m.id);
+    const vec = cached ?? await embedFn(m.body);
     if (!vec) continue;
+    const normVec = cached ? vec : normalize(vec); // cached vectors are already normalized
 
-    const sim = findSimilarMemory(db, normalize(vec), {
+    const sim = findSimilarMemory(db, normVec, {
       scope: m.scope,
       project: m.project,
       excludeId: m.id,

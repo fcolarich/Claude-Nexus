@@ -56,7 +56,7 @@ function expandHome(p: string): string {
 const DEFAULTS: NexusConfig = {
   embedding: {
     provider: 'ollama',
-    endpoint: 'http://127.0.0.1:11434/api/embeddings',
+    endpoint: 'http://127.0.0.1:11434/api/embed',
     model: 'mxbai-embed-large',
     dimensions: 1024,
     timeout_ms: 15000,

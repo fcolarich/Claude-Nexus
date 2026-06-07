@@ -17,7 +17,7 @@ export async function ensureEmbeddingModelReady() {
         const response = await fetch(cfg.endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: cfg.model, prompt: 'warmup' }),
+            body: JSON.stringify({ model: cfg.model, input: 'warmup' }),
             signal: AbortSignal.timeout(60_000), // wait up to 60s for cold load
         });
         return response.ok;
@@ -39,7 +39,7 @@ export async function generateEmbedding(text) {
             const response = await fetch(cfg.endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: cfg.model, prompt: text }),
+                body: JSON.stringify({ model: cfg.model, input: text.slice(0, 1200) }),
                 signal: AbortSignal.timeout(cfg.timeout_ms),
             });
             if (!response.ok) {
@@ -52,11 +52,11 @@ export async function generateEmbedding(text) {
                 return null;
             }
             const data = (await response.json());
-            if (!Array.isArray(data.embedding) || data.embedding.length === 0) {
+            if (!Array.isArray(data.embeddings) || data.embeddings.length === 0 || data.embeddings[0].length === 0) {
                 console.warn('[embeddings] embedding endpoint returned empty result');
                 return null;
             }
-            return new Float32Array(data.embedding);
+            return new Float32Array(data.embeddings[0]);
         }
         catch {
             // Silently swallow — the embedding model may simply not be running

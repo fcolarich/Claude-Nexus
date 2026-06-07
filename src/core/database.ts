@@ -23,7 +23,7 @@ export function openDatabase(dbPath?: string): Database.Database {
   // WAL mode for concurrent reads (dashboard + MCP server)
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
-  db.pragma('busy_timeout = 5000');
+  db.pragma('busy_timeout = 30000');
 
   // Load sqlite-vec extension for vector search (non-fatal if unavailable)
   try {

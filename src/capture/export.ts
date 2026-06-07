@@ -52,7 +52,7 @@ export function exportAll(db: Database.Database, exportDirOverride?: string): Ex
 
   let files = 0;
   for (const [bucket, mems] of byBucket) {
-    const dir = join(exportDir, bucket);
+    const dir = join(exportDir, bucket, 'memory');
     mkdirSync(dir, { recursive: true });
 
     // Prune stale markdown so the export stays in sync with the DB

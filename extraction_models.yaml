@@ -6,7 +6,7 @@
 # Embedding model — used for vector search and dedup similarity.
 embedding:
   provider: ollama
-  endpoint: http://127.0.0.1:11434/api/embeddings
+  endpoint: http://127.0.0.1:11434/api/embed
   model: mxbai-embed-large
   dimensions: 1024          # must match the vec0 table width (memories_vec / atoms_vec)
   timeout_ms: 15000
@@ -34,6 +34,5 @@ capture:
   auto_approve_confidence: 0.85 # >= this is stored approved; below = pending review
   dedup_cosine_threshold: 0.86  # a candidate this similar to an existing memory = merge
   # Where the DB→markdown export writes. A leading ~/ is expanded to your home dir.
-  # Phase 2 keeps this a safe sandbox; the deliberate cutover points it at
-  # ~/.claude/projects/<project>/memory once capture is verified.
-  export_dir: ~/.claude-nexus/exports
+  # Cutover complete (2026-05-29): exports write directly to the harness memory dir.
+  export_dir: ~/.claude/projects

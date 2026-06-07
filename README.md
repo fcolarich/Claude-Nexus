@@ -113,6 +113,7 @@ new transcript lines, and trivial windows skip the LLM call entirely.
 | `nexus_health` | Diagnostics: broken refs, duplicates, orphans, stale memories |
 | `nexus_stats` | Atom / memory / link / session counts |
 | `nexus_reindex` | Force a full re-index of knowledge files |
+| `nexus_crossref` | Hybrid cross-reference search (KNN + BM25 via RRF) for finding related atoms/memories at query time |
 
 ---
 
@@ -126,7 +127,7 @@ new transcript lines, and trivial windows skip the LLM call entirely.
 | **Capture** | `src/capture/` — transcript condenser, Haiku extractor, Reflector, markdown export. |
 | **Recall** | `src/core/recall.ts` — decay-ranked, token-budgeted retrieval. |
 | **Lifecycle** | `src/core/decay.ts` + `consolidate.ts` — age decay, stale flagging, dedup sweep. |
-| **MCP server** | `src/mcp/server.ts` — stdio transport, 19 tools. |
+| **MCP server** | `src/mcp/server.ts` — stdio transport, 20 tools. |
 | **Web API** | Express on port 3210 (`src/web/server.ts`). |
 | **Dashboard** | Svelte 5 SPA — Memories, Review, Sessions, Search, Tasks, Agents, Skills. Browser-based. |
 | **CLI** | `src/cli/` — index, search, inspect from the terminal. |
@@ -148,6 +149,39 @@ Haiku 4.5 via the Claude Agent SDK (memory extraction).
 
 The web server serves the built dashboard from `dist-frontend/`; open
 `http://localhost:3210` in a browser.
+
+---
+
+## Documentation
+
+- [`CLAUDE.md`](CLAUDE.md) — agent instructions and project map
+- [`Documents/architecture.md`](Documents/architecture.md) — architecture decisions (ADRs)
+- [`Documents/design.md`](Documents/design.md) — design decisions (DDRs)
+- [`Documents/references.md`](Documents/references.md) — research and external references
+- [`Documents/notes.md`](Documents/notes.md) — operational notes and gotchas
+- [`Documents/file-map.md`](Documents/file-map.md) — file/folder map
+
+<!-- The summary + purpose above are kept in sync with CLAUDE.md. Edit via the `update-claude-readme` skill. -->
+
+---
+
+## CLI
+
+```bash
+npm run nexus -- <command> [options]
+```
+
+| Command | Purpose |
+|---------|---------|
+| `index` | Index all Claude data (agents, skills, plans, memories, sessions) |
+| `search <query>` | FTS search; flags: `-p project`, `-t type`, `-s scope`, `-l limit` |
+| `context <topics...>` | Smart fetch of multiple topics merged into one response |
+| `list` | List all atoms with grouping and filtering |
+| `health` | Diagnostics: broken refs, duplicates, orphans |
+| `stats` | Database statistics |
+| `sessions` | List indexed sessions (paginated) |
+| `watch` | Watch directories for changes and re-index automatically |
+| `backfill` | Extract memories from past sessions; flags: `--project`, `--min-messages`, `--limit`, `--since`, `--force`, `--dry-run` |
 
 ---
 
