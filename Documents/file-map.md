@@ -7,7 +7,7 @@ Maintained via the `update-file-map` skill.
 
 | File | Role |
 |------|------|
-| `src/mcp/server.ts` | MCP server — 19 tools exposed over stdio transport |
+| `src/mcp/server.ts` | MCP server — 20 tools exposed over stdio transport |
 | `src/web/server.ts` | Express REST API server, port 3210; serves built dashboard from dist-frontend/ |
 | `src/cli/index.ts` | CLI entry point — index, search, inspect from terminal |
 | `hooks/hooks.json` | Claude Code hook manifest — wires SessionStart (recall) and Stop/PreCompact/SessionEnd (capture) |

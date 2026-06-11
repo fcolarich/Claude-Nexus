@@ -33,7 +33,11 @@ try {
   const here = dirname(fileURLToPath(import.meta.url));
   const runner = join(here, '..', 'dist', 'capture', 'runner.js');
 
-  if (sessionId && transcriptPath && existsSync(runner)) {
+  // Project opt-out: a `.nexus-ignore` marker in the session cwd suppresses
+  // capture entirely — the reflector is never spawned, so no LLM call / tokens.
+  const optedOut = existsSync(join(cwd, '.nexus-ignore'));
+
+  if (sessionId && transcriptPath && existsSync(runner) && !optedOut) {
     const child = spawn(process.execPath, [runner, sessionId, transcriptPath, cwd], {
       detached: true,
       stdio: 'ignore',
