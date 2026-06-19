@@ -19,8 +19,14 @@ import { backfillSessions } from '../capture/backfill.js';
 // Initialize database and index on startup
 const db = openDatabase();
 initializeSchema(db);
-// runFullIndex is now async (embedding pass runs after sync indexing)
-runFullIndex(db).catch(err => console.warn('[server] runFullIndex error:', err));
+// NOTE: the MCP server intentionally does NOT run a full index on startup.
+// runFullIndex executes large *synchronous* better-sqlite3 transactions that block the
+// single event-loop thread for tens of seconds on a large DB — long past the client's
+// connect timeout, so the `initialize` handshake never lands and the client reports
+// "Failed to connect". It also contends the DB write lock (SQLITE_BUSY).
+// Indexing is owned by the web/api server (src/web/server.ts: startup + periodic + watcher).
+// This server keeps its own writes fresh via reindexFile, and exposes an on-demand
+// full-index tool for manual refresh.
 const server = new McpServer({
     name: 'claude-nexus',
     version: '0.1.0',
