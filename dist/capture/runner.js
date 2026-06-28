@@ -14,6 +14,10 @@ async function main() {
         console.error('[nexus-reflect] usage: runner.js <session_id> <transcript_path> [cwd]');
         process.exit(1);
     }
+    // Tag this detached automation run's telemetry so it is distinguishable from interactive
+    // sessions in OTel/Langfuse. The spawned `claude` CLI (Agent SDK) inherits process.env.
+    // Override any inherited value so the nexus identity is clean.
+    process.env.OTEL_RESOURCE_ATTRIBUTES = 'service.namespace=nexus,automation=nexus';
     const project = cwd ? cwdToProjectSlug(cwd) : null;
     const db = openDatabase();
     initializeSchema(db);

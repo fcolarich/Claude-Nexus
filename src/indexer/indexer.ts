@@ -286,12 +286,20 @@ export function indexSession(
 }
 
 /**
- * Derive the project slug from a cwd path using the same convention Claude Code uses
- * for ~/.claude/projects/ directory names (replace :, path separators, and underscores with -).
- * Claude Code converts underscores to dashes: "LLM_Workflow_Optimization" → "C--Fran-LLM-Workflow-Optimization".
+ * Derive the project slug from a cwd path, matching the current Claude Code
+ * ~/.claude/projects/ convention: replace :, path separators, spaces, dots, and
+ * underscores with '-'. ("LLM_Workflow_Optimization" → "C--Fran-LLM-Workflow-Optimization",
+ * "Voodoo Magic" → "C--Fran-Voodoo-Magic", "com.x.y" → "com-x-y").
+ *
+ * Additionally collapses git worktree / branch checkouts onto their parent project
+ * (`<proj>/.worktrees/<name>` and `<proj>/.claude-worktrees/<name>` → `<proj>`), so a
+ * session run in a worktree records and recalls memories under the main project bucket.
  */
 export function cwdToProjectSlug(cwd: string): string | null {
-  const slug = cwd.replace(/[:\\/]/g, '-').replace(/_/g, '-').replace(/^-+|-+$/g, '');
+  const slug = cwd
+    .replace(/[:\\/ ._]/g, '-')
+    .replace(/-+(claude-)?worktrees?-.*$/, '')
+    .replace(/^-+|-+$/g, '');
   return slug.length >= 3 ? slug : null;
 }
 

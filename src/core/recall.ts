@@ -129,8 +129,16 @@ export function recallMemories(
   const parts: string[] = [HEADER.trim()];
   for (const i of fullItems) parts.push(renderFull(i.memory).trim());
   if (titleItems.length > 0) {
+    // Cap the titles-only overflow — without this every eligible memory (thousands)
+    // is dumped at SessionStart, bloating the injection to >100KB. Show the top-N
+    // by score (already sorted) and note how many were elided.
+    const shown = titleItems.slice(0, cfg.max_title_items);
+    const elided = titleItems.length - shown.length;
     parts.push('## More memories (titles only — recall budget reached)');
-    parts.push(titleItems.map(i => titleLine(i.memory)).join('\n'));
+    parts.push(shown.map(i => titleLine(i.memory)).join('\n'));
+    if (elided > 0) {
+      parts.push(`_…and ${elided} more lower-ranked memories not shown. Use nexus_search to query them._`);
+    }
   }
   const markdown = parts.join('\n\n');
 

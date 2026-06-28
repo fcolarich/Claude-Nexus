@@ -155,11 +155,11 @@ The web server serves the built dashboard from `dist-frontend/`; open
 ## Documentation
 
 - [`CLAUDE.md`](CLAUDE.md) — agent instructions and project map
-- [`Documents/architecture.md`](Documents/architecture.md) — architecture decisions (ADRs)
-- [`Documents/design.md`](Documents/design.md) — design decisions (DDRs)
-- [`Documents/references.md`](Documents/references.md) — research and external references
-- [`Documents/notes.md`](Documents/notes.md) — operational notes and gotchas
-- [`Documents/file-map.md`](Documents/file-map.md) — file/folder map
+- [`_documents/architecture.md`](_documents/architecture.md) — architecture decisions (ADRs); source files in `_documents/decisions/adr-*.md`
+- [`_documents/design.md`](_documents/design.md) — design decisions (DDRs); source files in `_documents/decisions/ddr-*.md`
+- [`_documents/references.md`](_documents/references.md) — research and external references
+- [`_documents/notes.md`](_documents/notes.md) — operational notes and gotchas
+- [`_documents/file-map.md`](_documents/file-map.md) — file/folder map
 
 <!-- The summary + purpose above are kept in sync with CLAUDE.md. Edit via the `update-claude-readme` skill. -->
 

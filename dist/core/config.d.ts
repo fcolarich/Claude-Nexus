@@ -18,6 +18,7 @@ export interface NexusConfig {
     recall: {
         max_tokens: number;
         min_confidence: number;
+        max_title_items: number;
     };
     capture: {
         auto_approve_confidence: number;

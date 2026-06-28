@@ -21,5 +21,8 @@
       "PowerShell(Get-WmiObject Win32_Process -Filter \"name='node.exe'\" | Where-Object { $_.CommandLine -match \"nexus|claude-nexus\" } | Select-Object ProcessId, CommandLine)",
       "PowerShell(cd C:\\\\Fran\\\\claude-nexus; node dist/web/server.js 2>&1 &; Start-Sleep 5; Invoke-RestMethod http://localhost:3210/api/stats 2>&1)"
     ]
+  },
+  "env": {
+    "OTEL_RESOURCE_ATTRIBUTES": "project=claude_nexus"
   }
 }

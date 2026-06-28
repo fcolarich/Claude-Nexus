@@ -15,6 +15,7 @@ import { insertMemory, touchMemory, embedMemory, findSimilarMemory, normalize, }
 import { linkMemory } from '../core/links.js';
 import { readTranscriptWindow } from './transcript.js';
 import { extractMemories } from './extract.js';
+import { readDecisionIndex } from './docspine.js';
 /**
  * Reflect over a session transcript and write any new memories.
  * `deps` lets tests inject a fake extractor / embedder.
@@ -39,7 +40,8 @@ export async function reflect(db, opts, deps = {}) {
         advanceCursor(window.totalLines);
         return { session_id: opts.session_id, project: opts.project, newLines: window.newLines, extracted: 0, inserted: 0, merged: 0, skipped: true };
     }
-    const candidates = await extract(window.text, { project: opts.project });
+    const decisions = readDecisionIndex(opts.cwd);
+    const candidates = await extract(window.text, { project: opts.project, decisions });
     let inserted = 0;
     let merged = 0;
     for (const c of candidates) {

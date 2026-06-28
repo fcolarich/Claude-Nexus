@@ -22,6 +22,19 @@ describe('cwdToProjectSlug', () => {
     it('converts underscores to dashes (matches Claude Code project dir convention)', () => {
         expect(cwdToProjectSlug('C:\\Fran\\LLM_Workflow_Optimization')).toBe('C--Fran-LLM-Workflow-Optimization');
     });
+    it('converts spaces to dashes', () => {
+        expect(cwdToProjectSlug('C:\\Fran\\Voodoo Magic')).toBe('C--Fran-Voodoo-Magic');
+    });
+    it('converts dots to dashes', () => {
+        expect(cwdToProjectSlug('C:\\Fran\\RumblePool\\com.rr.pool')).toBe('C--Fran-RumblePool-com-rr-pool');
+    });
+    it('collapses a .worktrees checkout onto its parent project', () => {
+        expect(cwdToProjectSlug('C:\\Fran\\Voodoo Magic\\.worktrees\\refactor-x')).toBe('C--Fran-Voodoo-Magic');
+    });
+    it('collapses a .claude-worktrees checkout onto its parent project', () => {
+        expect(cwdToProjectSlug('C:\\Fran\\IntoTheEndlessSea\\.claude-worktrees\\amazing-mayer-af7718'))
+            .toBe('C--Fran-IntoTheEndlessSea');
+    });
 });
 // ── resolveProjectFromCwd (inlined logic) ─────────────────────────────
 // We test the slug-derivation portion directly via cwdToProjectSlug since

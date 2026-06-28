@@ -47,6 +47,8 @@ export declare function listMemories(db: Database.Database, opts?: {
  * Nudges confidence up and resets the decay clock.
  */
 export declare function touchMemory(db: Database.Database, id: string): void;
+/** Hard-delete a memory and its vector row. Returns false if the id was absent. */
+export declare function deleteMemory(db: Database.Database, id: string): boolean;
 /** Generate + store a normalized embedding for one memory. Returns false if embedding unavailable. */
 export declare function embedMemory(db: Database.Database, id: string, embedFn?: (text: string) => Promise<Float32Array | null>): Promise<boolean>;
 /** Embed every memory lacking a vector. Mirrors the atoms embedding pass. */

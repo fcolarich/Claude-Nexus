@@ -1,0 +1,1 @@
+{"version":3,"file":"prune.d.ts","sourceRoot":"","sources":["../../src/capture/prune.ts"],"names":[],"mappings":"AAAA;;;;;;;;;GASG;AAEH,OAAO,QAAQ,MAAM,gBAAgB,CAAC;AAEtC,MAAM,WAAW,cAAc;IAC9B,EAAE,EAAE,MAAM,CAAC;IACX,KAAK,EAAE,MAAM,CAAC;IACd,WAAW,EAAE,MAAM,CAAC;IACpB,MAAM,EAAE,SAAS,CAAC;CAClB;AAED,wBAAgB,uBAAuB,CAAC,EAAE,EAAE,QAAQ,CAAC,QAAQ,GAAG,cAAc,EAAE,CAI/E"}

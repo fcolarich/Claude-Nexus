@@ -15,9 +15,14 @@ import { openDatabase } from '../core/database.js';
 import { recallMemories } from '../core/recall.js';
 
 /** Project slug from a cwd — same convention as the indexer (kept inline to
- *  avoid pulling the indexer module tree into this hot-path hook). */
+ *  avoid pulling the indexer module tree into this hot-path hook). Normalizes
+ *  separators/spaces/dots/underscores to '-' and collapses git worktrees onto
+ *  their parent project so recall finds memories captured in the main checkout. */
 function cwdToProjectSlug(cwd: string): string | null {
-  const slug = cwd.replace(/[:\\/]/g, '-').replace(/_/g, '-').replace(/^-+|-+$/g, '');
+  const slug = cwd
+    .replace(/[:\\/ ._]/g, '-')
+    .replace(/-+(claude-)?worktrees?-.*$/, '')
+    .replace(/^-+|-+$/g, '');
   return slug.length >= 3 ? slug : null;
 }
 

@@ -23,25 +23,27 @@ Give Claude Code persistent cross-session memory without manual note-taking — 
 
 Read these before working in their area. They record the *why* — don't contradict them without understanding the rationale first. Load on demand; you don't need all of them in context at once.
 
+All docs live under `_documents/`. Index files (`architecture.md`, `design.md`, `notes.md`, `references.md`) are **generated** by `scripts/rebuild_index.py` from `_documents/decisions.db` — never edit them directly. Per-entry files live in `_documents/decisions/`, `_documents/notes/`, `_documents/references/`. Use the matching skill to write entries; the skill calls the Python script and rebuilds the index.
+
 | Document | What's in it | Update when… | Skill |
 |----------|--------------|--------------|-------|
-| [`Documents/architecture.md`](Documents/architecture.md) | Structural/technical decisions (ADRs) — DB schema, migration framework, layer boundaries, link algorithms | A structural or technical decision is made or changed | `add-adr` |
-| [`Documents/design.md`](Documents/design.md) | Design decisions (DDRs) — capture/recall pipeline design, API shape, data model choices, naming | A design decision is made or changed | `add-ddr` |
-| [`Documents/references.md`](Documents/references.md) | Research, sources, long reference material | You gather external research or sources worth keeping | `add-reference` |
-| [`Documents/notes.md`](Documents/notes.md) | Operational notes, reminders, how-to-update | You have a note that fits nowhere else | `add-note` |
-| [`Documents/file-map.md`](Documents/file-map.md) | Summary of important files/folders | Files/folders are added, renamed, or repurposed | `update-file-map` |
+| [`_documents/architecture.md`](_documents/architecture.md) | **Generated** ADR index. Source entries in `_documents/decisions/adr-*.md`. | Never edit — use `add-adr` skill. | `add-adr` |
+| [`_documents/design.md`](_documents/design.md) | **Generated** DDR index. Source entries in `_documents/decisions/ddr-*.md`. | Never edit — use `add-ddr` skill. | `add-ddr` |
+| [`_documents/references.md`](_documents/references.md) | **Generated** references index. Source entries in `_documents/references/ref-*.md`. | Never edit — use `add-reference` skill. | `add-reference` |
+| [`_documents/notes.md`](_documents/notes.md) | **Generated** notes index. Source entries in `_documents/notes/note-*.md`. | Never edit — use `add-note` skill. | `add-note` |
+| [`_documents/file-map.md`](_documents/file-map.md) | Summary of important files/folders. | Files/folders are added, renamed, or repurposed. | `update-file-map` |
 | [`README.md`](README.md) | Human-facing summary + usage | The project summary or user-facing behaviour changes | `update-claude-readme` |
 
 ## Doc-Maintenance Protocol
 
 These docs only stay useful if kept current. After any non-trivial change:
 
-1. **Structural/technical decision?** → append an ADR via `add-adr`. Never edit old ADRs.
-2. **Design decision?** → append a DDR via `add-ddr`. A design change usually pairs with an architecture change — update both.
-3. **Files/folders moved or added?** → `update-file-map`.
+1. **Structural/technical decision?** → `add-adr`. Creates `_documents/decisions/adr-NNN-slug.md`, rebuilds index. Never edit old ADRs.
+2. **Design decision?** → `add-ddr`. Creates `_documents/decisions/ddr-NNN-slug.md`, rebuilds index. A design change usually pairs with an architecture change — update both.
+3. **Files/folders moved or added?** → `update-file-map` (direct refresh of `_documents/file-map.md`).
 4. **Project summary changed?** → `update-claude-readme` (keeps CLAUDE.md ↔ README.md in sync).
-5. **Research / external sources?** → `add-reference`.
-6. **Loose note?** → `add-note`.
+5. **Research / external sources?** → `add-reference`. Creates `_documents/references/ref-NNN-slug.md`, rebuilds index.
+6. **Loose note?** → `add-note`. Creates `_documents/notes/note-NNN-slug.md`, rebuilds index. Notes ARE mutable — edit the source file directly to update.
 
 Or run `/update-project-docs` after a change and let the doc-sync agent route it to the right skills.
 
