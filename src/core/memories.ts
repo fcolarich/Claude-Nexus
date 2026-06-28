@@ -123,6 +123,15 @@ export function touchMemory(db: Database.Database, id: string): void {
   `).run(id);
 }
 
+/** Hard-delete a memory and its vector row. Returns false if the id was absent. */
+export function deleteMemory(db: Database.Database, id: string): boolean {
+  const row = db.prepare(`SELECT rowid FROM memories WHERE id = ?`).get(id) as { rowid: number } | undefined;
+  if (!row) return false;
+  try { db.prepare(`DELETE FROM memories_vec WHERE rowid = ?`).run(row.rowid); } catch { /* vec table absent */ }
+  db.prepare(`DELETE FROM memories WHERE id = ?`).run(id);
+  return true;
+}
+
 /** Generate + store a normalized embedding for one memory. Returns false if embedding unavailable. */
 export async function embedMemory(
   db: Database.Database,
