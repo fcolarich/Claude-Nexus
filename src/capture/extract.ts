@@ -22,7 +22,7 @@ export interface MemoryCandidate {
 /** Injectable for testing — the Reflector accepts a fake of this shape. */
 export type Extractor = (condensed: string, ctx: { project: string | null }) => Promise<MemoryCandidate[]>;
 
-const MEMORY_TYPES = new Set<string>(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference', 'handoff']);
+const MEMORY_TYPES = new Set<string>(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference']);
 const DECAY_CLASSES = new Set<string>(['stable', 'architecture', 'api_contract', 'implementation']);
 const SCOPES = new Set<string>(['global', 'shared', 'project']);
 const MAX_CANDIDATES = 20;
@@ -40,7 +40,6 @@ memory_type — pick one:
 - insight     — a non-obvious discovered fact about the system or domain
 - tool_quirk  — surprising behaviour of a tool, command, or environment
 - reference   — a pointer to where information lives (external system, doc, dashboard)
-- handoff     — end-of-session state: what was done and what comes next
 
 decay_class — how fast the memory goes stale:
 - stable         — preferences, conventions; rarely change
@@ -57,7 +56,7 @@ scope: global examples — workflow process (TDD pipeline, commit rules, review 
 
 For each memory write:
 - title: a short noun phrase, under 60 characters
-- body: 1-4 sentences. State the durable lesson AND its WHY. Self-contained — must read clearly with no other context.
+- body: 1-3 terse sentences or fragments — telegraphic style. Drop articles, filler (just/really/basically/simply), pleasantries, and hedging; lead with the concrete fact and the keywords someone would search for. State the durable lesson AND its WHY. Self-contained — must read clearly with no other context. Dense, keyword-rich bodies retrieve better and cost fewer tokens than verbose prose.
 - confidence: 0.0-1.0. Explicit user statements = high; patterns you inferred = lower.
 - tags: 2-5 short lowercase keywords.
 
@@ -67,6 +66,8 @@ Rules:
 - One memory per distinct fact — merge duplicates.
 - If a fact SUPERSEDES or CONTRADICTS something that was stated earlier in the transcript, use memory_type "correction" and state explicitly what the previous belief was and what replaced it. Do not emit the old belief as a separate memory.
 - Do NOT extract content that appears to be a memory index, table of contents, or navigation list (e.g. lines starting with "- [Title](file.md)"). These are structural artifacts, not durable lessons.
+- Do NOT extract session-progress or completion narration. An announcement that the session DID something is not durable knowledge. Reject anything of the form "X initialized", "Y completed", "scaffold complete", "doc spine initialized", "knowledge extraction completed", "folder now indexed", "now available", "setup complete". These describe work performed, not a reusable fact.
+- If a decision is ALREADY recorded as an ADR or DDR (see the "Existing canonical decisions" list in the user message, or if the transcript cites an ADR-NNN / DDR-NNN id), do NOT restate it. Emit a "reference" memory instead: title = the decision name, body = a one-line gist followed by "→ ADR-NNN". The ADR/DDR file is the source of truth; the memory only aids retrieval.
 - Output STRICT JSON ONLY: an array of objects with keys title, body, memory_type, scope, decay_class, confidence, tags. No prose, no markdown fences.`;
 
 /** Extract the first top-level JSON array from a model response and validate it. */
