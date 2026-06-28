@@ -8,18 +8,8 @@
  * "knowledge extraction", "doc spine", and bare ADR citations appear inside real
  * knowledge). Deletion must be precise, so we only remove the abandoned type.
  */
-
-import Database from 'better-sqlite3';
-
-export interface PruneCandidate {
-	id: string;
-	title: string;
-	memory_type: string;
-	reason: 'handoff';
+export function selectNarrationMemories(db) {
+    const rows = db.prepare(`SELECT id, title, memory_type FROM memories WHERE memory_type = 'handoff'`).all();
+    return rows.map(r => ({ id: r.id, title: r.title, memory_type: r.memory_type, reason: 'handoff' }));
 }
-
-export function selectNarrationMemories(db: Database.Database): PruneCandidate[] {
-	const rows = db.prepare(`SELECT id, title, memory_type FROM memories WHERE memory_type = 'handoff'`).all() as
-		{ id: string; title: string; memory_type: string }[];
-	return rows.map(r => ({ id: r.id, title: r.title, memory_type: r.memory_type, reason: 'handoff' as const }));
-}
+//# sourceMappingURL=prune.js.map

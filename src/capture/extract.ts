@@ -27,11 +27,23 @@ const DECAY_CLASSES = new Set<string>(['stable', 'architecture', 'api_contract',
 const SCOPES = new Set<string>(['global', 'shared', 'project']);
 const MAX_CANDIDATES = 20;
 
-/** Completion / session-progress narration — never durable knowledge. */
-export const COMPLETION_RE = /\b(initialized|scaffold(ed)?\s+complete|spine\s+(complete|initialized)|doc\s+spine|knowledge\s+extraction|extraction\s+complete|now\s+(indexed|available)|indexed\s+(for|in)|setup\s+complete)\b/i;
+/**
+ * Completion / session-progress narration — never durable knowledge.
+ * Deliberately narrow: only matches explicit completion announcements, NOT broad
+ * domain terms ("knowledge extraction", "doc spine", bare "initialized") that
+ * appear inside legitimate conventions and insights.
+ */
+export const COMPLETION_RE = /\b(scaffold(ed)?\s+complete|(doc\s+)?spine\s+(initialized|complete)|indexed\s+for\s+semantic\s+search|extraction\s+completed|setup\s+complete|initialization\s+complete)\b/i;
 
 /** A cited Architecture/Design Decision Record id. */
 export const ADR_REF_RE = /\b(ADR|DDR)-\d+/i;
+
+/**
+ * A decision body that is a *pure restatement* of an ADR/DDR — short and saying
+ * the decision is recorded there. Only these become pointers; a decision that
+ * merely cites an ADR while carrying its own rationale is left intact.
+ */
+export const RESTATEMENT_RE = /\b(codified|recorded|documented|captured)\s+in\s+(adr|ddr)-\d+/i;
 
 const SYSTEM_PROMPT = `You extract durable, reusable MEMORIES from a Claude Code coding-assistant session transcript.
 
@@ -124,7 +136,7 @@ export function refineCandidates(cands: MemoryCandidate[]): MemoryCandidate[] {
   for (const c of cands) {
     if (COMPLETION_RE.test(c.title) || COMPLETION_RE.test(c.body)) continue;
 
-    if (c.memory_type === 'decision' && ADR_REF_RE.test(c.body)) {
+    if (c.memory_type === 'decision' && RESTATEMENT_RE.test(c.body) && c.body.length <= 200) {
       const ref = (c.body.match(ADR_REF_RE) ?? [])[0]?.toUpperCase() ?? '';
       const firstSentence = c.body.split(/(?<=[.!?])\s/)[0].trim();
       const body = ref && !firstSentence.includes(ref) ? `${firstSentence} → ${ref}` : firstSentence;

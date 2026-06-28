@@ -328,7 +328,7 @@ program
 
 program
   .command('prune-narration')
-  .description('Remove low-value memories (handoffs, completion narration, ADR/DDR-duplicate decisions) across all projects')
+  .description('Remove handoff memories (end-of-session state, no longer a captured type) across all projects')
   .option('--apply', 'Actually delete (default is a dry-run)')
   .action((opts) => {
     const db = openDatabase();
@@ -336,15 +336,13 @@ program
 
     const victims = selectNarrationMemories(db);
     if (victims.length === 0) {
-      console.log(chalk.green('No narration memories found.'));
+      console.log(chalk.green('No handoff memories found.'));
       db.close();
       return;
     }
 
     const reasonColors: Record<string, (s: string) => string> = {
       'handoff': chalk.magenta,
-      'completion-narration': chalk.yellow,
-      'adr-ddr-duplicate': chalk.cyan,
     };
     for (const v of victims) {
       const tag = (reasonColors[v.reason] ?? chalk.white)(`[${v.reason}]`);

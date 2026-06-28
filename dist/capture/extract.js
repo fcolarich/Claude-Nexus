@@ -6,10 +6,25 @@
  * endpoint). Provider + model come from extraction_models.yaml.
  */
 import { callModel } from '../core/llm.js';
-const MEMORY_TYPES = new Set(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference', 'handoff']);
+const MEMORY_TYPES = new Set(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference']);
 const DECAY_CLASSES = new Set(['stable', 'architecture', 'api_contract', 'implementation']);
 const SCOPES = new Set(['global', 'shared', 'project']);
 const MAX_CANDIDATES = 20;
+/**
+ * Completion / session-progress narration — never durable knowledge.
+ * Deliberately narrow: only matches explicit completion announcements, NOT broad
+ * domain terms ("knowledge extraction", "doc spine", bare "initialized") that
+ * appear inside legitimate conventions and insights.
+ */
+export const COMPLETION_RE = /\b(scaffold(ed)?\s+complete|(doc\s+)?spine\s+(initialized|complete)|indexed\s+for\s+semantic\s+search|extraction\s+completed|setup\s+complete|initialization\s+complete)\b/i;
+/** A cited Architecture/Design Decision Record id. */
+export const ADR_REF_RE = /\b(ADR|DDR)-\d+/i;
+/**
+ * A decision body that is a *pure restatement* of an ADR/DDR — short and saying
+ * the decision is recorded there. Only these become pointers; a decision that
+ * merely cites an ADR while carrying its own rationale is left intact.
+ */
+export const RESTATEMENT_RE = /\b(codified|recorded|documented|captured)\s+in\s+(adr|ddr)-\d+/i;
 const SYSTEM_PROMPT = `You extract durable, reusable MEMORIES from a Claude Code coding-assistant session transcript.
 
 A memory is a fact worth recalling in a FUTURE, unrelated session. Extract ONLY durable knowledge. Do NOT extract ephemeral task state, step-by-step narration, or anything a reader could derive by reading the code.
@@ -23,7 +38,6 @@ memory_type — pick one:
 - insight     — a non-obvious discovered fact about the system or domain
 - tool_quirk  — surprising behaviour of a tool, command, or environment
 - reference   — a pointer to where information lives (external system, doc, dashboard)
-- handoff     — end-of-session state: what was done and what comes next
 
 decay_class — how fast the memory goes stale:
 - stable         — preferences, conventions; rarely change
@@ -40,7 +54,7 @@ scope: global examples — workflow process (TDD pipeline, commit rules, review 
 
 For each memory write:
 - title: a short noun phrase, under 60 characters
-- body: 1-4 sentences. State the durable lesson AND its WHY. Self-contained — must read clearly with no other context.
+- body: 1-3 terse sentences or fragments — telegraphic style. Drop articles, filler (just/really/basically/simply), pleasantries, and hedging; lead with the concrete fact and the keywords someone would search for. State the durable lesson AND its WHY. Self-contained — must read clearly with no other context. Dense, keyword-rich bodies retrieve better and cost fewer tokens than verbose prose.
 - confidence: 0.0-1.0. Explicit user statements = high; patterns you inferred = lower.
 - tags: 2-5 short lowercase keywords.
 
@@ -50,6 +64,8 @@ Rules:
 - One memory per distinct fact — merge duplicates.
 - If a fact SUPERSEDES or CONTRADICTS something that was stated earlier in the transcript, use memory_type "correction" and state explicitly what the previous belief was and what replaced it. Do not emit the old belief as a separate memory.
 - Do NOT extract content that appears to be a memory index, table of contents, or navigation list (e.g. lines starting with "- [Title](file.md)"). These are structural artifacts, not durable lessons.
+- Do NOT extract session-progress or completion narration. An announcement that the session DID something is not durable knowledge. Reject anything of the form "X initialized", "Y completed", "scaffold complete", "doc spine initialized", "knowledge extraction completed", "folder now indexed", "now available", "setup complete". These describe work performed, not a reusable fact.
+- If a decision is ALREADY recorded as an ADR or DDR (see the "Existing canonical decisions" list in the user message, or if the transcript cites an ADR-NNN / DDR-NNN id), do NOT restate it. Emit a "reference" memory instead: title = the decision name, body = a one-line gist followed by "→ ADR-NNN". The ADR/DDR file is the source of truth; the memory only aids retrieval.
 - Output STRICT JSON ONLY: an array of objects with keys title, body, memory_type, scope, decay_class, confidence, tags. No prose, no markdown fences.`;
 /** Extract the first top-level JSON array from a model response and validate it. */
 export function parseCandidates(raw) {
@@ -96,12 +112,37 @@ export function parseCandidates(raw) {
     }
     return out;
 }
+/**
+ * Deterministic quality filter applied to extracted candidates.
+ * - Drops completion / progress narration.
+ * - Converts an ADR/DDR-citing `decision` into a thin `reference` pointer so the
+ *   ADR stays canonical and the memory only aids retrieval (no content drift).
+ */
+export function refineCandidates(cands) {
+    const out = [];
+    for (const c of cands) {
+        if (COMPLETION_RE.test(c.title) || COMPLETION_RE.test(c.body))
+            continue;
+        if (c.memory_type === 'decision' && RESTATEMENT_RE.test(c.body) && c.body.length <= 200) {
+            const ref = (c.body.match(ADR_REF_RE) ?? [])[0]?.toUpperCase() ?? '';
+            const firstSentence = c.body.split(/(?<=[.!?])\s/)[0].trim();
+            const body = ref && !firstSentence.includes(ref) ? `${firstSentence} → ${ref}` : firstSentence;
+            out.push({ ...c, memory_type: 'reference', decay_class: 'architecture', body });
+            continue;
+        }
+        out.push(c);
+    }
+    return out;
+}
 /** Default extractor — used by the Reflector unless a fake is injected. */
 export async function extractMemories(condensed, ctx) {
     if (!condensed.trim())
         return [];
-    const userPrompt = `Project: ${ctx.project ?? '(none)'}\n\nTranscript:\n${condensed}\n\nExtract the durable memories as a JSON array.`;
+    const decisionsBlock = ctx.decisions && ctx.decisions.length
+        ? `\n\nExisting canonical decisions (already recorded as ADR/DDR — do NOT restate these; emit a reference pointer if relevant):\n${ctx.decisions.map(d => `- ${d}`).join('\n')}`
+        : '';
+    const userPrompt = `Project: ${ctx.project ?? '(none)'}${decisionsBlock}\n\nTranscript:\n${condensed}\n\nExtract the durable memories as a JSON array.`;
     const raw = await callModel(SYSTEM_PROMPT, userPrompt);
-    return parseCandidates(raw);
+    return refineCandidates(parseCandidates(raw));
 }
 //# sourceMappingURL=extract.js.map

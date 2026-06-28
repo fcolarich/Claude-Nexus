@@ -112,4 +112,22 @@ describe('refineCandidates', () => {
     expect(out).toHaveLength(1);
     expect(out[0].memory_type).toBe('decision');
   });
+
+  it('keeps a convention that merely contains a broad domain term', () => {
+    const c = cand({ title: 'Knowledge extraction quality gate criteria', body: '3+ independent sources = high signal; refuse snippets without citation.', memory_type: 'convention' });
+    const out = refineCandidates([c]);
+    expect(out).toHaveLength(1);
+    expect(out[0].memory_type).toBe('convention');
+  });
+
+  it('keeps a decision that cites an ADR but carries its own rationale', () => {
+    const c = cand({
+      title: 'Knockback persistence is intentional',
+      body: 'Knockback persistence is deliberate game feel, tuned over playtests and retained against feedback; the direction aligns with ADR-040 on combat readability.',
+      memory_type: 'decision',
+    });
+    const out = refineCandidates([c]);
+    expect(out).toHaveLength(1);
+    expect(out[0].memory_type).toBe('decision');
+  });
 });

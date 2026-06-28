@@ -16,15 +16,18 @@ describe('selectNarrationMemories', () => {
   let db: Database.Database;
   beforeEach(() => { db = new Database(':memory:'); initializeSchema(db); seed(db); });
 
-  it('selects handoffs, completion narration, and ADR/DDR-duplicate decisions', () => {
+  it('selects only handoff memories', () => {
     const victims = selectNarrationMemories(db);
-    const reasons = victims.map(v => v.reason).sort();
-    expect(reasons).toEqual(['adr-ddr-duplicate', 'completion-narration', 'handoff']);
+    expect(victims.map(v => v.reason)).toEqual(['handoff']);
+    expect(victims).toHaveLength(1);
+    expect(victims[0].title).toBe('Doc spine initialized');
   });
 
-  it('does not select the clean Odin decision', () => {
+  it('does not select the clean Odin decision, the reference, or the ADR-citing decision', () => {
     const victims = selectNarrationMemories(db);
     expect(victims.some(v => v.title.includes('Odin'))).toBe(false);
+    expect(victims.some(v => v.title.includes('knowledge extraction'))).toBe(false);
+    expect(victims.some(v => v.title.includes('UPM'))).toBe(false);
   });
 
   it('deleteMemory removes the row', () => {
