@@ -5,6 +5,9 @@ import { runFullIndex } from '../indexer/indexer.js';
 import { search, listAtoms, getDiagnostics, getStats, fetchContext, listSessions } from '../core/search.js';
 import { startWatcher } from '../indexer/watcher.js';
 import { backfillSessions, selectBackfillSessions } from '../capture/backfill.js';
+import { deleteMemory } from '../core/memories.js';
+import { selectNarrationMemories } from '../capture/prune.js';
+import { exportAll } from '../capture/export.js';
 const program = new Command();
 program
     .name('nexus')
@@ -266,6 +269,44 @@ program
     console.log(`  Memories created:   ${chalk.bold(r.inserted)}`);
     console.log(`  Merged (duplicate): ${chalk.dim(r.merged)}`);
     console.log(`  Nothing to capture: ${chalk.dim(r.skippedNoSignal)}`);
+    db.close();
+});
+// ── nexus prune-narration ────────────────────────────────────────────
+program
+    .command('prune-narration')
+    .description('Remove low-value memories (handoffs, completion narration, ADR/DDR-duplicate decisions) across all projects')
+    .option('--apply', 'Actually delete (default is a dry-run)')
+    .action((opts) => {
+    const db = openDatabase();
+    initializeSchema(db);
+    const victims = selectNarrationMemories(db);
+    if (victims.length === 0) {
+        console.log(chalk.green('No narration memories found.'));
+        db.close();
+        return;
+    }
+    const reasonColors = {
+        'handoff': chalk.magenta,
+        'completion-narration': chalk.yellow,
+        'adr-ddr-duplicate': chalk.cyan,
+    };
+    for (const v of victims) {
+        const tag = (reasonColors[v.reason] ?? chalk.white)(`[${v.reason}]`);
+        console.log(`${tag} ${chalk.gray(`(${v.memory_type})`)} ${v.title}`);
+    }
+    const counts = victims.reduce((acc, v) => { acc[v.reason] = (acc[v.reason] ?? 0) + 1; return acc; }, {});
+    console.log(chalk.blue(`\n${victims.length} memories matched: ${Object.entries(counts).map(([r, n]) => `${n} ${r}`).join(', ')}`));
+    if (!opts.apply) {
+        console.log(chalk.yellow('Dry-run — re-run with --apply to hard-delete.'));
+        db.close();
+        return;
+    }
+    let deleted = 0;
+    for (const v of victims)
+        if (deleteMemory(db, v.id))
+            deleted++;
+    const exp = exportAll(db);
+    console.log(chalk.green(`Deleted ${deleted} memories; re-exported ${exp.files} files across ${exp.buckets} project bucket(s).`));
     db.close();
 });
 program.parse();
