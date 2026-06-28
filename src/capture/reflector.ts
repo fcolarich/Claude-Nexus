@@ -19,6 +19,7 @@ import {
 import { linkMemory } from '../core/links.js';
 import { readTranscriptWindow } from './transcript.js';
 import { extractMemories, type Extractor } from './extract.js';
+import { readDecisionIndex } from './docspine.js';
 
 export interface ReflectOptions {
   session_id: string;
@@ -82,7 +83,8 @@ export async function reflect(
     return { session_id: opts.session_id, project: opts.project, newLines: window.newLines, extracted: 0, inserted: 0, merged: 0, skipped: true };
   }
 
-  const candidates = await extract(window.text, { project: opts.project });
+  const decisions = readDecisionIndex(opts.cwd);
+  const candidates = await extract(window.text, { project: opts.project, decisions });
 
   let inserted = 0;
   let merged = 0;

@@ -20,7 +20,7 @@ export interface MemoryCandidate {
 }
 
 /** Injectable for testing — the Reflector accepts a fake of this shape. */
-export type Extractor = (condensed: string, ctx: { project: string | null }) => Promise<MemoryCandidate[]>;
+export type Extractor = (condensed: string, ctx: { project: string | null; decisions?: string[] }) => Promise<MemoryCandidate[]>;
 
 const MEMORY_TYPES = new Set<string>(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference']);
 const DECAY_CLASSES = new Set<string>(['stable', 'architecture', 'api_contract', 'implementation']);
@@ -138,9 +138,12 @@ export function refineCandidates(cands: MemoryCandidate[]): MemoryCandidate[] {
 }
 
 /** Default extractor — used by the Reflector unless a fake is injected. */
-export async function extractMemories(condensed: string, ctx: { project: string | null }): Promise<MemoryCandidate[]> {
+export async function extractMemories(condensed: string, ctx: { project: string | null; decisions?: string[] }): Promise<MemoryCandidate[]> {
   if (!condensed.trim()) return [];
-  const userPrompt = `Project: ${ctx.project ?? '(none)'}\n\nTranscript:\n${condensed}\n\nExtract the durable memories as a JSON array.`;
+  const decisionsBlock = ctx.decisions && ctx.decisions.length
+    ? `\n\nExisting canonical decisions (already recorded as ADR/DDR — do NOT restate these; emit a reference pointer if relevant):\n${ctx.decisions.map(d => `- ${d}`).join('\n')}`
+    : '';
+  const userPrompt = `Project: ${ctx.project ?? '(none)'}${decisionsBlock}\n\nTranscript:\n${condensed}\n\nExtract the durable memories as a JSON array.`;
   const raw = await callModel(SYSTEM_PROMPT, userPrompt);
   return refineCandidates(parseCandidates(raw));
 }
