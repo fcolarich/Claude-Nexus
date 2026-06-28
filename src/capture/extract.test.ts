@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { parseCandidates } from './extract.js';
+import { parseCandidates, refineCandidates, type MemoryCandidate } from './extract.js';
+
+function cand(overrides: Partial<MemoryCandidate>): MemoryCandidate {
+  return {
+    title: 'Some durable fact',
+    body: 'A reusable rule about the system and why it matters.',
+    memory_type: 'insight',
+    scope: 'project',
+    decay_class: 'implementation',
+    confidence: 0.8,
+    tags: ['a'],
+    ...overrides,
+  };
+}
 
 const valid = {
   title: 'User prefers terse replies',
@@ -58,5 +71,45 @@ describe('parseCandidates', () => {
     expect(parseCandidates('')).toEqual([]);
     expect(parseCandidates('not json at all')).toEqual([]);
     expect(parseCandidates('{}')).toEqual([]);
+  });
+
+  it('rejects handoff memory_type', () => {
+    const raw = JSON.stringify([
+      { title: 'Doc spine done', body: 'Scaffold created.', memory_type: 'handoff', scope: 'project', decay_class: 'implementation', confidence: 0.9, tags: [] },
+    ]);
+    expect(parseCandidates(raw)).toHaveLength(0);
+  });
+});
+
+describe('refineCandidates', () => {
+  it('drops completion / progress narration by title', () => {
+    const c = cand({ title: 'Rumble Editor Tools doc spine initialized', memory_type: 'reference' });
+    expect(refineCandidates([c])).toHaveLength(0);
+  });
+
+  it('drops completion narration by body', () => {
+    const c = cand({ title: 'Assets folder', body: "Assets/ folder is now indexed for semantic search.", memory_type: 'reference' });
+    expect(refineCandidates([c])).toHaveLength(0);
+  });
+
+  it('converts an ADR-citing decision into a reference pointer', () => {
+    const c = cand({
+      title: 'UPM package-per-tool baseline',
+      body: 'Uses a UPM package-per-tool architecture. Codified in ADR-001 and DDR-001.',
+      memory_type: 'decision',
+    });
+    const out = refineCandidates([c]);
+    expect(out).toHaveLength(1);
+    expect(out[0].memory_type).toBe('reference');
+    expect(out[0].body).toContain('ADR-001');
+    // the restated content is collapsed to a short pointer, not the full body
+    expect(out[0].body.length).toBeLessThan(c.body.length + 10);
+  });
+
+  it('leaves a clean decision untouched', () => {
+    const c = cand({ title: 'Odin soft dependency', body: 'Odin is a hard dependency only for some packages, not all.', memory_type: 'decision' });
+    const out = refineCandidates([c]);
+    expect(out).toHaveLength(1);
+    expect(out[0].memory_type).toBe('decision');
   });
 });

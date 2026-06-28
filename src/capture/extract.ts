@@ -27,6 +27,12 @@ const DECAY_CLASSES = new Set<string>(['stable', 'architecture', 'api_contract',
 const SCOPES = new Set<string>(['global', 'shared', 'project']);
 const MAX_CANDIDATES = 20;
 
+/** Completion / session-progress narration — never durable knowledge. */
+export const COMPLETION_RE = /\b(initialized|scaffold(ed)?\s+complete|spine\s+(complete|initialized)|doc\s+spine|knowledge\s+extraction|extraction\s+complete|now\s+(indexed|available)|indexed\s+(for|in)|setup\s+complete)\b/i;
+
+/** A cited Architecture/Design Decision Record id. */
+export const ADR_REF_RE = /\b(ADR|DDR)-\d+/i;
+
 const SYSTEM_PROMPT = `You extract durable, reusable MEMORIES from a Claude Code coding-assistant session transcript.
 
 A memory is a fact worth recalling in a FUTURE, unrelated session. Extract ONLY durable knowledge. Do NOT extract ephemeral task state, step-by-step narration, or anything a reader could derive by reading the code.
@@ -107,10 +113,34 @@ export function parseCandidates(raw: string): MemoryCandidate[] {
   return out;
 }
 
+/**
+ * Deterministic quality filter applied to extracted candidates.
+ * - Drops completion / progress narration.
+ * - Converts an ADR/DDR-citing `decision` into a thin `reference` pointer so the
+ *   ADR stays canonical and the memory only aids retrieval (no content drift).
+ */
+export function refineCandidates(cands: MemoryCandidate[]): MemoryCandidate[] {
+  const out: MemoryCandidate[] = [];
+  for (const c of cands) {
+    if (COMPLETION_RE.test(c.title) || COMPLETION_RE.test(c.body)) continue;
+
+    if (c.memory_type === 'decision' && ADR_REF_RE.test(c.body)) {
+      const ref = (c.body.match(ADR_REF_RE) ?? [])[0]?.toUpperCase() ?? '';
+      const firstSentence = c.body.split(/(?<=[.!?])\s/)[0].trim();
+      const body = ref && !firstSentence.includes(ref) ? `${firstSentence} → ${ref}` : firstSentence;
+      out.push({ ...c, memory_type: 'reference', decay_class: 'architecture', body });
+      continue;
+    }
+
+    out.push(c);
+  }
+  return out;
+}
+
 /** Default extractor — used by the Reflector unless a fake is injected. */
 export async function extractMemories(condensed: string, ctx: { project: string | null }): Promise<MemoryCandidate[]> {
   if (!condensed.trim()) return [];
   const userPrompt = `Project: ${ctx.project ?? '(none)'}\n\nTranscript:\n${condensed}\n\nExtract the durable memories as a JSON array.`;
   const raw = await callModel(SYSTEM_PROMPT, userPrompt);
-  return parseCandidates(raw);
+  return refineCandidates(parseCandidates(raw));
 }
