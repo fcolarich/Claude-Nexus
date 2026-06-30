@@ -11,6 +11,8 @@ import Database from 'better-sqlite3';
 import { getNexusConfig } from './config.js';
 import { sanitizeFts5Query } from './search.js';
 import { effectiveConfidence } from './decay.js';
+import { generateEmbedding } from './embeddings.js';
+import { normalize } from './memories.js';
 import type { Memory } from './types.js';
 
 export interface RecalledItem {
@@ -143,4 +145,100 @@ export function recallMemories(
   const markdown = parts.join('\n\n');
 
   return { items, markdown, tokenEstimate: estTokens(markdown), total: eligible.length };
+}
+
+/**
+ * Prompt-driven recall: rank memories by vector cosine similarity to a query,
+ * keep only those above a relevance floor, exclude a caller-supplied id set
+ * (per-session dedup), and return the top `limit`. Falls back to FTS5 only when
+ * no embedding is available or the corpus has no vectors — never bypasses the
+ * floor on an embedded corpus.
+ */
+export async function recallByQuery(
+  db: Database.Database,
+  opts: { project?: string | null; query: string; limit?: number; minSimilarity?: number; excludeIds?: string[] }
+): Promise<RecallResult> {
+  const empty: RecallResult = { items: [], markdown: '', tokenEstimate: 0, total: 0 };
+
+  const memoriesExist = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='memories'`
+  ).get();
+  if (!memoriesExist) return empty;
+
+  const cfg = getNexusConfig().recall;
+  const limit = opts.limit ?? 5;
+  const minSimilarity = opts.minSimilarity ?? cfg.min_similarity;
+  const project = opts.project ?? '';
+  const exclude = new Set(opts.excludeIds ?? []);
+  const scopeClause = `(m.scope IN ('global','shared') OR (m.scope='project' AND m.project = @project))`;
+
+  const scored: { m: Memory; score: number }[] = [];
+  let vecEligible = 0; // in-scope approved candidates the vector index produced (pre-floor)
+
+  const queryVec = await generateEmbedding(opts.query);
+  const vecTable = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='memories_vec'`
+  ).get();
+
+  if (queryVec && vecTable) {
+    const norm = normalize(queryVec);
+    let rows: { rowid: number; distance: number }[] = [];
+    try {
+      rows = db.prepare(`
+        SELECT rowid, distance FROM memories_vec
+        WHERE embedding MATCH json(@v)
+        ORDER BY distance
+        LIMIT @k
+      `).all({ v: JSON.stringify(Array.from(norm)), k: Math.max(limit * 6, 30) }) as { rowid: number; distance: number }[];
+    } catch { rows = []; }
+
+    for (const r of rows) {
+      const row = db.prepare(`
+        SELECT m.* FROM memories m
+        WHERE m.rowid = @rowid
+          AND m.review_status = 'approved' AND m.superseded_by IS NULL
+          AND ${scopeClause}
+      `).get({ rowid: r.rowid, project }) as Record<string, unknown> | undefined;
+      if (!row) continue;
+      const m = rowToMemory(row);
+      vecEligible++; // corpus is embedded and produced an in-scope candidate
+      if (exclude.has(m.id)) continue;
+      // Stored vectors are unit-normalized: cosine similarity = 1 - d^2/2
+      const sim = Math.max(0, Math.min(1, 1 - (r.distance * r.distance) / 2));
+      if (sim < minSimilarity) continue; // relevance floor
+      scored.push({ m, score: sim });
+    }
+  }
+
+  // FTS5 fallback ONLY when the vector path could not run (no embedding / no
+  // vectors). If vectors existed but nothing cleared the floor, respect that.
+  if (scored.length === 0 && vecEligible === 0) {
+    const rows = db.prepare(`
+      SELECT m.* FROM memories_fts f
+      JOIN memories m ON m.rowid = f.rowid
+      WHERE memories_fts MATCH @q
+        AND m.review_status = 'approved' AND m.superseded_by IS NULL
+        AND ${scopeClause}
+      ORDER BY f.rank
+      LIMIT @lim
+    `).all({ q: sanitizeFts5Query(opts.query), project, lim: limit * 3 }) as Record<string, unknown>[];
+    for (const row of rows) {
+      const m = rowToMemory(row);
+      if (exclude.has(m.id)) continue;
+      scored.push({ m, score: 0 });
+    }
+  }
+
+  if (scored.length === 0) return empty;
+
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored.slice(0, limit);
+
+  const items: RecalledItem[] = top.map(({ m, score }) => ({ memory: m, score, mode: 'full' as const }));
+  const HEADER = '# Recalled Memory\n';
+  const parts: string[] = [HEADER.trim()];
+  for (const i of items) parts.push(renderFull(i.memory).trim());
+  const markdown = parts.join('\n\n');
+
+  return { items, markdown, tokenEstimate: estTokens(markdown), total: scored.length };
 }
