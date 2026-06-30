@@ -22,12 +22,15 @@ extraction:
   endpoint: http://127.0.0.1:11434/v1/chat/completions
   temperature: 0.2
 
-# Recall — budgeted memory injection at session start.
-# Age-based ranking is handled by the decay model (src/core/decay.ts), keyed on
-# each memory's decay_class — not a single global half-life.
+# Recall — memory injection.
+# Bulk recall (nexus_recall MCP tool, web API) is ranked by the decay model
+# (src/core/decay.ts), keyed on each memory's decay_class.
+# Prompt-driven recall (UserPromptSubmit hook) is ranked by vector similarity.
 recall:
-  max_tokens: 2000              # hard cap on injected context
-  min_confidence: 0.35          # effective (decayed) confidence below this is not injected
+  max_tokens: 2000              # hard cap on bulk-recall injected context
+  min_confidence: 0.35          # effective (decayed) confidence below this is not bulk-injected
+  min_words: 4                  # user prompts shorter than this skip prompt-driven recall
+  min_similarity: 0.55          # cosine floor (0-1) a memory must clear to be prompt-injected
 
 # Capture — Reflector write thresholds + markdown export target.
 capture:
