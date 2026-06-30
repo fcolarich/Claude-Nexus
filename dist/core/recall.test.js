@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDatabase, initializeSchema } from './database.js';
 import { insertMemory } from './memories.js';
-import { recallMemories } from './recall.js';
+import { recallMemories, recallByQuery } from './recall.js';
 function freshDb() {
     const db = openDatabase(':memory:');
     initializeSchema(db);
@@ -91,6 +91,37 @@ describe('recallMemories', () => {
         add(db, { title: 'Async rule', body: 'prefer async await over promises' });
         const r = recallMemories(db, { project: 'projA', query: 'tabs' });
         expect(r.items.map(i => i.memory.title)).toEqual(['Tabs rule']);
+        db.close();
+    });
+});
+describe('recallByQuery', () => {
+    // Offline/CI has no Ollama, so generateEmbedding returns null and recallByQuery
+    // uses its FTS5 fallback — these assertions hold on the fallback path.
+    it('returns query-matching memories, dual-bank scope', async () => {
+        const db = freshDb();
+        add(db, { title: 'Tabs rule', body: 'always use tabs for indentation', project: 'projA' });
+        add(db, { title: 'Other proj', body: 'tabs but wrong project', project: 'projB' });
+        add(db, { title: 'Global tabs', body: 'global tabs note', scope: 'global', project: null });
+        const r = await recallByQuery(db, { project: 'projA', query: 'tabs' });
+        const titles = r.items.map(i => i.memory.title);
+        expect(titles).toContain('Tabs rule');
+        expect(titles).toContain('Global tabs');
+        expect(titles).not.toContain('Other proj');
+        db.close();
+    });
+    it('excludes memories in excludeIds (session dedup)', async () => {
+        const db = freshDb();
+        const m = add(db, { title: 'Tabs rule', body: 'always use tabs for indentation' });
+        const r = await recallByQuery(db, { project: 'projA', query: 'tabs', excludeIds: [m.id] });
+        expect(r.items.map(i => i.memory.title)).not.toContain('Tabs rule');
+        db.close();
+    });
+    it('returns empty for a query that matches nothing', async () => {
+        const db = freshDb();
+        add(db, { title: 'Tabs rule', body: 'always use tabs for indentation' });
+        const r = await recallByQuery(db, { project: 'projA', query: 'kubernetes networking' });
+        expect(r.items).toHaveLength(0);
+        expect(r.markdown).toBe('');
         db.close();
     });
 });
