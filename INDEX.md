@@ -14,8 +14,8 @@ v1 was a passive file-indexer. **v2 is an autonomous memory engine.** It:
 
 - **Captures** — hooks fire the Reflector after each session; it reads the transcript,
   extracts typed memories via Haiku, dedup-merges them, and stores them.
-- **Recalls** — a SessionStart hook injects the most relevant memories for the project,
-  ranked and budgeted to a token cap.
+- **Recalls** — a UserPromptSubmit hook embeds each prompt, vector-searches memories
+  above a cosine relevance floor, and injects the top 3-5 matches (per-session dedup).
 - **Maintains** — memories decay with age, can be reverified, consolidated, and distilled.
 
 It also still indexes Claude knowledge files (agents, skills, plans, tasks) and session
@@ -58,7 +58,7 @@ claude-nexus/
 │   │                 distill, llm client, embeddings, search, config, types,
 │   │                 links (hybrid BM25+dense+RRF auto-linking)
 │   ├── capture/      transcript (Observer), extract (Haiku), reflector,
-│   │                 export, runner + load-runner (hook entries), backfill
+│   │                 export, runner + prompt-runner (hook entries), backfill
 │   ├── web/          Express API server + session monitor
 │   ├── frontend/     Svelte 5 SPA (Memories, Review, Sessions, Search, …)
 │   ├── indexer/      Filesystem scanner (incl. project .md discovery),
@@ -66,7 +66,7 @@ claude-nexus/
 │   ├── mcp/          MCP server (stdio, 20 tools)
 │   ├── types/        TypeScript shims (wink-bm25-text-search, etc.)
 │   └── cli/          CLI entry point (Commander.js — incl. `backfill`)
-├── hooks/            nexus-capture.mjs (capture) + the load runner
+├── hooks/            nexus-capture.mjs (capture) + the prompt runner
 ├── extraction_models.yaml
 ├── ARCHITECTURE.md
 └── README.md
@@ -108,7 +108,7 @@ npx tsx src/cli/index.ts backfill --dry-run   # preview retroactive capture
 - **Memory types:** preference · convention · failure · correction · decision · insight ·
   tool_quirk · reference · handoff.
 - **Capture loop:** Stop/PreCompact/SessionEnd → Reflector (cursor-tracked, idempotent).
-  SessionStart → budgeted recall.
+  UserPromptSubmit → prompt-driven semantic recall (vector search above a relevance floor).
 - **Decay:** computed, non-destructive — stored `confidence` is intrinsic; effective
   confidence falls with age per `decay_class`; reverify resets it.
 - **Review gate:** low-confidence extractions are `pending` and withheld from recall

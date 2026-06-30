@@ -14,8 +14,9 @@ ships a web dashboard for browsing memories, sessions, and the review queue.
 ## How it works
 
 ```
-SessionStart ─► nexus-load hook ─► budgeted recall ─► injected as context
-                                   (rank: confidence x decay x help-rate)
+UserPromptSubmit ─► prompt-runner hook ─► embed prompt ─► vector search
+                                          ─► relevance floor (min_similarity)
+                                          ─► inject top matches as context
 
   ...your session runs, transcript is written to disk...
 
@@ -82,7 +83,7 @@ defaults if absent.
 
 | Event | Hook | Action |
 |-------|------|--------|
-| `SessionStart` | nexus-load | Recall budgeted memories, inject as `additionalContext` |
+| `UserPromptSubmit` | prompt-runner | Embed prompt, recall top matches above the relevance floor, inject as additionalContext |
 | `Stop` / `PreCompact` / `SessionEnd` | nexus-capture | Spawn the Reflector (detached, non-blocking) |
 
 Capture is self-throttling — a per-session cursor means each run only processes
