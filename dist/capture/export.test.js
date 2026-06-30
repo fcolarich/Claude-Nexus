@@ -27,7 +27,7 @@ describe('exportAll', () => {
         const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
         const result = exportAll(db, dir);
         expect(result.buckets).toBe(1);
-        const projDir = join(dir, 'proj');
+        const projDir = join(dir, 'proj', 'memory');
         expect(existsSync(join(projDir, 'MEMORY.md'))).toBe(true);
         const mdFiles = readdirSync(projDir).filter((f) => f.endsWith('.md') && f !== 'MEMORY.md');
         expect(mdFiles).toHaveLength(1); // pending one not exported
@@ -44,7 +44,7 @@ describe('exportAll', () => {
         insertMemory(db, { ...base, scope: 'global', project: null, title: 'Global pref', body: 'A global preference.', memory_type: 'preference', review_status: 'approved' });
         const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
         exportAll(db, dir);
-        expect(existsSync(join(dir, '_global', 'MEMORY.md'))).toBe(true);
+        expect(existsSync(join(dir, '_global', 'memory', 'MEMORY.md'))).toBe(true);
         db.close();
     });
 });

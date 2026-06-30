@@ -4,7 +4,45 @@
  * via getNexusConfig() — see src/core/config.ts.
  */
 
+import { spawn } from 'child_process';
 import { getNexusConfig } from './config.js';
+
+/** Extract base URL (scheme+host+port) from the configured embedding endpoint. */
+function ollamaBaseUrl(): string {
+	try {
+		const u = new URL(getNexusConfig().embedding.endpoint);
+		return `${u.protocol}//${u.host}`;
+	} catch {
+		return 'http://127.0.0.1:11434';
+	}
+}
+
+/**
+ * If embedding provider is ollama and Ollama isn't responding, spawn `ollama serve`
+ * and wait up to 30s for it to come up. No-ops for non-ollama providers.
+ */
+async function ensureOllamaRunning(): Promise<void> {
+	if (getNexusConfig().embedding.provider !== 'ollama') return;
+	const base = ollamaBaseUrl();
+
+	try {
+		const r = await fetch(base, { signal: AbortSignal.timeout(1000) });
+		if (r.ok) return;
+	} catch { /* not running — fall through to spawn */ }
+
+	console.error('[embeddings] Ollama not running — spawning `ollama serve`');
+	const proc = spawn('ollama', ['serve'], { detached: true, stdio: 'ignore', shell: false });
+	proc.unref();
+
+	for (let i = 0; i < 30; i++) {
+		await new Promise(r => setTimeout(r, 1000));
+		try {
+			const r = await fetch(base, { signal: AbortSignal.timeout(1000) });
+			if (r.ok) { console.error('[embeddings] Ollama started'); return; }
+		} catch { /* still starting */ }
+	}
+	console.warn('[embeddings] Ollama did not start within 30s — proceeding without embeddings');
+}
 
 /**
  * Ensure the embedding model is loaded before a bulk pass.
@@ -14,6 +52,7 @@ import { getNexusConfig } from './config.js';
  * Returns true if the model is ready, false if unavailable.
  */
 export async function ensureEmbeddingModelReady(): Promise<boolean> {
+  await ensureOllamaRunning();
   const cfg = getNexusConfig().embedding;
   try {
     const response = await fetch(cfg.endpoint, {

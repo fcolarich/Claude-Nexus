@@ -29,8 +29,8 @@ extraction:
 recall:
   max_tokens: 2000              # hard cap on bulk-recall injected context
   min_confidence: 0.35          # effective (decayed) confidence below this is not bulk-injected
-  min_words: 4                  # user prompts shorter than this skip prompt-driven recall
-  min_similarity: 0.55          # cosine floor (0-1) a memory must clear to be prompt-injected
+  min_words: 6                  # user prompts shorter than this skip prompt-driven recall
+  min_similarity: 0.6          # cosine floor (0-1) a memory must clear to be prompt-injected
 
 # Capture — Reflector write thresholds + markdown export target.
 capture:
