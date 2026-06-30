@@ -44,6 +44,8 @@ const DEFAULTS = {
         max_tokens: 2000,
         min_confidence: 0.35,
         max_title_items: 25,
+        min_words: 4,
+        min_similarity: 0.55,
     },
     capture: {
         auto_approve_confidence: 0.85,

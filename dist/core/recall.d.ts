@@ -29,4 +29,18 @@ export declare function recallMemories(db: Database.Database, opts: {
     query?: string;
     maxTokens?: number;
 }): RecallResult;
+/**
+ * Prompt-driven recall: rank memories by vector cosine similarity to a query,
+ * keep only those above a relevance floor, exclude a caller-supplied id set
+ * (per-session dedup), and return the top `limit`. Falls back to FTS5 only when
+ * no embedding is available or the corpus has no vectors — never bypasses the
+ * floor on an embedded corpus.
+ */
+export declare function recallByQuery(db: Database.Database, opts: {
+    project?: string | null;
+    query: string;
+    limit?: number;
+    minSimilarity?: number;
+    excludeIds?: string[];
+}): Promise<RecallResult>;
 //# sourceMappingURL=recall.d.ts.map

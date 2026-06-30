@@ -65,14 +65,14 @@ Or run `/update-project-docs` after a change and let the doc-sync agent route it
 | `src/mcp/server.ts` | MCP server — 20 tools exposed over stdio transport |
 | `src/web/server.ts` | Express REST API server, port 3210; serves built dashboard from dist-frontend/ |
 | `src/cli/index.ts` | CLI entry point — index, search, inspect from terminal |
-| `hooks/hooks.json` | Claude Code hook manifest — wires SessionStart (recall) and Stop/PreCompact/SessionEnd (capture) |
+| `hooks/hooks.json` | Claude Code hook manifest — wires UserPromptSubmit (recall) and Stop/PreCompact/SessionEnd (capture) |
 | `src/core/database.ts` | SQLite init, migrations, schema_version management |
-| `src/core/recall.ts` | Decay-ranked, token-budgeted memory retrieval |
+| `src/core/recall.ts` | Memory retrieval — bulk decay-ranked recall (recallMemories, for MCP/web) + prompt-driven semantic recall (recallByQuery) |
 | `src/core/embeddings.ts` | Embedding generation via Ollama mxbai-embed-large |
 | `src/core/config.ts` | Reads extraction_models.yaml; provides runtime config with sane defaults |
 | `src/capture/reflector.ts` | Background capture pipeline — reads new transcript lines, calls Haiku, dedup-merges memories |
 | `src/capture/extract.ts` | Haiku-based memory extraction from transcript windows |
 | `src/capture/export.ts` | Exports memories as markdown mirror files |
-| `src/capture/load-runner.ts` | Recall hook runner — budgeted inject at session start |
+| `src/capture/prompt-runner.ts` | UserPromptSubmit hook — embeds prompt, injects relevance-floored recall (top 3-5, per-session dedup) |
 | `extraction_models.yaml` | Runtime config: embedding model, extraction model, recall budget, capture thresholds |
 | `package.json` | Project manifest, scripts, dependencies |

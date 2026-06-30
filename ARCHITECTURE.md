@@ -25,7 +25,7 @@ claude-nexus/
 │   ├── mcp/            # MCP server (19 tools)
 │   └── cli/            # `nexus` CLI entry point
 ├── hooks/              # nexus-capture.mjs (Stop/PreCompact/SessionEnd hook)
-├── dist/               # tsc output (runner.js, load-runner.js, mcp/server.js run from here)
+├── dist/               # tsc output (runner.js, prompt-runner.js, mcp/server.js run from here)
 ├── dist-frontend/      # Vite build output (served by Express)
 ├── extraction_models.yaml   # model + pipeline config
 ├── ARCHITECTURE.md
@@ -40,8 +40,8 @@ runs the Express API and the Vite dev server concurrently.
 ## The Memory Loop
 
 ```
-SessionStart hook ─► recall ─► inject "Recalled Memory" as additionalContext
-       │
+UserPromptSubmit hook ─► embed prompt ─► vector search (relevance floor)
+       │                 ─► per-session dedup ─► inject top 3-5 as additionalContext
    (session runs)
        │
 Stop / PreCompact / SessionEnd hook ─► Reflector
@@ -57,8 +57,13 @@ Stop / PreCompact / SessionEnd hook ─► Reflector
   fire spawns the Reflector, which reads only transcript lines added since its
   last run (per-session cursor `sessions.last_reflected_index`), so frequent
   `Stop` events are cheap.
-- **Recall** is driven by the `SessionStart` hook. It runs a pure, budgeted,
-  decay-ranked read of approved memories and emits them as `additionalContext`.
+- **Recall** is driven by the `UserPromptSubmit` hook. For each user prompt it
+  embeds the prompt, vector-searches approved memories (dual-bank scope) with a
+  cosine relevance floor (`recall.min_similarity`), skips short prompts
+  (< `recall.min_words`), dedups against memories already injected this session
+  (`~/.claude/memories/.recall-state/<session_id>.json`), and emits the top 3-5
+  matches above the floor as `additionalContext`. Degrades to FTS5 when
+  embeddings are unavailable.
 - The capture pipeline is the **system of record in the DB**; the markdown
   export is a regenerated human-readable mirror.
 
@@ -225,13 +230,17 @@ body). Stale `.md` files are pruned each run. The DB is authoritative; this is a
 regenerated mirror. `export_dir` is a Nexus-owned sandbox until capture is
 verified, then deliberately repointed at `~/.claude/projects/<project>/memory`.
 
-### `runner.ts` / `load-runner.ts` — hook entry points
+### `runner.ts` / `prompt-runner.ts` — hook entry points
 - `runner.js` — spawned (detached) by `nexus-capture.mjs`. Opens the DB, runs
   `reflect()`, exports if anything changed. Independent of the web server.
-- `load-runner.js` — registered directly as the `SessionStart` hook command.
-  Reads the hook payload from stdin, runs `recallMemories()`, writes the markdown
-  as `hookSpecificOutput.additionalContext`. Synchronous, DB-direct, best-effort
-  — a failure never blocks session start.
+- `prompt-runner.js` — registered directly as the `UserPromptSubmit` hook
+  command. Reads the hook payload from stdin (the user prompt + session id),
+  skips short prompts (< `recall.min_words`), embeds the prompt, runs
+  `recallByQuery()` (vector search with the `min_similarity` relevance floor),
+  dedups against memories already injected this session
+  (`~/.claude/memories/.recall-state/<session_id>.json`), and writes the top 3-5
+  matches as `hookSpecificOutput.additionalContext`. Synchronous, DB-direct,
+  best-effort — a failure never blocks the prompt.
 
 ### `backfill.ts` — retroactive capture
 The hooks only fire going forward; `backfillSessions()` runs the same Reflector
@@ -252,8 +261,12 @@ Embedding helpers (`embedMemory`, `embedUnindexedMemories`) write unit-normalize
 vectors to `memories_vec`. `findSimilarMemory()` does a KNN over `memories_vec`
 and converts L2 distance to cosine similarity — the dedup primitive.
 
-### `recall.ts` — budgeted retrieval
-`recallMemories(db, {project, query, maxTokens})`:
+### `recall.ts` — retrieval
+Two retrieval paths share this module:
+
+`recallMemories(db, {project, query, maxTokens})` — **bulk, decay-ranked recall**,
+used by the `nexus_recall` MCP tool and the web API for explicit query-or-bulk
+recall:
 - Dual-bank query: project-scoped memories **+** global/shared memories.
 - Eligibility: `review_status='approved'`, not superseded, and **effective
   (decayed) confidence** ≥ `recall.min_confidence` — unless `load_at_init=1`
@@ -261,7 +274,17 @@ and converts L2 distance to cosine similarity — the dedup primitive.
 - Ranking: `effectiveConfidence × helpRate` (helpRate from `help_count/use_count`);
   `load_at_init` memories sort first.
 - Budget walk: emit full bodies until `max_tokens` is reached, then titles-only.
-- Pure read — no mutation, no network — cheap enough for the SessionStart hot path.
+- Pure read — no mutation, no network.
+
+`recallByQuery(db, {project, query, sessionId})` — **prompt-driven semantic
+recall**, used by the `UserPromptSubmit` hook (`prompt-runner.js`):
+- Embeds the prompt and runs a cosine-similarity vector search over approved,
+  non-superseded memories (dual-bank scope).
+- Applies a **relevance floor** (`recall.min_similarity`, default 0.55) — only
+  matches above the floor are eligible.
+- Returns the top 3-5 matches; per-session dedup excludes memories already
+  injected this session.
+- Degrades to FTS5 keyword search when embeddings are unavailable.
 
 ### `decay.ts` — computed confidence decay
 Decay is **non-destructive**. Stored `confidence` is intrinsic; decay is a
@@ -459,8 +482,10 @@ the local marketplace — no manual `~/.claude/settings.json` editing.
 
 - `.mcp.json` registers `dist/mcp/server.js` as the `claude-nexus` MCP server.
 - `hooks/hooks.json` registers:
-  - `SessionStart` → `dist/capture/load-runner.js` (recall — needs stdout, so a
-    direct command, not a detached spawn)
+  - `UserPromptSubmit` → `dist/capture/prompt-runner.js` (prompt-driven recall —
+    embeds the prompt, vector-searches above the `min_similarity` relevance floor,
+    dedups per session, injects the top 3-5; needs stdout, so a direct command,
+    not a detached spawn)
   - `Stop` / `PreCompact` / `SessionEnd` → `hooks/nexus-capture.mjs` (capture —
     reads the payload, spawns `dist/capture/runner.js` detached, exits 0)
 

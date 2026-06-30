@@ -13,3 +13,4 @@
 | [ADR-006](decisions/adr-006-mcp-server-drops-blocking-runfullindex-on-startup.md) | MCP server drops blocking runFullIndex on startup | 2026-06-26 | accepted |
 | [ADR-007](decisions/adr-007-otel-service-namespace-tagging-in-capture-runner.md) | OTel service namespace tagging in capture runner | 2026-06-26 | accepted |
 | [ADR-008](decisions/adr-008-phase-8-search-and-write-unified-onto-the-memories.md) | Phase 8: search and write unified onto the memories store | 2026-06-26 | accepted |
+| [ADR-009](decisions/adr-009-prompt-driven-semantic-recall-via-userpromptsubmit.md) | Prompt-driven semantic recall via UserPromptSubmit | 2026-06-30 | accepted |
