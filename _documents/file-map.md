@@ -7,7 +7,7 @@ Maintained via the `update-file-map` skill.
 
 | File | Role |
 |------|------|
-| `src/mcp/server.ts` | MCP server — 20 tools exposed over stdio transport |
+| `src/mcp/server.ts` | MCP server — 17 tools exposed over stdio transport (knowledge, recall, search, project/session management) |
 | `src/web/server.ts` | Express REST API server, port 3210; serves built dashboard from dist-frontend/ |
 | `src/cli/index.ts` | CLI entry point — index, search, inspect from terminal |
 | `hooks/hooks.json` | Claude Code hook manifest — wires UserPromptSubmit (recall) and Stop/PreCompact/SessionEnd (capture) |
@@ -35,8 +35,8 @@ Maintained via the `update-file-map` skill.
 | `src/core/` | Shared core: database, embeddings, recall, decay, consolidation, config, types, links |
 | `src/mcp/` | MCP server and tool implementations |
 | `src/web/` | Express REST API and route handlers |
-| `src/frontend/` | Svelte 5 SPA dashboard — Memories, Review, Sessions, Search, Tasks, Agents, Skills views |
+| `src/frontend/` | Svelte 5 SPA dashboard — Dashboard, Memories, Review, Sessions, Search, Plans, Agents, Skills views |
 | `src/cli/` | CLI commands: index, search, inspect, backfill |
-| `src/indexer/` | Knowledge file scanner and parser — indexes agents, skills, plans, tasks, notes from ~/.claude/ |
+| `src/indexer/` | Knowledge file scanner and parser — indexes agents, skills, plans, notes from ~/.claude/ |
 | `hooks/` | Claude Code hook scripts and hooks.json manifest |
 | `dist/` | Compiled JS output from tsc — what hooks and MCP server actually run |
