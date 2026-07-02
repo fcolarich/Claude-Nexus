@@ -39,3 +39,14 @@ capture:
   # Where the DB→markdown export writes. A leading ~/ is expanded to your home dir.
   # Cutover complete (2026-05-29): exports write directly to the harness memory dir.
   export_dir: ~/.claude/projects
+
+# Reranker — cross-encoder pass (jina-reranker-v2-base-multilingual) applied to
+# prompt-driven recall candidates before the relevance floor. Auto-spawned on
+# first use if not already running. Disabled by default (script_path is
+# machine-specific).
+reranker:
+  enabled: true
+  endpoint: http://127.0.0.1:8931/rerank
+  script_path: C:/Fran/Cloned Repos/local-reranker-mcp/server.py
+  threshold: 0.2          # cross-encoder score floor (nexus atoms/memories convention)
+  timeout_ms: 10000

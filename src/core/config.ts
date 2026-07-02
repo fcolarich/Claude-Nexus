@@ -45,6 +45,13 @@ export interface NexusConfig {
     dedup_cosine_threshold: number;
     export_dir: string;
   };
+  reranker: {
+    enabled: boolean;
+    endpoint: string;
+    script_path: string;
+    threshold: number;      // cross-encoder score floor a candidate must clear to be injected
+    timeout_ms: number;
+  };
 }
 
 /** Expand a leading ~/ in a path to the user's home directory. */
@@ -83,6 +90,13 @@ const DEFAULTS: NexusConfig = {
     dedup_cosine_threshold: 0.86,
     export_dir: join(homedir(), '.claude', 'memories', 'exports'),
   },
+  reranker: {
+    enabled: false,
+    endpoint: 'http://127.0.0.1:8931/rerank',
+    script_path: 'C:/Fran/Cloned Repos/local-reranker-mcp/server.py',
+    threshold: 0.2,
+    timeout_ms: 10000,
+  },
 };
 
 let cached: NexusConfig | null = null;
@@ -111,6 +125,7 @@ export function getNexusConfig(): NexusConfig {
     extraction: { ...DEFAULTS.extraction, ...loaded.extraction },
     recall: { ...DEFAULTS.recall, ...loaded.recall },
     capture: { ...DEFAULTS.capture, ...loaded.capture },
+    reranker: { ...DEFAULTS.reranker, ...loaded.reranker },
   };
   cached.capture.export_dir = expandHome(cached.capture.export_dir);
   return cached;

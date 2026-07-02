@@ -1,7 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { openDatabase, initializeSchema } from './database.js';
-import { insertMemory, type MemoryInput } from './memories.js';
+import { insertMemory, embedMemory, type MemoryInput } from './memories.js';
 import { recallMemories, recallByQuery } from './recall.js';
+import * as embeddings from './embeddings.js';
+
+vi.mock('./embeddings.js', async () => {
+  const actual = await vi.importActual<typeof import('./embeddings.js')>('./embeddings.js');
+  return { ...actual, generateEmbedding: vi.fn().mockResolvedValue(null) };
+});
 
 function freshDb() {
   const db = openDatabase(':memory:');
@@ -136,6 +142,66 @@ describe('recallByQuery', () => {
     const r = await recallByQuery(db, { project: 'projA', query: 'kubernetes networking' });
     expect(r.items).toHaveLength(0);
     expect(r.markdown).toBe('');
+    db.close();
+  });
+});
+
+// memories_vec is a fixed-width vec0(embedding float[1024]) table — vectors
+// must match that width or the INSERT silently no-ops (embedMemory swallows
+// the error). One-hot vectors at distinct indices give deterministic cosine
+// similarity: 1.0 for the same index, 0.0 for different indices.
+function oneHot(dim: number): Float32Array {
+  const v = new Float32Array(1024);
+  v[dim] = 1;
+  return v;
+}
+
+describe('recallByQuery reranking', () => {
+  // These tests drive the vector-KNN path directly (via embedMemory + a mocked
+  // query embedding) so the rerank floor can be exercised without a real
+  // Ollama or local-reranker daemon running.
+  it('floors on cross-encoder score instead of cosine when reranking succeeds', async () => {
+    const db = freshDb();
+    const relevant = add(db, { title: 'Relevant', body: 'apple pie recipe' });
+    const irrelevant = add(db, { title: 'Irrelevant', body: 'car engine repair' });
+
+    // Both land in the KNN candidate pool regardless of cosine distance —
+    // the point of this test is that the rerank floor, not cosine, decides.
+    await embedMemory(db, relevant.id, async () => oneHot(0));
+    await embedMemory(db, irrelevant.id, async () => oneHot(1));
+    vi.mocked(embeddings.generateEmbedding).mockResolvedValueOnce(oneHot(0));
+
+    const fakeRerank = vi.fn(async (_query: string, documents: string[]) =>
+      documents
+        .map((d, index) => ({ index, score: d.includes('apple') ? 0.9 : 0.05 }))
+        .filter(r => r.score >= 0.2)
+        .sort((a, b) => b.score - a.score)
+    );
+
+    const r = await recallByQuery(db, { project: 'projA', query: 'relevant', rerankFn: fakeRerank });
+    expect(fakeRerank).toHaveBeenCalledOnce();
+    const titles = r.items.map(i => i.memory.title);
+    expect(titles).toContain('Relevant');
+    expect(titles).not.toContain('Irrelevant');
+    db.close();
+  });
+
+  it('falls back to the cosine floor when reranking is unavailable', async () => {
+    const db = freshDb();
+    const close = add(db, { title: 'Close', body: 'close content' });
+    const far = add(db, { title: 'Far', body: 'far content' });
+    await embedMemory(db, close.id, async () => oneHot(0));
+    await embedMemory(db, far.id, async () => oneHot(1)); // orthogonal -> cosine sim 0
+    vi.mocked(embeddings.generateEmbedding).mockResolvedValueOnce(oneHot(0));
+
+    const failingRerank = vi.fn(async () => null);
+    const r = await recallByQuery(db, {
+      project: 'projA', query: 'close', rerankFn: failingRerank, minSimilarity: 0.5,
+    });
+    expect(failingRerank).toHaveBeenCalledOnce();
+    const titles = r.items.map(i => i.memory.title);
+    expect(titles).toContain('Close');
+    expect(titles).not.toContain('Far');
     db.close();
   });
 });

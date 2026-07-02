@@ -27,6 +27,13 @@ export interface NexusConfig {
         dedup_cosine_threshold: number;
         export_dir: string;
     };
+    reranker: {
+        enabled: boolean;
+        endpoint: string;
+        script_path: string;
+        threshold: number;
+        timeout_ms: number;
+    };
 }
 /**
  * Load extraction_models.yaml from the repo root. Cached after first read.

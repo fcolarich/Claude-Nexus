@@ -16,3 +16,4 @@
 | [ADR-009](decisions/adr-009-prompt-driven-semantic-recall-via-userpromptsubmit.md) | Prompt-driven semantic recall via UserPromptSubmit | 2026-06-30 | accepted |
 | [ADR-010](decisions/adr-010-remove-the-nexus-task-subsystem.md) | Remove the Nexus task subsystem | 2026-07-02 | accepted |
 | [ADR-011](decisions/adr-011-nexus-remember-batch-as-a-separate-mcp-tool-for-bu.md) | nexus_remember_batch as a separate MCP tool for bulk memory writes | 2026-07-02 | accepted |
+| [ADR-012](decisions/adr-012-wire-local-reranker-cross-encoder-into-recallbyque.md) | Wire local-reranker cross-encoder into recallByQuery's prompt-driven recall | 2026-07-03 | accepted |

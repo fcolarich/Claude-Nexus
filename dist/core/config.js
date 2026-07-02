@@ -52,6 +52,13 @@ const DEFAULTS = {
         dedup_cosine_threshold: 0.86,
         export_dir: join(homedir(), '.claude', 'memories', 'exports'),
     },
+    reranker: {
+        enabled: false,
+        endpoint: 'http://127.0.0.1:8931/rerank',
+        script_path: 'C:/Fran/Cloned Repos/local-reranker-mcp/server.py',
+        threshold: 0.2,
+        timeout_ms: 10000,
+    },
 };
 let cached = null;
 /**
@@ -77,6 +84,7 @@ export function getNexusConfig() {
         extraction: { ...DEFAULTS.extraction, ...loaded.extraction },
         recall: { ...DEFAULTS.recall, ...loaded.recall },
         capture: { ...DEFAULTS.capture, ...loaded.capture },
+        reranker: { ...DEFAULTS.reranker, ...loaded.reranker },
     };
     cached.capture.export_dir = expandHome(cached.capture.export_dir);
     return cached;

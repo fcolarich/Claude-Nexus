@@ -19,6 +19,7 @@ Maintained via the `update-file-map` skill.
 | `src/core/database.ts` | SQLite init, migrations, schema_version management |
 | `src/core/recall.ts` | Memory retrieval — bulk decay-ranked recall (recallMemories, for MCP/web) + prompt-driven semantic recall (recallByQuery) |
 | `src/core/embeddings.ts` | Embedding generation via Ollama mxbai-embed-large |
+| `src/core/reranker.ts` | Cross-encoder reranking client for the local-reranker HTTP daemon (jina-reranker-v2-base-multilingual); wired into recallByQuery's KNN floor (ADR-012) |
 | `src/core/config.ts` | Reads extraction_models.yaml; provides runtime config with sane defaults |
 | `src/capture/reflector.ts` | Background capture pipeline — reads new transcript lines, calls Haiku, dedup-merges memories |
 | `src/capture/extract.ts` | Haiku-based memory extraction from transcript windows |

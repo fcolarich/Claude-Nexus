@@ -12,6 +12,7 @@ import { getNexusConfig } from './config.js';
 import { sanitizeFts5Query } from './search.js';
 import { effectiveConfidence } from './decay.js';
 import { generateEmbedding } from './embeddings.js';
+import { rerank as rerankDocuments } from './reranker.js';
 import { normalize } from './memories.js';
 import type { Memory } from './types.js';
 
@@ -153,10 +154,19 @@ export function recallMemories(
  * (per-session dedup), and return the top `limit`. Falls back to FTS5 only when
  * no embedding is available or the corpus has no vectors — never bypasses the
  * floor on an embedded corpus.
+ *
+ * When the local cross-encoder reranker is available, KNN candidates are
+ * reranked against the query and floored on rerank score instead of cosine
+ * similarity — a cross-encoder catches conceptually-relevant matches cosine
+ * misses, and drops near-duplicates cosine over-ranks. If the reranker is
+ * disabled or unreachable, this falls back to the cosine-floor path unchanged.
  */
 export async function recallByQuery(
   db: Database.Database,
-  opts: { project?: string | null; query: string; limit?: number; minSimilarity?: number; excludeIds?: string[] }
+  opts: {
+    project?: string | null; query: string; limit?: number; minSimilarity?: number;
+    excludeIds?: string[]; rerankFn?: typeof rerankDocuments;
+  }
 ): Promise<RecallResult> {
   const empty: RecallResult = { items: [], markdown: '', tokenEstimate: 0, total: 0 };
 
@@ -166,12 +176,15 @@ export async function recallByQuery(
   if (!memoriesExist) return empty;
 
   const cfg = getNexusConfig().recall;
+  const rerankerCfg = getNexusConfig().reranker;
   const limit = opts.limit ?? 5;
   const minSimilarity = opts.minSimilarity ?? cfg.min_similarity;
   const project = opts.project ?? '';
   const exclude = new Set(opts.excludeIds ?? []);
   const scopeClause = `(m.scope IN ('global','shared') OR (m.scope='project' AND m.project = @project))`;
+  const doRerank = opts.rerankFn ?? rerankDocuments;
 
+  const candidates: { m: Memory; sim: number }[] = []; // pre-floor, in-scope, not excluded
   const scored: { m: Memory; score: number }[] = [];
   let vecEligible = 0; // in-scope approved candidates the vector index produced (pre-floor)
 
@@ -205,7 +218,23 @@ export async function recallByQuery(
       if (exclude.has(m.id)) continue;
       // Stored vectors are unit-normalized: cosine similarity = 1 - d^2/2
       const sim = Math.max(0, Math.min(1, 1 - (r.distance * r.distance) / 2));
-      if (sim < minSimilarity) continue; // relevance floor
+      candidates.push({ m, sim });
+    }
+  }
+
+  // Rerank pass: cross-encoder floor replaces the cosine floor when available.
+  let reranked: { index: number; score: number }[] | null = null;
+  if (candidates.length >= 2 && rerankerCfg.enabled) {
+    reranked = await doRerank(opts.query, candidates.map(c => c.m.body), rerankerCfg.threshold);
+  }
+
+  if (reranked) {
+    // Endpoint already sorts descending and floors by threshold — map straight through.
+    for (const r of reranked) scored.push({ m: candidates[r.index].m, score: r.score });
+  } else {
+    // Fallback: cosine floor, unchanged from the pre-reranker behavior.
+    for (const { m, sim } of candidates) {
+      if (sim < minSimilarity) continue;
       scored.push({ m, score: sim });
     }
   }

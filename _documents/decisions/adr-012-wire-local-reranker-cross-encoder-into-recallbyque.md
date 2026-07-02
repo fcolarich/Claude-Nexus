@@ -1,0 +1,15 @@
+---
+id: ADR-012
+title: Wire local-reranker cross-encoder into recallByQuery's prompt-driven recall
+type: adr
+date: 2026-07-03
+status: accepted
+supersedes: null
+tags: ["reranker", "recall", "rag", "cross-encoder"]
+---
+
+**Decision:** Wire the existing local-reranker HTTP daemon (originally bge-reranker-v2-m3, switched to jina-reranker-v2-base-multilingual after fastembed dropped the former from its TextCrossEncoder registry) into recallByQuery's KNN candidate ranking in src/core/recall.ts. New src/core/reranker.ts client mirrors embeddings.ts's contract exactly: rerank(query, documents, threshold) returns scored results or null on any failure, and ensureRerankerRunning() auto-spawns the daemon (python server.py --http) on first use if it is not already responding to a health check. In recallByQuery, KNN candidates are collected pre-floor, reranked, and floored on rerank score instead of cosine similarity when the reranker is enabled and at least 2 candidates exist; any reranker failure (disabled, daemon down, timeout, bad response) falls back to the original cosine-floor path completely unchanged, so recall never regresses below pre-reranker behavior. The reranker daemon itself was fixed to sigmoid-normalize its cross-encoder scores before applying the threshold, since raw logits from the new model are unbounded and mostly negative, which would otherwise floor out every result silently. The same daemon is now also wired into a forked claude-context MCP server's search_code/search_unity_knowledge handler (separate repo, same HTTP endpoint, not committed here).
+
+**Alternatives:** (1) Leave the reranker unwired: it was built independently in a May 2026 sprint but investigation confirmed it was never connected to any retrieval pipeline in this codebase -- recall.ts has always been cosine-only. (2) Rely on the original hook-nudge pattern, where a PostToolUse hook reminded the agent to manually call a separate rerank MCP tool after nexus_search/search_code returned 3+ results -- rejected because that hook was silently removed from settings.json at some point with no replacement, so an externally-invoked rerank tool can never reliably auto-invoke; wiring reranking directly into the retrieval pipeline itself removes the dependency on agent behavior entirely. (3) Keep cosine-only ranking permanently -- rejected because a cross-encoder catches conceptually-relevant matches with no keyword/embedding overlap that cosine similarity misses, and demotes near-duplicate phrasing that cosine over-ranks.
+
+**Reason:** Nexus's own Phase 2 Gaps Spec (docs/Claude Nexus - Phase 2 Gaps Spec.md) listed a cross-encoder rerank pass as an unbuilt, low-priority optional item for Gap 1, without realizing a working local-reranker MCP already existed from an earlier sprint -- the two efforts had drifted apart. Wiring the existing daemon directly into recallByQuery closes that gap and delivers the originally-intended ~40% RAG context reduction for the UserPromptSubmit hot path, which is the retrieval path most sensitive to injected-context bloat.

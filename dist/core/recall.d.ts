@@ -7,6 +7,7 @@
  * network — so it is cheap enough for the SessionStart hot path.
  */
 import Database from 'better-sqlite3';
+import { rerank as rerankDocuments } from './reranker.js';
 import type { Memory } from './types.js';
 export interface RecalledItem {
     memory: Memory;
@@ -35,6 +36,12 @@ export declare function recallMemories(db: Database.Database, opts: {
  * (per-session dedup), and return the top `limit`. Falls back to FTS5 only when
  * no embedding is available or the corpus has no vectors — never bypasses the
  * floor on an embedded corpus.
+ *
+ * When the local cross-encoder reranker is available, KNN candidates are
+ * reranked against the query and floored on rerank score instead of cosine
+ * similarity — a cross-encoder catches conceptually-relevant matches cosine
+ * misses, and drops near-duplicates cosine over-ranks. If the reranker is
+ * disabled or unreachable, this falls back to the cosine-floor path unchanged.
  */
 export declare function recallByQuery(db: Database.Database, opts: {
     project?: string | null;
@@ -42,5 +49,6 @@ export declare function recallByQuery(db: Database.Database, opts: {
     limit?: number;
     minSimilarity?: number;
     excludeIds?: string[];
+    rerankFn?: typeof rerankDocuments;
 }): Promise<RecallResult>;
 //# sourceMappingURL=recall.d.ts.map
