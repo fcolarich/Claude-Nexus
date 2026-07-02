@@ -1,20 +1,18 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { writeFile, readFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { writeFile, readFile } from 'fs/promises';
 import { join } from 'path';
-import { homedir } from 'os';
 import { createHash } from 'crypto';
 import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
-import { runFullIndex, reindexFile, cwdToProjectSlug } from '../indexer/indexer.js';
+import { runFullIndex, cwdToProjectSlug } from '../indexer/indexer.js';
 import { buildBm25Corpus, rrfMerge } from '../core/links.js';
 import type { RankedResult } from '../core/links.js';
 import { generateEmbedding } from '../core/embeddings.js';
 import type { CrossRefResult, LinkType } from '../core/types.js';
 import { computeAtomId, computeHash } from '../indexer/parser.js';
-import type { Atom, TaskAtom, TaskStatus } from '../core/types.js';
+import type { Atom } from '../core/types.js';
 import {
   search,
   hybridSearch,
@@ -333,73 +331,23 @@ const MEMORY_TYPE_DECAY: Record<MemoryType, DecayClass> = {
 
 server.tool(
   'nexus_remember',
-  'Store knowledge in the memories store (or a task atom). For knowledge: writes to the memories table so it is searchable by nexus_search and recallable by nexus_recall. Use atom_type="task" for task atoms (stored in atoms table).',
+  'Store knowledge in the memories store — writes to the memories table so it is searchable by nexus_search and recallable by nexus_recall.',
   {
     title:       z.string().describe('Short title for the memory'),
     content:     z.string().describe('Body — 1–4 self-contained sentences with the durable lesson and its why'),
     scope:       z.enum(['global', 'shared', 'project']).describe('Scope: global (all projects), shared (related projects), project (current only)'),
     memory_type: z.enum(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference', 'handoff']).optional()
-      .describe('Memory type (knowledge store). Omit only when using atom_type=task.'),
-    atom_type:   z.enum(['memory', 'feedback', 'reference', 'project_note', 'architecture', 'task']).optional()
-      .describe('Legacy atom type — use memory_type instead for knowledge; atom_type=task still creates a task atom.'),
+      .describe('Memory type (knowledge store).'),
+    atom_type:   z.enum(['memory', 'feedback', 'reference', 'project_note', 'architecture']).optional()
+      .describe('Legacy atom type — use memory_type instead for knowledge.'),
     tags:        z.array(z.string()).optional().describe('Tags for searchability'),
     project:     z.string().optional().describe('Project slug (required for project scope). Prefer cwd.'),
     cwd:         z.string().optional().describe('Caller working directory — derives project slug automatically.'),
     confidence:  z.coerce.number().min(0).max(1).optional().describe('Intrinsic confidence 0–1 (default: 0.85)'),
     load_at_init: z.boolean().optional().default(false).describe('If true, always recalled at session start regardless of decay'),
-    // Task-specific fields
-    status:       z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('Task status (task atoms only, default: ready)'),
-    priority:     z.coerce.number().min(1).max(3).optional().describe('Task priority 1-3 (task atoms only, default: 2)'),
-    blocks:       z.array(z.string()).optional().describe('Atom IDs this task blocks (task atoms only)'),
-    blocked_by:   z.array(z.string()).optional().describe('Atom IDs blocking this task (task atoms only)'),
-    discovered_from: z.string().optional().describe('Atom ID of the task that discovered this one (task atoms only)'),
   },
-  async ({ title, content, scope, memory_type, atom_type, tags, project, cwd, confidence, load_at_init, status, priority, blocks, blocked_by, discovered_from }) => {
+  async ({ title, content, scope, memory_type, atom_type, tags, project, cwd, confidence, load_at_init }) => {
     const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
-    const isTask = atom_type === 'task';
-
-    // ── Task path (atoms table, file-based) ───────────────────────────
-    if (isTask) {
-      const claudeDir = join(homedir(), '.claude');
-      const targetDir = effectiveProject
-        ? join(claudeDir, 'projects', effectiveProject, 'memory')
-        : join(claudeDir, 'nexus-atoms');
-
-      if (!existsSync(targetDir)) await mkdir(targetDir, { recursive: true });
-
-      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-      let filename = `task_${slug}.md`;
-      let filePath = join(targetDir, filename);
-      let counter = 2;
-      while (existsSync(filePath)) {
-        filename = `task_${slug}_${counter}.md`;
-        filePath = join(targetDir, filename);
-        counter++;
-      }
-
-      const now = new Date().toISOString();
-      const frontmatterLines = [
-        '---',
-        `title: "${title}"`,
-        `atom_type: task`,
-        `status: ${status ?? 'ready'}`,
-        `priority: ${priority ?? 2}`,
-        effectiveProject ? `project: ${effectiveProject}` : null,
-        tags && tags.length > 0 ? `tags: [${tags.map(t => `"${t}"`).join(', ')}]` : `tags: []`,
-        `blocks: [${(blocks ?? []).map(b => `"${b}"`).join(', ')}]`,
-        `blocked_by: [${(blocked_by ?? []).map(b => `"${b}"`).join(', ')}]`,
-        `discovered_from: "${discovered_from ?? ''}"`,
-        `created_at: ${now}`,
-        `updated_at: ${now}`,
-        '---',
-      ].filter(Boolean).join('\n');
-
-      await writeFile(filePath, `${frontmatterLines}\n\n${content}`, 'utf-8');
-      reindexFile(db, filePath, effectiveProject ? 'memory_file' : 'nexus_native');
-
-      const row = db.prepare(`SELECT id FROM atoms WHERE source_path = ? LIMIT 1`).get(filePath) as { id: string } | undefined;
-      return { content: [{ type: 'text', text: `Task created: "${title}"\nID: ${row?.id ?? '(pending index)'}\nPath: ${filePath}` }] };
-    }
 
     // ── Knowledge path (memories table) ───────────────────────────────
     const resolvedMemType: MemoryType =
@@ -425,284 +373,6 @@ server.tool(
 
     const status_msg = inserted ? 'Memory stored' : 'Memory already exists (content-addressed dedup)';
     return { content: [{ type: 'text', text: `${status_msg}: "${title}"\nID: ${id}\nType: ${resolvedMemType} | Scope: ${scope} | Confidence: ${(confidence ?? 0.85) * 100}%` }] };
-  }
-);
-
-// ── nexus_tasks_create ───────────────────────────────────────────────
-
-server.tool(
-  'nexus_tasks_create',
-  'Create multiple task atoms in one call. Accepts an array of task definitions — same fields as nexus_remember with atom_type=task. Returns the ID and path of every created atom.',
-  {
-    tasks: z.array(z.object({
-      title: z.string().describe('Short title for the task'),
-      content: z.string().describe('Markdown body / description of the task'),
-      project: z.string().optional().describe('Project slug; omit to store in global nexus-atoms/'),
-      priority: z.coerce.number().min(1).max(3).optional().describe('Priority 1-3 (default 2)'),
-      tags: z.array(z.string()).optional().describe('Tags for searchability'),
-      status: z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('Initial status (default: ready)'),
-      blocks: z.array(z.string()).optional().describe('Atom IDs this task blocks'),
-      blocked_by: z.array(z.string()).optional().describe('Atom IDs that must be done before this task'),
-      discovered_from: z.string().optional().describe('Atom ID of the task that discovered this one'),
-    })).min(1).describe('Array of task definitions to create'),
-  },
-  async ({ tasks }) => {
-    const claudeDir = join(homedir(), '.claude');
-    const now = new Date().toISOString();
-    const created: Array<{ title: string; id: string; path: string }> = [];
-
-    for (const t of tasks) {
-      const targetDir = t.project
-        ? join(claudeDir, 'projects', t.project, 'memory')
-        : join(claudeDir, 'nexus-atoms');
-
-      if (!existsSync(targetDir)) {
-        await mkdir(targetDir, { recursive: true });
-      }
-
-      const slug = t.title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-      let filename = `task_${slug}.md`;
-      let filePath = join(targetDir, filename);
-      let counter = 2;
-      while (existsSync(filePath)) {
-        filename = `task_${slug}_${counter}.md`;
-        filePath = join(targetDir, filename);
-        counter++;
-      }
-
-      const frontmatterLines = [
-        '---',
-        `title: "${t.title}"`,
-        `atom_type: task`,
-        `status: ${t.status ?? 'ready'}`,
-        `priority: ${t.priority ?? 2}`,
-        t.project ? `project: ${t.project}` : null,
-        t.tags && t.tags.length > 0 ? `tags: [${t.tags.map(tag => `"${tag}"`).join(', ')}]` : `tags: []`,
-        `blocks: [${(t.blocks ?? []).map(b => `"${b}"`).join(', ')}]`,
-        `blocked_by: [${(t.blocked_by ?? []).map(b => `"${b}"`).join(', ')}]`,
-        `discovered_from: "${t.discovered_from ?? ''}"`,
-        `created_at: ${now}`,
-        `updated_at: ${now}`,
-        '---',
-      ].filter(Boolean).join('\n');
-
-      const fileContent = `${frontmatterLines}\n\n${t.content}`;
-      await writeFile(filePath, fileContent, 'utf-8');
-
-      reindexFile(db, filePath, t.project ? 'memory_file' : 'nexus_native');
-
-      const row = db.prepare(`SELECT id FROM atoms WHERE source_path = ? LIMIT 1`).get(filePath) as { id: string } | undefined;
-      created.push({ title: t.title, id: row?.id ?? '', path: filePath });
-    }
-
-    const summary = `Created ${created.length} task${created.length === 1 ? '' : 's'}:\n` +
-      created.map(c => `- "${c.title}" → ${c.id} (${c.path})`).join('\n');
-
-    return { content: [{ type: 'text', text: summary }] };
-  }
-);
-
-// ── Task helpers ────────────────────────────────────────────────────
-
-function resolveEffectiveStatus(
-  task: Atom,
-  allTasksById: Map<string, Atom>
-): TaskStatus {
-  // in_progress and done are terminal/active - don't override
-  if (task.status === 'done' || task.status === 'in_progress') {
-    return task.status as TaskStatus;
-  }
-
-  const blockedBy: string[] = JSON.parse(task.blocked_by || '[]');
-  for (const depId of blockedBy) {
-    const dep = allTasksById.get(depId);
-    if (!dep || dep.status !== 'done') return 'blocked';
-  }
-
-  return (task.status as TaskStatus) || 'ready';
-}
-
-function toTaskAtom(task: Atom, effectiveStatus: TaskStatus): TaskAtom {
-  return {
-    id: task.id,
-    title: task.title,
-    status: (task.status as TaskStatus) || 'ready',
-    effective_status: effectiveStatus,
-    priority: task.priority ?? 2,
-    project: task.project ?? '',
-    tags: JSON.parse(task.tags as unknown as string || '[]'),
-    blocks: JSON.parse(task.blocks || '[]'),
-    blocked_by: JSON.parse(task.blocked_by || '[]'),
-    discovered_from: task.discovered_from || '',
-    created_at: task.created_at,
-    summary: task.body.slice(0, 120),
-  };
-}
-
-// ── nexus_tasks ──────────────────────────────────────────────────────
-
-server.tool(
-  'nexus_tasks',
-  'List task atoms for the current project by default. Pass cwd or project to scope, or all_projects=true to see all. status="ready" resolves dependency chains.',
-  {
-    project:      z.string().optional().describe('Explicit project slug filter'),
-    cwd:          z.string().optional().describe('Caller working directory — used to derive project slug when project is omitted'),
-    all_projects: z.coerce.boolean().optional().describe('Set true to return tasks across all projects (default: false)'),
-    status:       z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('Filter by effective status'),
-    priority:     z.coerce.number().min(1).max(3).optional().describe('Filter by priority (1-3)'),
-    include_done: z.coerce.boolean().optional().describe('Include done tasks (default: false)'),
-  },
-  async ({ project, cwd, all_projects, status, priority, include_done }) => {
-    // Resolve effective project: explicit > cwd-derived > all (if opted in)
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
-
-    if (!effectiveProject && !all_projects) {
-      return { content: [{ type: 'text', text: JSON.stringify({ warning: 'No project context. Pass cwd, project, or all_projects: true.', tasks: [] }) }] };
-    }
-
-    // Phase 1: display candidates (filtered)
-    let sql = `SELECT * FROM atoms WHERE atom_type = 'task'`;
-    const params: unknown[] = [];
-    if (effectiveProject) { sql += ` AND project = ?`; params.push(effectiveProject); }
-    if (priority)         { sql += ` AND priority = ?`; params.push(priority); }
-    const rows = db.prepare(sql).all(...params) as Atom[];
-
-    // Phase 2: full task set for cross-project dependency resolution
-    const allRows = db.prepare(`SELECT * FROM atoms WHERE atom_type = 'task'`).all() as Atom[];
-    const allTasksById = new Map<string, Atom>(allRows.map(r => [r.id, r]));
-
-    const tasks = rows
-      .map(r => ({ task: r, eff: resolveEffectiveStatus(r, allTasksById) }))
-      .filter(({ task, eff }) => {
-        if (!include_done && (task.status === 'done' || eff === 'done')) return false;
-        if (status && eff !== status) return false;
-        return true;
-      })
-      .sort((a, b) => {
-        const pa = a.task.priority ?? 2;
-        const pb = b.task.priority ?? 2;
-        if (pa !== pb) return pa - pb;
-        return a.task.created_at.localeCompare(b.task.created_at);
-      })
-      .map(({ task, eff }) => toTaskAtom(task, eff));
-
-    if (tasks.length === 0) {
-      return { content: [{ type: 'text', text: JSON.stringify([]) }] };
-    }
-
-    return { content: [{ type: 'text', text: JSON.stringify(tasks, null, 2) }] };
-  }
-);
-
-// ── nexus_task_update ────────────────────────────────────────────────
-
-server.tool(
-  'nexus_task_update',
-  'Update a task: change status, edit blocked_by/blocks dependency lists, or file a discovered task.',
-  {
-    id:         z.string().describe('Atom ID of the task to update'),
-    status:     z.enum(['ready', 'in_progress', 'blocked', 'done']).optional().describe('New status'),
-    blocked_by: z.array(z.string()).optional().describe('Replace blocked_by list with these atom IDs'),
-    blocks:     z.array(z.string()).optional().describe('Replace blocks list with these atom IDs'),
-    discovered: z.string().optional().describe('Title of a new task discovered while working on this one'),
-  },
-  async ({ id, status, blocked_by, blocks, discovered }) => {
-    if (!status && !blocked_by && !blocks && !discovered) {
-      return { content: [{ type: 'text', text: 'Error: provide at least one of status, blocked_by, blocks, or discovered' }] };
-    }
-
-    const task = db.prepare(`SELECT * FROM atoms WHERE id = ? AND atom_type = 'task'`).get(id) as Atom | undefined;
-    if (!task) {
-      return { content: [{ type: 'text', text: `Error: task not found with id ${id}` }] };
-    }
-
-    const now = new Date().toISOString();
-
-    // Read and parse the file
-    const fileContent = await readFile(task.source_path, 'utf-8');
-    const parsed = matter(fileContent);
-
-    // Update only the fields that were provided
-    if (status)     { parsed.data.status = status; }
-    if (blocked_by) { parsed.data.blocked_by = blocked_by; }
-    if (blocks)     { parsed.data.blocks = blocks; }
-    parsed.data.updated_at = now;
-
-    // Serialize back
-    const newContent = matter.stringify(parsed.content, parsed.data);
-    await writeFile(task.source_path, newContent, 'utf-8');
-
-    // Update DB directly so changes are immediately visible.
-    // reindexFile alone is insufficient because the unchanged-hash check skips
-    // upserts when only frontmatter changed.
-    const sets: string[] = ['updated_at = ?'];
-    const dbParams: unknown[] = [now];
-    if (status)     { sets.unshift('status = ?');  dbParams.unshift(status); }
-    if (blocked_by) { sets.push('blocked_by = ?'); dbParams.push(JSON.stringify(blocked_by)); }
-    if (blocks)     { sets.push('blocks = ?');     dbParams.push(JSON.stringify(blocks)); }
-    dbParams.push(id);
-    db.prepare(`UPDATE atoms SET ${sets.join(', ')} WHERE id = ?`).run(...dbParams);
-
-    // Full re-index to update content_hash so the next periodic scan is accurate
-    reindexFile(db, task.source_path, task.source_type as any);
-
-    // Fetch updated task
-    const updated = db.prepare(`SELECT * FROM atoms WHERE id = ?`).get(id) as Atom;
-    const allTasks = db.prepare(`SELECT * FROM atoms WHERE atom_type = 'task'`).all() as Atom[];
-    const allTasksById = new Map<string, Atom>(allTasks.map(r => [r.id, r]));
-    const updatedAtom = toTaskAtom(updated, resolveEffectiveStatus(updated, allTasksById));
-
-    // Optionally create a discovered task
-    let discoveredId: string | undefined;
-    if (discovered) {
-      const claudeDir = join(homedir(), '.claude');
-      const targetDir = task.project
-        ? join(claudeDir, 'projects', task.project, 'memory')
-        : join(claudeDir, 'nexus-atoms');
-
-      if (!existsSync(targetDir)) {
-        await mkdir(targetDir, { recursive: true });
-      }
-
-      const slug = discovered.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-      let filename = `task_${slug}.md`;
-      let filePath = join(targetDir, filename);
-      let counter = 2;
-      while (existsSync(filePath)) {
-        filename = `task_${slug}_${counter}.md`;
-        filePath = join(targetDir, filename);
-        counter++;
-      }
-
-      const discoveredContent = [
-        '---',
-        `title: "${discovered}"`,
-        `atom_type: task`,
-        `status: ready`,
-        `priority: 2`,
-        task.project ? `project: ${task.project}` : null,
-        `tags: []`,
-        `blocks: []`,
-        `blocked_by: []`,
-        `discovered_from: "${id}"`,
-        `created_at: ${now}`,
-        `updated_at: ${now}`,
-        '---',
-        '',
-        `Discovered while working on: ${task.title}`,
-      ].filter(Boolean).join('\n');
-
-      await writeFile(filePath, discoveredContent, 'utf-8');
-      reindexFile(db, filePath, task.source_type as any);
-
-      const newTask = db.prepare(`SELECT id FROM atoms WHERE source_path = ? LIMIT 1`).get(filePath) as { id: string } | undefined;
-      discoveredId = newTask?.id;
-    }
-
-    const result: Record<string, unknown> = { updated: updatedAtom };
-    if (discoveredId) result.discovered_task_id = discoveredId;
-
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   }
 );
 
