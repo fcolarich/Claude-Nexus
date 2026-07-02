@@ -100,6 +100,7 @@ new transcript lines, and trivial windows skip the LLM call entirely.
 | `nexus_context` | Smart fetch: multiple topics merged into one response |
 | `nexus_project` | All knowledge atoms for a project |
 | `nexus_remember` | Store a memory manually |
+| `nexus_remember_batch` | Store many memories in one call — batch write for bulk pointer emission |
 | `nexus_verify` | Reconfirm a memory — reset its decay clock |
 | `nexus_feedback` | Record whether a recalled memory helped |
 | `nexus_consolidate` | Cleanup sweep: backfill embeddings, merge duplicates, prune rejected |
@@ -125,7 +126,7 @@ new transcript lines, and trivial windows skip the LLM call entirely.
 | **Capture** | `src/capture/` — transcript condenser, Haiku extractor, Reflector, markdown export. |
 | **Recall** | `src/core/recall.ts` — decay-ranked, token-budgeted retrieval. |
 | **Lifecycle** | `src/core/decay.ts` + `consolidate.ts` — age decay, stale flagging, dedup sweep. |
-| **MCP server** | `src/mcp/server.ts` — stdio transport, 17 tools. |
+| **MCP server** | `src/mcp/server.ts` — stdio transport, 18 tools. |
 | **Web API** | Express on port 3210 (`src/web/server.ts`). |
 | **Dashboard** | Svelte 5 SPA — Memories, Review, Sessions, Search, Plans, Agents, Skills. Browser-based. |
 | **CLI** | `src/cli/` — index, search, inspect from the terminal. |

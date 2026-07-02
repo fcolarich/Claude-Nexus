@@ -62,7 +62,7 @@ Or run `/update-project-docs` after a change and let the doc-sync agent route it
 
 | File | Role |
 |------|------|
-| `src/mcp/server.ts` | MCP server — 17 tools exposed over stdio transport |
+| `src/mcp/server.ts` | MCP server — 18 tools exposed over stdio transport |
 | `src/web/server.ts` | Express REST API server, port 3210; serves built dashboard from dist-frontend/ |
 | `src/cli/index.ts` | CLI entry point — index, search, inspect from terminal |
 | `hooks/hooks.json` | Claude Code hook manifest — wires UserPromptSubmit (recall) and Stop/PreCompact/SessionEnd (capture) |
