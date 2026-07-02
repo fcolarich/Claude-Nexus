@@ -37,8 +37,8 @@ function prepareStatements(db: Database.Database): PreparedStatements {
       `SELECT id, content_hash FROM atoms WHERE source_path = ? AND id = ?`
     ),
     upsertAtom: db.prepare(`
-      INSERT INTO atoms (id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, updated_at, status, priority, blocks, blocked_by, discovered_from, load_at_init)
-      VALUES (@id, @title, @body, @atom_type, @scope, @source_path, @source_type, @project, @tags, @content_hash, @frontmatter, datetime('now'), @status, @priority, @blocks, @blocked_by, @discovered_from, @load_at_init)
+      INSERT INTO atoms (id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, updated_at, load_at_init)
+      VALUES (@id, @title, @body, @atom_type, @scope, @source_path, @source_type, @project, @tags, @content_hash, @frontmatter, datetime('now'), @load_at_init)
       ON CONFLICT(id) DO UPDATE SET
         title = @title,
         body = @body,
@@ -48,11 +48,6 @@ function prepareStatements(db: Database.Database): PreparedStatements {
         content_hash = @content_hash,
         frontmatter = @frontmatter,
         updated_at = datetime('now'),
-        status = @status,
-        priority = @priority,
-        blocks = @blocks,
-        blocked_by = @blocked_by,
-        discovered_from = @discovered_from,
         load_at_init = @load_at_init
     `),
     deleteAtomsBySource: db.prepare(
@@ -136,11 +131,6 @@ export function indexFile(
       tags: JSON.stringify(atom.tags),
       content_hash: atom.content_hash,
       frontmatter: atom.frontmatter ? JSON.stringify(atom.frontmatter) : null,
-      status: atom.status ?? null,
-      priority: atom.priority ?? null,
-      blocks: atom.blocks ?? null,
-      blocked_by: atom.blocked_by ?? null,
-      discovered_from: atom.discovered_from ?? null,
       load_at_init: atom.load_at_init ? 1 : 0,
     });
 
