@@ -66,6 +66,31 @@ export function insertMemory(db, input) {
     });
     return { id, inserted: res.changes > 0 };
 }
+/**
+ * Batch-insert memories in ONE transaction (single fsync) with per-item
+ * try/catch — a throwing item is recorded as status:'error' and does NOT abort
+ * the rest. Embedding runs best-effort AFTER commit (outside the transaction).
+ * `embed` is injectable for tests; defaults to embedMemory against this db.
+ */
+export async function rememberBatch(db, items, embed = (id) => embedMemory(db, id)) {
+    const results = new Array(items.length);
+    db.transaction(() => {
+        items.forEach((input, index) => {
+            try {
+                const { id, inserted } = insertMemory(db, input);
+                results[index] = { index, id, status: inserted ? 'written' : 'duplicate' };
+            }
+            catch (err) {
+                results[index] = { index, status: 'error', reason: err instanceof Error ? err.message : String(err) };
+            }
+        });
+    })();
+    // Best-effort embed for every newly-written id, after the txn commits.
+    await Promise.all(results
+        .filter((r) => r.status === 'written' && r.id)
+        .map((r) => embed(r.id).catch(() => false)));
+    return { results };
+}
 export function getMemory(db, id) {
     const row = db.prepare(`SELECT * FROM memories WHERE id = ?`).get(id);
     return row ? rowToMemory(row) : undefined;

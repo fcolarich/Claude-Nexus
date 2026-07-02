@@ -33,6 +33,24 @@ export declare function insertMemory(db: Database.Database, input: MemoryInput):
     id: string;
     inserted: boolean;
 };
+/** One fully-resolved item for a batch write (defaults already merged by the caller). */
+export type BatchMemoryItem = MemoryInput;
+/** Per-item outcome of a batch write. */
+export interface BatchResult {
+    index: number;
+    id?: string;
+    status: 'written' | 'duplicate' | 'error';
+    reason?: string;
+}
+/**
+ * Batch-insert memories in ONE transaction (single fsync) with per-item
+ * try/catch — a throwing item is recorded as status:'error' and does NOT abort
+ * the rest. Embedding runs best-effort AFTER commit (outside the transaction).
+ * `embed` is injectable for tests; defaults to embedMemory against this db.
+ */
+export declare function rememberBatch(db: Database.Database, items: BatchMemoryItem[], embed?: (id: string) => Promise<boolean>): Promise<{
+    results: BatchResult[];
+}>;
 export declare function getMemory(db: Database.Database, id: string): Memory | undefined;
 export declare function listMemories(db: Database.Database, opts?: {
     review_status?: ReviewStatus;
