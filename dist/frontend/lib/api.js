@@ -88,20 +88,5 @@ export const api = {
     deleteAtom: (id) => del(`/api/atoms/${encodeURIComponent(id)}`),
     deleteProject: (name) => del(`/api/projects/${encodeURIComponent(name)}`),
     createMemory: (data) => post("/api/atoms/create-memory", data),
-    tasks: (params) => {
-        const q = new URLSearchParams();
-        if (params?.project)
-            q.set('project', params.project);
-        if (params?.status)
-            q.set('status', params.status);
-        if (params?.priority != null)
-            q.set('priority', String(params.priority));
-        if (params?.include_done)
-            q.set('include_done', 'true');
-        const qs = q.toString();
-        return get(`/api/tasks${qs ? `?${qs}` : ''}`);
-    },
-    updateTask: (id, status) => patch(`/api/tasks/${encodeURIComponent(id)}`, { status }),
-    createTask: (data) => post('/api/tasks', data),
 };
 //# sourceMappingURL=api.js.map

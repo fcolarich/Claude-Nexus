@@ -135,30 +135,6 @@ export interface CreateMemoryParams {
     sourceSessionId?: string;
     sourceSessionSlug?: string;
 }
-export type TaskStatus = 'ready' | 'in_progress' | 'blocked' | 'done';
-export interface TaskItem {
-    id: string;
-    title: string;
-    status: TaskStatus;
-    effective_status: TaskStatus;
-    priority: number;
-    project: string;
-    tags: string[];
-    blocks: string[];
-    blocked_by: string[];
-    discovered_from: string;
-    created_at: string;
-    summary: string;
-}
-export interface CreateTaskParams {
-    title: string;
-    body: string;
-    project?: string;
-    priority?: number;
-    tags?: string[];
-    blocked_by?: string[];
-    blocks?: string[];
-}
 export declare const api: {
     dashboard: () => Promise<DashboardData>;
     sessions: (project?: string) => Promise<SessionInfo[]>;
@@ -227,13 +203,5 @@ export declare const api: {
         success: boolean;
         path: string;
     }>;
-    tasks: (params?: {
-        project?: string;
-        status?: string;
-        priority?: number;
-        include_done?: boolean;
-    }) => Promise<TaskItem[]>;
-    updateTask: (id: string, status: TaskStatus) => Promise<TaskItem>;
-    createTask: (data: CreateTaskParams) => Promise<TaskItem>;
 };
 //# sourceMappingURL=api.d.ts.map
