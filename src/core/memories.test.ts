@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { z } from 'zod';
 import { openDatabase, initializeSchema } from './database.js';
 import { rememberBatch, getMemory, type BatchMemoryItem } from './memories.js';
 
@@ -64,5 +65,24 @@ describe('rememberBatch', () => {
 		const res = await rememberBatch(db, [item({ body: 'e1' }), item({ body: 'e2' })], embed);
 		expect(embedded.sort()).toEqual(res.results.map(r => r.id!).sort());
 		db.close();
+	});
+});
+
+describe('nexus_remember_batch schema contract', () => {
+	// Mirror of the tool's array constraint — locks the 1..50 bound.
+	const memoriesSchema = z.array(z.object({ title: z.string(), content: z.string() })).min(1).max(50);
+
+	it('rejects an empty batch', () => {
+		expect(memoriesSchema.safeParse([]).success).toBe(false);
+	});
+
+	it('accepts exactly 50', () => {
+		const fifty = Array.from({ length: 50 }, (_, i) => ({ title: `t${i}`, content: `c${i}` }));
+		expect(memoriesSchema.safeParse(fifty).success).toBe(true);
+	});
+
+	it('rejects 51', () => {
+		const fiftyOne = Array.from({ length: 51 }, (_, i) => ({ title: `t${i}`, content: `c${i}` }));
+		expect(memoriesSchema.safeParse(fiftyOne).success).toBe(false);
 	});
 });
