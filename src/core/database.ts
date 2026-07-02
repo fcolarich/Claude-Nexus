@@ -311,7 +311,7 @@ function migrateRemoveTaskSupport(db: Database.Database): void {
         scope         TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('global', 'shared', 'project')),
         source_path   TEXT NOT NULL,
         source_type   TEXT NOT NULL CHECK(source_type IN (
-          'memory_file', 'agent_def', 'skill_def', 'plan_file', 'nexus_native'
+          'memory_file', 'agent_def', 'skill_def', 'plan_file', 'nexus_native', 'project_doc'
         )),
         project       TEXT,
         tags          TEXT NOT NULL DEFAULT '[]',
@@ -319,13 +319,14 @@ function migrateRemoveTaskSupport(db: Database.Database): void {
         frontmatter   TEXT,
         created_at    TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        linked_at     TEXT,
         load_at_init  INTEGER NOT NULL DEFAULT 0
       )`);
 
       // Copy every non-task atom; task rows are purged by exclusion.
       db.exec(`INSERT INTO atoms_new
-        (id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at, load_at_init)
-        SELECT id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at, load_at_init
+        (id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at, linked_at, load_at_init)
+        SELECT id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at, linked_at, load_at_init
         FROM atoms WHERE atom_type != 'task'`);
 
       db.exec(`DROP TRIGGER IF EXISTS atoms_ai`);
@@ -365,6 +366,7 @@ function migrateRemoveTaskSupport(db: Database.Database): void {
       db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_scope ON atoms(scope)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_source ON atoms(source_path)`);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_hash ON atoms(content_hash)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_linked ON atoms(linked_at)`);
     })();
   } finally {
     db.pragma('foreign_keys = ON');
