@@ -42,7 +42,7 @@ initializeSchema(db);
 // connect timeout, so the `initialize` handshake never lands and the client reports
 // "Failed to connect". It also contends the DB write lock (SQLITE_BUSY).
 // Indexing is owned by the web/api server (src/web/server.ts: startup + periodic + watcher).
-// This server keeps its own writes fresh via reindexFile, and exposes an on-demand
+// This server writes memories directly via insertMemory, and exposes an on-demand
 // full-index tool for manual refresh.
 
 
