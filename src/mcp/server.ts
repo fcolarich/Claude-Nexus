@@ -27,7 +27,7 @@ import {
   listAtoms,
 } from '../core/search.js';
 import { recallMemories } from '../core/recall.js';
-import { verifyMemory, recordFeedback, insertMemory, embedMemory } from '../core/memories.js';
+import { verifyMemory, recordFeedback, insertMemory, embedMemory, rememberBatch } from '../core/memories.js';
 import type { MemoryType, DecayClass } from '../core/types.js';
 import { consolidateMemories } from '../core/consolidate.js';
 import { distillMemories } from '../core/distill.js';
@@ -373,6 +373,69 @@ server.tool(
 
     const status_msg = inserted ? 'Memory stored' : 'Memory already exists (content-addressed dedup)';
     return { content: [{ type: 'text', text: `${status_msg}: "${title}"\nID: ${id}\nType: ${resolvedMemType} | Scope: ${scope} | Confidence: ${(confidence ?? 0.85) * 100}%` }] };
+  }
+);
+
+// ── nexus_remember_batch ─────────────────────────────────────────────
+
+server.tool(
+  'nexus_remember_batch',
+  'Store MANY memories in ONE call — batch equivalent of nexus_remember for bulk pointer emission (e.g. a set of recipe/best-practice pointers). Each item may set its own fields; top-level fields act as defaults when an item omits them (effective = item ?? default ?? builtin). Best-effort: a failed item is reported, not fatal — the on-disk doc file is authoritative.',
+  {
+    memories: z.array(z.object({
+      title:        z.string().describe('Short title for the memory'),
+      content:      z.string().describe('Body — 1–4 self-contained sentences with the durable lesson and its why'),
+      scope:        z.enum(['global', 'shared', 'project']).optional().describe('Overrides the top-level scope default for this item'),
+      memory_type:  z.enum(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference', 'handoff']).optional().describe('Overrides the top-level memory_type default'),
+      tags:         z.array(z.string()).optional().describe('Tags — overrides the top-level tags default'),
+      confidence:   z.coerce.number().min(0).max(1).optional().describe('Intrinsic confidence 0–1 — overrides the top-level default'),
+      load_at_init: z.boolean().optional().describe('Overrides the top-level load_at_init default'),
+      project:      z.string().optional().describe('Project slug — overrides the top-level/cwd-derived project for this item'),
+    })).min(1).max(50).describe('1–50 memories to write in one transaction'),
+    // Top-level defaults applied to any item that omits the field.
+    scope:        z.enum(['global', 'shared', 'project']).optional().describe('Default scope for all items (default: project)'),
+    memory_type:  z.enum(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference', 'handoff']).optional().describe('Default memory_type for all items (default: insight)'),
+    tags:         z.array(z.string()).optional().describe('Default tags for all items'),
+    confidence:   z.coerce.number().min(0).max(1).optional().describe('Default confidence for all items (default: 0.85)'),
+    load_at_init: z.boolean().optional().describe('Default load_at_init for all items (default: false)'),
+    project:      z.string().optional().describe('Default project slug (prefer cwd)'),
+    cwd:          z.string().optional().describe('Caller working directory — derives the default project slug automatically'),
+  },
+  async ({ memories, scope, memory_type, tags, confidence, load_at_init, project, cwd }) => {
+    const defaultProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+
+    const items = memories.map((m) => {
+      const resolvedMemType: MemoryType = m.memory_type ?? memory_type ?? 'insight';
+      const effProject = m.project ?? defaultProject ?? null;
+      return {
+        title: m.title,
+        body: m.content,
+        memory_type: resolvedMemType,
+        scope: (m.scope ?? scope ?? 'project'),
+        project: effProject,
+        confidence: m.confidence ?? confidence ?? 0.85,
+        decay_class: MEMORY_TYPE_DECAY[resolvedMemType],
+        review_status: 'approved' as const,
+        source_session_id: null,
+        discovered_from: null,
+        tags: m.tags ?? tags ?? [],
+        load_at_init: m.load_at_init ?? load_at_init ?? false,
+      };
+    });
+
+    const { results } = await rememberBatch(db, items);
+
+    const written = results.filter(r => r.status === 'written').length;
+    const duplicates = results.filter(r => r.status === 'duplicate').length;
+    const errors = results.filter(r => r.status === 'error').length;
+
+    const lines = results.map((r) => {
+      const label = memories[r.index].title;
+      if (r.status === 'error') return `  [${r.index}] ERROR: ${label} — ${r.reason}`;
+      return `  [${r.index}] ${r.status}: ${label} (${r.id})`;
+    });
+
+    return { content: [{ type: 'text', text: `Batch: ${written} written, ${duplicates} duplicates, ${errors} errors\n${lines.join('\n')}` }] };
   }
 );
 
