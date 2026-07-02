@@ -190,33 +190,6 @@ export interface CreateMemoryParams {
   sourceSessionSlug?: string;
 }
 
-export type TaskStatus = 'ready' | 'in_progress' | 'blocked' | 'done';
-
-export interface TaskItem {
-  id: string;
-  title: string;
-  status: TaskStatus;
-  effective_status: TaskStatus;
-  priority: number;
-  project: string;
-  tags: string[];
-  blocks: string[];
-  blocked_by: string[];
-  discovered_from: string;
-  created_at: string;
-  summary: string;
-}
-
-export interface CreateTaskParams {
-  title: string;
-  body: string;
-  project?: string;
-  priority?: number;
-  tags?: string[];
-  blocked_by?: string[];
-  blocks?: string[];
-}
-
 export const api = {
   dashboard: () => get<DashboardData>("/api/dashboard"),
   sessions: async (project?: string): Promise<SessionInfo[]> => {
@@ -267,17 +240,4 @@ export const api = {
   deleteAtom: (id: string) => del<{ success: boolean }>(`/api/atoms/${encodeURIComponent(id)}`),
   deleteProject: (name: string) => del<{ success: boolean }>(`/api/projects/${encodeURIComponent(name)}`),
   createMemory: (data: CreateMemoryParams) => post<{ success: boolean; path: string }>("/api/atoms/create-memory", data as unknown as Record<string, unknown>),
-  tasks: (params?: { project?: string; status?: string; priority?: number; include_done?: boolean }) => {
-    const q = new URLSearchParams();
-    if (params?.project) q.set('project', params.project);
-    if (params?.status) q.set('status', params.status);
-    if (params?.priority != null) q.set('priority', String(params.priority));
-    if (params?.include_done) q.set('include_done', 'true');
-    const qs = q.toString();
-    return get<TaskItem[]>(`/api/tasks${qs ? `?${qs}` : ''}`);
-  },
-  updateTask: (id: string, status: TaskStatus) =>
-    patch<TaskItem>(`/api/tasks/${encodeURIComponent(id)}`, { status }),
-  createTask: (data: CreateTaskParams) =>
-    post<TaskItem>('/api/tasks', data as unknown as Record<string, unknown>),
 };

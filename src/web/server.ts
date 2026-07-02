@@ -4,7 +4,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'fs';
 import os from 'os';
-import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import {
   search,
@@ -25,7 +24,7 @@ import { getNexusConfig } from '../core/config.js';
 import { verifyMemory, recordFeedback, embedMemory } from '../core/memories.js';
 import { consolidateMemories } from '../core/consolidate.js';
 import { distillMemories } from '../core/distill.js';
-import type { Atom, AtomLink, Session, TaskAtom, TaskStatus } from '../core/types.js';
+import type { Atom, AtomLink, Session } from '../core/types.js';
 
 const PORT = parseInt(process.env.NEXUS_PORT ?? '3210', 10);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -295,149 +294,6 @@ app.get('/api/agents', (_req, res) => {
 app.get('/api/skills', (_req, res) => {
   const atoms = db.prepare(`SELECT * FROM atoms WHERE source_type = 'skill_def' ORDER BY title`).all() as Atom[];
   res.json(atoms.map(toAtomResponse));
-});
-
-// --- Tasks ---
-
-function resolveEffectiveStatus(task: Atom, allTasksById: Map<string, Atom>): TaskStatus {
-  if (task.status === 'done' || task.status === 'in_progress') return task.status as TaskStatus;
-  const blockedBy: string[] = JSON.parse(task.blocked_by || '[]');
-  for (const depId of blockedBy) {
-    const dep = allTasksById.get(depId);
-    if (!dep || dep.status !== 'done') return 'blocked';
-  }
-  return (task.status as TaskStatus) || 'ready';
-}
-
-function toTaskResponse(task: Atom, effectiveStatus: TaskStatus): TaskAtom {
-  return {
-    id: task.id,
-    title: task.title,
-    status: (task.status as TaskStatus) || 'ready',
-    effective_status: effectiveStatus,
-    priority: task.priority ?? 2,
-    project: task.project ?? '',
-    tags: JSON.parse(task.tags as unknown as string || '[]'),
-    blocks: JSON.parse(task.blocks || '[]'),
-    blocked_by: JSON.parse(task.blocked_by || '[]'),
-    discovered_from: task.discovered_from || '',
-    created_at: task.created_at,
-    summary: task.body.slice(0, 120),
-  };
-}
-
-app.get('/api/tasks', (req, res) => {
-  const { project, status, priority, include_done } = req.query as Record<string, string | undefined>;
-
-  let sql = `SELECT * FROM atoms WHERE atom_type = 'task'`;
-  const params: unknown[] = [];
-  if (project) { sql += ` AND project = ?`; params.push(project); }
-  if (priority) { sql += ` AND priority = ?`; params.push(parseInt(priority, 10)); }
-
-  const rows = db.prepare(sql).all(...params) as Atom[];
-  const allTasksById = new Map<string, Atom>(rows.map(r => [r.id, r]));
-
-  const tasks = rows
-    .map(r => ({ task: r, eff: resolveEffectiveStatus(r, allTasksById) }))
-    .filter(({ task, eff }) => {
-      if (include_done !== 'true' && (task.status === 'done' || eff === 'done')) return false;
-      if (status && eff !== status) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      const pa = a.task.priority ?? 2;
-      const pb = b.task.priority ?? 2;
-      if (pa !== pb) return pa - pb;
-      return a.task.created_at.localeCompare(b.task.created_at);
-    })
-    .map(({ task, eff }) => toTaskResponse(task, eff));
-
-  res.json(tasks);
-});
-
-app.patch('/api/tasks/:id', (req, res) => {
-  const { status } = req.body as { status?: string };
-  if (!status) return res.status(400).json({ error: 'Missing status' });
-
-  const task = db.prepare(`SELECT * FROM atoms WHERE id = ? AND atom_type = 'task'`).get(req.params.id) as Atom | undefined;
-  if (!task) return res.status(404).json({ error: 'Task not found' });
-
-  try {
-    const now = new Date().toISOString();
-    const fileContent = readFileSync(task.source_path, 'utf-8');
-    const parsed = matter(fileContent);
-    parsed.data.status = status;
-    parsed.data.updated_at = now;
-    const newContent = matter.stringify(parsed.content, parsed.data);
-    writeFileSync(task.source_path, newContent, 'utf-8');
-
-    db.prepare(`UPDATE atoms SET status = ?, updated_at = ? WHERE id = ?`)
-      .run(status, now, task.id);
-
-    const updated = db.prepare(`SELECT * FROM atoms WHERE id = ?`).get(task.id) as Atom;
-    const allTasks = db.prepare(`SELECT * FROM atoms WHERE atom_type = 'task'`).all() as Atom[];
-    const allTasksById = new Map<string, Atom>(allTasks.map(r => [r.id, r]));
-    res.json(toTaskResponse(updated, resolveEffectiveStatus(updated, allTasksById)));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/api/tasks', (req, res) => {
-  const { title, body, project, priority, tags, blocked_by, blocks } = req.body as {
-    title: string; body: string; project?: string; priority?: number;
-    tags?: string[]; blocked_by?: string[]; blocks?: string[];
-  };
-  if (!title) return res.status(400).json({ error: 'Missing title' });
-
-  const now = new Date().toISOString();
-  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
-  const claudeDir = os.homedir() + '/.claude';
-  const targetDir = project
-    ? path.join(claudeDir, 'projects', project, 'memory')
-    : path.join(claudeDir, 'nexus-atoms');
-
-  if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
-
-  let filename = `task_${slug}.md`;
-  let filePath = path.join(targetDir, filename);
-  let counter = 2;
-  while (existsSync(filePath)) {
-    filename = `task_${slug}_${counter}.md`;
-    filePath = path.join(targetDir, filename);
-    counter++;
-  }
-
-  const frontmatterLines = [
-    '---',
-    `title: "${title}"`,
-    `atom_type: task`,
-    `status: ready`,
-    `priority: ${priority ?? 2}`,
-    project ? `project: ${project}` : null,
-    `tags: [${(tags ?? []).map(t => `"${t}"`).join(', ')}]`,
-    `blocks: [${(blocks ?? []).map(b => `"${b}"`).join(', ')}]`,
-    `blocked_by: [${(blocked_by ?? []).map(b => `"${b}"`).join(', ')}]`,
-    `discovered_from: ""`,
-    `created_at: ${now}`,
-    `updated_at: ${now}`,
-    '---',
-  ].filter(Boolean).join('\n');
-
-  try {
-    writeFileSync(filePath, `${frontmatterLines}\n\n${body ?? ''}`, 'utf-8');
-
-    reindexFile(db, filePath, project ? 'memory_file' : 'nexus_native');
-
-    const atom = db.prepare(`SELECT * FROM atoms WHERE source_path = ? LIMIT 1`).get(filePath) as Atom | undefined;
-    if (!atom) return res.status(500).json({ error: 'Failed to index task' });
-
-    const allTasks = db.prepare(`SELECT * FROM atoms WHERE atom_type = 'task'`).all() as Atom[];
-    const allTasksById = new Map<string, Atom>(allTasks.map(r => [r.id, r]));
-    res.status(201).json(toTaskResponse(atom, resolveEffectiveStatus(atom, allTasksById)));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
 });
 
 // --- Search ---

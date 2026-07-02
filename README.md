@@ -4,7 +4,7 @@ An **autonomous memory engine** for Claude Code. Nexus watches your sessions,
 distills durable knowledge into typed memories, and injects the relevant ones
 back at the start of future sessions — no manual note-taking, no agent cooperation.
 
-It also indexes your Claude knowledge files (agents, skills, plans, tasks) and
+It also indexes your Claude knowledge files (agents, skills, plans, notes) and
 ships a web dashboard for browsing memories, sessions, and the review queue.
 
 **Storage:** SQLite + FTS5 + sqlite-vec at `~/.claude-nexus/nexus.db`
@@ -99,7 +99,7 @@ new transcript lines, and trivial windows skip the LLM call entirely.
 | `nexus_search` | Cross-project full-text + vector search over all knowledge |
 | `nexus_context` | Smart fetch: multiple topics merged into one response |
 | `nexus_project` | All knowledge atoms for a project |
-| `nexus_remember` | Store a memory or task atom manually |
+| `nexus_remember` | Store a memory manually |
 | `nexus_verify` | Reconfirm a memory — reset its decay clock |
 | `nexus_feedback` | Record whether a recalled memory helped |
 | `nexus_consolidate` | Cleanup sweep: backfill embeddings, merge duplicates, prune rejected |
@@ -108,9 +108,6 @@ new transcript lines, and trivial windows skip the LLM call entirely.
 | `nexus_shared` | Global/shared knowledge for session start |
 | `nexus_set_init` | Toggle the load-at-init flag on a global/shared atom |
 | `nexus_sessions` | List Claude Code sessions |
-| `nexus_tasks` | List task atoms with dependency resolution |
-| `nexus_tasks_create` | Batch-create task atoms |
-| `nexus_task_update` | Update a task's status / dependencies |
 | `nexus_health` | Diagnostics: broken refs, duplicates, orphans, stale memories |
 | `nexus_stats` | Atom / memory / link / session counts |
 | `nexus_reindex` | Force a full re-index of knowledge files |
@@ -124,13 +121,13 @@ new transcript lines, and trivial windows skip the LLM call entirely.
 |-------|--------|
 | **Database** | SQLite at `~/.claude-nexus/nexus.db`. Numbered migrations via `schema_version`. |
 | **`memories`** | The autonomous engine's store — typed, confidence-scored, decaying. FTS5 + sqlite-vec mirrors. |
-| **`atoms`** | File-indexed artifacts (agents, skills, plans, tasks, notes) — a read-only mirror of `~/.claude/`. |
+| **`atoms`** | File-indexed artifacts (agents, skills, plans, notes) — a read-only mirror of `~/.claude/`. |
 | **Capture** | `src/capture/` — transcript condenser, Haiku extractor, Reflector, markdown export. |
 | **Recall** | `src/core/recall.ts` — decay-ranked, token-budgeted retrieval. |
 | **Lifecycle** | `src/core/decay.ts` + `consolidate.ts` — age decay, stale flagging, dedup sweep. |
-| **MCP server** | `src/mcp/server.ts` — stdio transport, 20 tools. |
+| **MCP server** | `src/mcp/server.ts` — stdio transport, 17 tools. |
 | **Web API** | Express on port 3210 (`src/web/server.ts`). |
-| **Dashboard** | Svelte 5 SPA — Memories, Review, Sessions, Search, Tasks, Agents, Skills. Browser-based. |
+| **Dashboard** | Svelte 5 SPA — Memories, Review, Sessions, Search, Plans, Agents, Skills. Browser-based. |
 | **CLI** | `src/cli/` — index, search, inspect from the terminal. |
 
 **Models:** `mxbai-embed-large` via Ollama (embeddings, vector search, dedup);
@@ -194,5 +191,5 @@ Base URL: `http://localhost:3210`
 - **Memories** — `GET/PUT/DELETE /api/memories[/:id]`, `POST /api/memories/:id/{review,verify,feedback}`
 - **Lifecycle** — `POST /api/consolidate`
 - **Sessions** — `GET /api/sessions` (paginated), `GET /api/sessions/search?q=`, `GET /api/sessions/:id/messages`
-- **Knowledge** — `GET /api/search`, `/api/agents`, `/api/skills`, `/api/plans`, `/api/tasks`
+- **Knowledge** — `GET /api/search`, `/api/agents`, `/api/skills`, `/api/plans`
 - **Health** — `GET /api/stats`, `GET /api/diagnostics`

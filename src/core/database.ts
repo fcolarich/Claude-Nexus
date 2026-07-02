@@ -55,6 +55,7 @@ const MIGRATIONS: Migration[] = [
   { version: 4, name: 'import-legacy-memory-atoms', up: migrateImportLegacyMemories },
   { version: 5, name: 'session-messages-fts', up: migrateSessionMessagesFts },
   { version: 6, name: 'corpus-expansion', up: migrateCorpusExpansion },
+  { version: 7, name: 'remove-task-support', up: migrateRemoveTaskSupport },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -281,6 +282,104 @@ function migrateTaskSupport(db: Database.Database): void {
     try { db.exec(`ALTER TABLE atoms ADD COLUMN blocked_by TEXT`); } catch {}
     try { db.exec(`ALTER TABLE atoms ADD COLUMN discovered_from TEXT`); } catch {}
   }
+}
+
+// ── Migration 7: remove task support ─────────────────────────────────
+// Drops the five task columns (status, priority, blocks, blocked_by,
+// discovered_from) from atoms, removes 'task' from the atom_type CHECK, and
+// purges task rows. Append-only: earlier migrations that added task support are
+// left intact; this converges fresh and existing DBs to the task-free shape.
+function migrateRemoveTaskSupport(db: Database.Database): void {
+  const schemaRow = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='atoms'`
+  ).get() as { sql: string } | undefined;
+
+  if (!schemaRow) return;
+  // Idempotent: if already task-free, nothing to do.
+  if (!schemaRow.sql.includes("'task'") && !schemaRow.sql.includes('blocked_by')) return;
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      db.exec(`CREATE TABLE atoms_new (
+        id            TEXT PRIMARY KEY,
+        title         TEXT NOT NULL,
+        body          TEXT NOT NULL,
+        atom_type     TEXT NOT NULL CHECK(atom_type IN (
+          'memory', 'agent', 'skill', 'plan', 'feedback', 'reference', 'project_note', 'architecture'
+        )),
+        scope         TEXT NOT NULL DEFAULT 'project' CHECK(scope IN ('global', 'shared', 'project')),
+        source_path   TEXT NOT NULL,
+        source_type   TEXT NOT NULL CHECK(source_type IN (
+          'memory_file', 'agent_def', 'skill_def', 'plan_file', 'nexus_native', 'project_doc'
+        )),
+        project       TEXT,
+        tags          TEXT NOT NULL DEFAULT '[]',
+        content_hash  TEXT NOT NULL,
+        frontmatter   TEXT,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        linked_at     TEXT,
+        load_at_init  INTEGER NOT NULL DEFAULT 0
+      )`);
+
+      // Copy every non-task atom; task rows are purged by exclusion.
+      db.exec(`INSERT INTO atoms_new
+        (id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at, linked_at, load_at_init)
+        SELECT id, title, body, atom_type, scope, source_path, source_type, project, tags, content_hash, frontmatter, created_at, updated_at, linked_at, load_at_init
+        FROM atoms WHERE atom_type != 'task'`);
+
+      db.exec(`DROP TRIGGER IF EXISTS atoms_ai`);
+      db.exec(`DROP TRIGGER IF EXISTS atoms_ad`);
+      db.exec(`DROP TRIGGER IF EXISTS atoms_au`);
+      db.exec(`DROP TRIGGER IF EXISTS atoms_vec_ad`);
+      db.exec(`DROP TABLE IF EXISTS atoms_fts`);
+      db.exec(`DROP TABLE atoms`);
+      db.exec(`ALTER TABLE atoms_new RENAME TO atoms`);
+
+      // Recreate FTS mirror + sync triggers (dropped with the old table).
+      db.exec(`CREATE VIRTUAL TABLE atoms_fts USING fts5(
+        title, body, tags,
+        content='atoms',
+        content_rowid='rowid',
+        tokenize='porter unicode61'
+      )`);
+      db.exec(`CREATE TRIGGER atoms_ai AFTER INSERT ON atoms BEGIN
+        INSERT INTO atoms_fts(rowid, title, body, tags)
+        VALUES (new.rowid, new.title, new.body, new.tags);
+      END`);
+      db.exec(`CREATE TRIGGER atoms_ad AFTER DELETE ON atoms BEGIN
+        INSERT INTO atoms_fts(atoms_fts, rowid, title, body, tags)
+        VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+      END`);
+      db.exec(`CREATE TRIGGER atoms_au AFTER UPDATE ON atoms BEGIN
+        INSERT INTO atoms_fts(atoms_fts, rowid, title, body, tags)
+        VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+        INSERT INTO atoms_fts(rowid, title, body, tags)
+        VALUES (new.rowid, new.title, new.body, new.tags);
+      END`);
+      db.exec(`INSERT INTO atoms_fts(atoms_fts) VALUES('rebuild')`);
+
+      // Recreate atom indexes (dropped with the old table).
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_project ON atoms(project)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_type ON atoms(atom_type)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_scope ON atoms(scope)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_source ON atoms(source_path)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_hash ON atoms(content_hash)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_atoms_linked ON atoms(linked_at)`);
+    })();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+
+  // Recreate the vec-delete trigger and clear stale vectors (rowids changed).
+  // Guarded: vec0 may be unavailable.
+  try {
+    db.exec(`DELETE FROM atoms_vec`);
+    db.exec(`CREATE TRIGGER IF NOT EXISTS atoms_vec_ad AFTER DELETE ON atoms BEGIN
+      DELETE FROM atoms_vec WHERE rowid = old.rowid;
+    END`);
+  } catch { /* vector search disabled — embeddings rebuild on next reindex */ }
 }
 
 function migrateCoworkSupport(db: Database.Database): void {

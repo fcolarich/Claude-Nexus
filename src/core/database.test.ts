@@ -138,4 +138,68 @@ describe('schema migrations', () => {
     expect((db.prepare(`SELECT COUNT(*) AS c FROM atoms`).get() as { c: number }).c).toBe(4);
     db.close();
   });
+
+  it('migration v7 removes task support while preserving corpus-expansion columns', () => {
+    const db = openDatabase(':memory:');
+
+    // Seed a v6-shaped atoms table: has linked_at + project_doc + task columns,
+    // and 'task' in the atom_type CHECK. No schema_version row (simulates pre-v7).
+    db.exec(`CREATE TABLE atoms (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL,
+      atom_type TEXT NOT NULL CHECK(atom_type IN (
+        'memory','agent','skill','plan','feedback','reference','project_note','architecture','task')),
+      scope TEXT NOT NULL DEFAULT 'project',
+      source_path TEXT NOT NULL,
+      source_type TEXT NOT NULL CHECK(source_type IN (
+        'memory_file','agent_def','skill_def','plan_file','nexus_native','project_doc')),
+      project TEXT, tags TEXT NOT NULL DEFAULT '[]', content_hash TEXT NOT NULL,
+      frontmatter TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      linked_at TEXT, status TEXT, priority INTEGER, blocks TEXT, blocked_by TEXT,
+      discovered_from TEXT, load_at_init INTEGER NOT NULL DEFAULT 0
+    )`);
+    const insert = db.prepare(
+      `INSERT INTO atoms (id, title, body, atom_type, scope, source_path, source_type, project, content_hash, linked_at, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    insert.run('mem1', 'A memory', 'body', 'memory', 'project', '/p/m.md', 'memory_file', 'proj', 'h1', '2025-01-02T03:04:05Z', null);
+    insert.run('doc1', 'A doc', 'body', 'reference', 'project', '/p/d.md', 'project_doc', 'proj', 'h2', null, null);
+    insert.run('task1', 'A task', 'body', 'task', 'project', '/p/t.md', 'nexus_native', 'proj', 'h3', null, 'ready');
+
+    initializeSchema(db);
+
+    const cols = (db.prepare(`PRAGMA table_info(atoms)`).all() as { name: string }[]).map(c => c.name);
+    // Task columns gone
+    for (const taskCol of ['status', 'priority', 'blocks', 'blocked_by', 'discovered_from']) {
+      expect(cols).not.toContain(taskCol);
+    }
+    // Corpus-expansion column preserved
+    expect(cols).toContain('linked_at');
+
+    // Task rows purged; non-task rows kept
+    const taskCount = (db.prepare(`SELECT COUNT(*) AS c FROM atoms WHERE atom_type = 'task'`).get() as { c: number }).c;
+    expect(taskCount).toBe(0);
+    expect((db.prepare(`SELECT COUNT(*) AS c FROM atoms WHERE id = 'mem1'`).get() as { c: number }).c).toBe(1);
+    expect((db.prepare(`SELECT COUNT(*) AS c FROM atoms WHERE id = 'doc1'`).get() as { c: number }).c).toBe(1);
+
+    // linked_at value survived the rebuild
+    const linkedAt = (db.prepare(`SELECT linked_at AS v FROM atoms WHERE id = 'mem1'`).get() as { v: string | null }).v;
+    expect(linkedAt).toBe('2025-01-02T03:04:05Z');
+
+    // project_doc still accepted by the CHECK after v7
+    expect(() => db.prepare(
+      `INSERT INTO atoms (id, title, body, atom_type, scope, source_path, source_type, content_hash)
+       VALUES ('doc2','New doc','b','reference','project','/p/d2.md','project_doc','h4')`
+    ).run()).not.toThrow();
+
+    // idx_atoms_linked recreated
+    const idx = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_atoms_linked'`).get();
+    expect(idx).toBeTruthy();
+
+    // Schema fully migrated
+    expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+
+    db.close();
+  });
 });

@@ -14,3 +14,4 @@
 | [ADR-007](decisions/adr-007-otel-service-namespace-tagging-in-capture-runner.md) | OTel service namespace tagging in capture runner | 2026-06-26 | accepted |
 | [ADR-008](decisions/adr-008-phase-8-search-and-write-unified-onto-the-memories.md) | Phase 8: search and write unified onto the memories store | 2026-06-26 | accepted |
 | [ADR-009](decisions/adr-009-prompt-driven-semantic-recall-via-userpromptsubmit.md) | Prompt-driven semantic recall via UserPromptSubmit | 2026-06-30 | accepted |
+| [ADR-010](decisions/adr-010-remove-the-nexus-task-subsystem.md) | Remove the Nexus task subsystem | 2026-07-02 | accepted |

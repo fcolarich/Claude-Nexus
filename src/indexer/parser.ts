@@ -26,7 +26,6 @@ function inferAtomType(
   filename?: string
 ): AtomType {
   // Frontmatter type takes priority
-  if (frontmatterType === 'task') return 'task';
   if (frontmatterType === 'feedback') return 'feedback';
   if (frontmatterType === 'reference') return 'reference';
   if (frontmatterType === 'project') return 'project_note';
@@ -224,21 +223,6 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
     const scope = inferScope(atomType, sourceType);
     const tags = extractTags(section.body, i === 0 ? frontmatterData : undefined);
 
-    // Extract task-specific fields from frontmatter (only for first section)
-    let taskStatus: string | null = null;
-    let taskPriority: number | null = null;
-    let taskBlocks: string | null = null;
-    let taskBlockedBy: string | null = null;
-    let taskDiscoveredFrom: string | null = null;
-
-    if (atomType === 'task' && i === 0 && hasFrontmatter) {
-      taskStatus = typeof frontmatterData.status === 'string' ? frontmatterData.status : 'ready';
-      taskPriority = typeof frontmatterData.priority === 'number' ? frontmatterData.priority : 2;
-      taskBlocks = JSON.stringify(Array.isArray(frontmatterData.blocks) ? frontmatterData.blocks : []);
-      taskBlockedBy = JSON.stringify(Array.isArray(frontmatterData.blocked_by) ? frontmatterData.blocked_by : []);
-      taskDiscoveredFrom = typeof frontmatterData.discovered_from === 'string' ? frontmatterData.discovered_from : '';
-    }
-
     const loadAtInit = i === 0 && hasFrontmatter && frontmatterData.load_at_init === true ? 1 : 0;
 
     atoms.push({
@@ -250,16 +234,10 @@ export function parseFile(filePath: string, sourceType: SourceType): ParsedFile 
       source_type: sourceType,
       project,
       tags,
-      // First section hash covers the full raw file so frontmatter changes
-      // (status, priority, blocked_by, etc.) are detected by the unchanged check.
-      // Subsequent sections in multi-section files hash their own body.
+      // First section hash covers the full raw file so frontmatter changes are
+      // detected by the unchanged check. Subsequent sections hash their own body.
       content_hash: i === 0 ? computeHash(raw) : computeHash(section.body),
       frontmatter: i === 0 && hasFrontmatter ? frontmatterData : null,
-      status: taskStatus as any,
-      priority: taskPriority,
-      blocks: taskBlocks,
-      blocked_by: taskBlockedBy,
-      discovered_from: taskDiscoveredFrom,
       load_at_init: loadAtInit,
       linked_at: null,
     });
