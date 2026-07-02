@@ -88,6 +88,51 @@ export function insertMemory(db: Database.Database, input: MemoryInput): { id: s
   return { id, inserted: res.changes > 0 };
 }
 
+/** One fully-resolved item for a batch write (defaults already merged by the caller). */
+export type BatchMemoryItem = MemoryInput;
+
+/** Per-item outcome of a batch write. */
+export interface BatchResult {
+	index: number;
+	id?: string;
+	status: 'written' | 'duplicate' | 'error';
+	reason?: string;
+}
+
+/**
+ * Batch-insert memories in ONE transaction (single fsync) with per-item
+ * try/catch — a throwing item is recorded as status:'error' and does NOT abort
+ * the rest. Embedding runs best-effort AFTER commit (outside the transaction).
+ * `embed` is injectable for tests; defaults to embedMemory against this db.
+ */
+export async function rememberBatch(
+	db: Database.Database,
+	items: BatchMemoryItem[],
+	embed: (id: string) => Promise<boolean> = (id) => embedMemory(db, id),
+): Promise<{ results: BatchResult[] }> {
+	const results: BatchResult[] = new Array(items.length);
+
+	db.transaction(() => {
+		items.forEach((input, index) => {
+			try {
+				const { id, inserted } = insertMemory(db, input);
+				results[index] = { index, id, status: inserted ? 'written' : 'duplicate' };
+			} catch (err) {
+				results[index] = { index, status: 'error', reason: err instanceof Error ? err.message : String(err) };
+			}
+		});
+	})();
+
+	// Best-effort embed for every newly-written id, after the txn commits.
+	await Promise.all(
+		results
+			.filter((r) => r.status === 'written' && r.id)
+			.map((r) => embed(r.id!).catch(() => false)),
+	);
+
+	return { results };
+}
+
 export function getMemory(db: Database.Database, id: string): Memory | undefined {
   const row = db.prepare(`SELECT * FROM memories WHERE id = ?`).get(id) as Record<string, unknown> | undefined;
   return row ? rowToMemory(row) : undefined;
