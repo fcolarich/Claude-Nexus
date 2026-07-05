@@ -64,15 +64,17 @@ Or run `/update-project-docs` after a change and let the doc-sync agent route it
 |------|------|
 | `src/mcp/server.ts` | MCP server — 18 tools exposed over stdio transport |
 | `src/web/server.ts` | Express REST API server, port 3210; serves built dashboard from dist-frontend/ |
-| `src/cli/index.ts` | CLI entry point — index, search, inspect from terminal |
+| `src/cli/index.ts` | CLI entry point — index, search, context, list, health, stats, sessions, watch, backfill, prune-narration, migrate-projects |
 | `hooks/hooks.json` | Claude Code hook manifest — wires UserPromptSubmit (recall) and Stop/PreCompact/SessionEnd (capture) |
 | `src/core/database.ts` | SQLite init, migrations, schema_version management |
 | `src/core/recall.ts` | Memory retrieval — bulk decay-ranked recall (recallMemories, for MCP/web) + prompt-driven semantic recall (recallByQuery) |
 | `src/core/embeddings.ts` | Embedding generation via Ollama mxbai-embed-large |
 | `src/core/config.ts` | Reads extraction_models.yaml; provides runtime config with sane defaults |
+| `src/core/project-root.ts` | Project identity resolution — `resolveGitProjectRoot()` + `resolveProjectSlug()`, used by every live-cwd call site (ADR-013) |
 | `src/capture/reflector.ts` | Background capture pipeline — reads new transcript lines, calls Haiku, dedup-merges memories |
 | `src/capture/extract.ts` | Haiku-based memory extraction from transcript windows |
-| `src/capture/export.ts` | Exports memories as markdown mirror files |
+| `src/capture/export.ts` | Exports memories as markdown mirror files; prunes stale project export buckets with no live memories |
+| `src/capture/project-migrate.ts` | Merges fragmented project buckets onto their git-root-resolved canonical slug (ADR-013) |
 | `src/capture/prompt-runner.ts` | UserPromptSubmit hook — embeds prompt, injects relevance-floored recall (top 3-5, per-session dedup) |
 | `extraction_models.yaml` | Runtime config: embedding model, extraction model, recall budget, capture thresholds |
 | `package.json` | Project manifest, scripts, dependencies |

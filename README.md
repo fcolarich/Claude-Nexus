@@ -181,6 +181,8 @@ npm run nexus -- <command> [options]
 | `sessions` | List indexed sessions (paginated) |
 | `watch` | Watch directories for changes and re-index automatically |
 | `backfill` | Extract memories from past sessions; flags: `--project`, `--min-messages`, `--limit`, `--since`, `--force`, `--dry-run` |
+| `prune-narration` | Remove handoff memories across all projects; flags: `--apply` (default dry-run) |
+| `migrate-projects` | Merge project buckets fragmented by pre-fix slug bugs or subdirectory-per-project sessions, via git-root resolution; flags: `--apply` (default dry-run) |
 
 ---
 

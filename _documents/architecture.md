@@ -17,3 +17,4 @@
 | [ADR-010](decisions/adr-010-remove-the-nexus-task-subsystem.md) | Remove the Nexus task subsystem | 2026-07-02 | accepted |
 | [ADR-011](decisions/adr-011-nexus-remember-batch-as-a-separate-mcp-tool-for-bu.md) | nexus_remember_batch as a separate MCP tool for bulk memory writes | 2026-07-02 | accepted |
 | [ADR-012](decisions/adr-012-wire-local-reranker-cross-encoder-into-recallbyque.md) | Wire local-reranker cross-encoder into recallByQuery's prompt-driven recall | 2026-07-03 | accepted |
+| [ADR-013](decisions/adr-013-git-repository-root-resolution-replaces-raw-cwd-st.md) | Git-repository-root resolution replaces raw-cwd string slugging for project identity | 2026-07-05 | accepted |

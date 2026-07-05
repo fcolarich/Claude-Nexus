@@ -9,7 +9,7 @@ Maintained via the `update-file-map` skill.
 |------|------|
 | `src/mcp/server.ts` | MCP server — 18 tools exposed over stdio transport (knowledge, recall, search, project/session management) |
 | `src/web/server.ts` | Express REST API server, port 3210; serves built dashboard from dist-frontend/ |
-| `src/cli/index.ts` | CLI entry point — index, search, inspect from terminal |
+| `src/cli/index.ts` | CLI entry point — index, search, context, list, health, stats, sessions, watch, backfill, prune-narration, migrate-projects |
 | `hooks/hooks.json` | Claude Code hook manifest — wires UserPromptSubmit (recall) and Stop/PreCompact/SessionEnd (capture) |
 
 ## Key files
@@ -21,9 +21,11 @@ Maintained via the `update-file-map` skill.
 | `src/core/embeddings.ts` | Embedding generation via Ollama mxbai-embed-large |
 | `src/core/reranker.ts` | Cross-encoder reranking client for the local-reranker HTTP daemon (jina-reranker-v2-base-multilingual); wired into recallByQuery's KNN floor (ADR-012) |
 | `src/core/config.ts` | Reads extraction_models.yaml; provides runtime config with sane defaults |
+| `src/core/project-root.ts` | Project identity resolution — `resolveGitProjectRoot()` (git-common-dir lookup, collapses worktrees onto main checkout) composed with `cwdToProjectSlug()` via `resolveProjectSlug()`; the one function every live-cwd call site uses (ADR-013) |
 | `src/capture/reflector.ts` | Background capture pipeline — reads new transcript lines, calls Haiku, dedup-merges memories |
 | `src/capture/extract.ts` | Haiku-based memory extraction from transcript windows |
-| `src/capture/export.ts` | Exports memories as markdown mirror files |
+| `src/capture/export.ts` | Exports memories as markdown mirror files; prunes stale project export buckets with no live memories |
+| `src/capture/project-migrate.ts` | Merges project buckets fragmented by pre-fix slug bugs or subdirectory-per-project sessions onto their git-root-resolved canonical slug; dedupes via consolidateMemories, re-exports (ADR-013) |
 | `src/capture/prompt-runner.ts` | UserPromptSubmit hook — embeds prompt, injects relevance-floored recall (top 3-5, per-session dedup) |
 | `extraction_models.yaml` | Runtime config: embedding model, extraction model, recall budget, capture thresholds |
 | `package.json` | Project manifest, scripts, dependencies |
@@ -37,7 +39,7 @@ Maintained via the `update-file-map` skill.
 | `src/mcp/` | MCP server and tool implementations |
 | `src/web/` | Express REST API and route handlers |
 | `src/frontend/` | Svelte 5 SPA dashboard — Dashboard, Memories, Review, Sessions, Search, Plans, Agents, Skills views |
-| `src/cli/` | CLI commands: index, search, inspect, backfill |
+| `src/cli/` | CLI commands: index, search, context, list, health, stats, sessions, watch, backfill, prune-narration, migrate-projects |
 | `src/indexer/` | Knowledge file scanner and parser — indexes agents, skills, plans, notes from ~/.claude/ |
 | `hooks/` | Claude Code hook scripts and hooks.json manifest |
 | `dist/` | Compiled JS output from tsc — what hooks and MCP server actually run |
