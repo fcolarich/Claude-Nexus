@@ -173,8 +173,8 @@ npm run nexus -- <command> [options]
 | Command | Purpose |
 |---------|---------|
 | `index` | Index all Claude data (agents, skills, plans, memories, sessions) |
-| `search <query>` | FTS search; flags: `-p project`, `-t type`, `-s scope`, `-l limit` |
-| `context <topics...>` | Smart fetch of multiple topics merged into one response |
+| `search <query>` | Hybrid (FTS5+vector) search across captured memories and knowledge atoms; flags: `-p project`, `-t type`, `-s scope`, `-l limit` |
+| `context <topics...>` | Smart fetch of multiple topics merged into one response (captured memories + knowledge atoms) |
 | `list` | List all atoms with grouping and filtering |
 | `health` | Diagnostics: broken refs, duplicates, orphans |
 | `stats` | Database statistics |
