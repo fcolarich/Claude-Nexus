@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, existsSync, readdirSync, readFileSync } from 'fs';
+import { mkdtempSync, existsSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { openDatabase, initializeSchema } from '../core/database.js';
@@ -55,6 +55,35 @@ describe('exportAll', () => {
     const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
     exportAll(db, dir);
     expect(existsSync(join(dir, '_global', 'memory', 'MEMORY.md'))).toBe(true);
+    db.close();
+  });
+
+  it('prunes a stale bucket directory that no longer has any live memories', () => {
+    const db = freshDb();
+    insertMemory(db, { ...base, project: 'live-proj', title: 'Still here', body: 'kept.', memory_type: 'convention', review_status: 'approved' });
+
+    const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+    mkdirSync(join(dir, 'stale-proj', 'memory'), { recursive: true });
+    writeFileSync(join(dir, 'stale-proj', 'memory', 'MEMORY.md'), '# stale');
+
+    exportAll(db, dir);
+
+    expect(existsSync(join(dir, 'stale-proj'))).toBe(false);
+    expect(existsSync(join(dir, 'live-proj', 'memory', 'MEMORY.md'))).toBe(true);
+    db.close();
+  });
+
+  it('never deletes a project directory that still holds a session .jsonl', () => {
+    const db = freshDb();
+    const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+    mkdirSync(join(dir, 'still-active-sessions', 'memory'), { recursive: true });
+    writeFileSync(join(dir, 'still-active-sessions', 'memory', 'MEMORY.md'), '# stale');
+    writeFileSync(join(dir, 'still-active-sessions', 'abc123.jsonl'), '{}');
+
+    exportAll(db, dir);
+
+    expect(existsSync(join(dir, 'still-active-sessions', 'abc123.jsonl'))).toBe(true);
+    expect(existsSync(join(dir, 'still-active-sessions', 'memory'))).toBe(false);
     db.close();
   });
 });

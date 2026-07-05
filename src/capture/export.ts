@@ -98,5 +98,24 @@ export function exportAll(db: Database.Database, exportDirOverride?: string): Ex
     files++;
   }
 
+  // Prune project directories whose memory/ export Nexus wrote previously but
+  // which no longer correspond to any live bucket (project renamed, merged via
+  // project_aliases, or the memory entirely removed). Only ever deletes the
+  // memory/ subdir Nexus owns — a sibling .jsonl session file (Claude Code's
+  // own data) always survives, and the parent dir is removed only once empty.
+  if (existsSync(exportDir)) {
+    for (const entry of readdirSync(exportDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || byBucket.has(entry.name)) continue;
+      const projectDir = join(exportDir, entry.name);
+      const memDir = join(projectDir, 'memory');
+      if (!existsSync(memDir)) continue;
+
+      rmSync(memDir, { recursive: true, force: true });
+      if (readdirSync(projectDir).length === 0) {
+        rmSync(projectDir, { recursive: true, force: true });
+      }
+    }
+  }
+
   return { buckets: byBucket.size, files, dir: exportDir };
 }
