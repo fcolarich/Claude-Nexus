@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { runFullIndex } from '../indexer/indexer.js';
-import { search, listAtoms, getDiagnostics, getStats, fetchContext, getSharedKnowledge, listSessions } from '../core/search.js';
+import { search, hybridSearch, hybridSearchMemories, listAtoms, getDiagnostics, getStats, fetchContext, getSharedKnowledge, listSessions } from '../core/search.js';
 import { startWatcher } from '../indexer/watcher.js';
 import { backfillSessions, selectBackfillSessions } from '../capture/backfill.js';
 import { deleteMemory } from '../core/memories.js';
@@ -46,38 +46,55 @@ program
 
 program
   .command('search <query>')
-  .description('Full-text search across all atoms')
+  .description('Hybrid (FTS5+vector) search across captured memories and knowledge atoms')
   .option('-p, --project <project>', 'Filter by project slug')
-  .option('-t, --type <type>', 'Filter by atom type')
+  .option('-t, --type <type>', 'Filter atoms by type (memories are unaffected by this flag)')
   .option('-s, --scope <scope>', 'Filter by scope (global/shared/project)')
-  .option('-l, --limit <limit>', 'Max results', '10')
-  .action((query, opts) => {
+  .option('-l, --limit <limit>', 'Max results per store', '10')
+  .action(async (query, opts) => {
     const db = openDatabase();
-    const results = search(db, query, {
-      project: opts.project,
-      type: opts.type,
-      scope: opts.scope,
-      limit: parseInt(opts.limit),
-    });
+    const limit = parseInt(opts.limit);
 
-    if (results.length === 0) {
+    const [atomResults, memResults] = await Promise.all([
+      hybridSearch(db, query, { project: opts.project, type: opts.type, scope: opts.scope, limit }),
+      hybridSearchMemories(db, query, { project: opts.project, scope: opts.scope, limit }),
+    ]);
+
+    if (atomResults.length === 0 && memResults.length === 0) {
       console.log(chalk.yellow('No results found.'));
       db.close();
       return;
     }
 
-    console.log(chalk.blue(`Found ${results.length} result(s) for "${query}":\n`));
+    console.log(chalk.blue(`Found ${memResults.length} memory result(s) and ${atomResults.length} atom result(s) for "${query}":\n`));
 
-    for (const r of results) {
-      const scopeColor = r.atom.scope === 'global' ? chalk.cyan : r.atom.scope === 'shared' ? chalk.magenta : chalk.dim;
-      const scope = scopeColor(`[${r.atom.scope}]`);
-      const project = r.atom.project ? chalk.gray(r.atom.project) : chalk.gray('global');
-      const type = chalk.gray(`(${r.atom.atom_type})`);
+    if (memResults.length > 0) {
+      console.log(chalk.blue.bold('Captured Memories'));
+      for (const r of memResults) {
+        const scopeColor = r.memory.scope === 'global' ? chalk.cyan : r.memory.scope === 'shared' ? chalk.magenta : chalk.dim;
+        const scope = scopeColor(`[${r.memory.scope}]`);
+        const type = chalk.gray(`(${r.memory.memory_type})`);
+        const conf = chalk.gray(`${(r.memory.confidence * 100).toFixed(0)}%`);
 
-      console.log(`${chalk.bold(r.atom.title)} ${scope} ${type}`);
-      console.log(`  ${project} | ${chalk.dim(r.atom.source_path)}`);
-      console.log(`  ${r.snippet.replace(/<mark>/g, chalk.yellow.bold('')).replace(/<\/mark>/g, '')}`);
-      console.log();
+        console.log(`${chalk.bold(r.memory.title)} ${scope} ${type} ${conf}`);
+        console.log(`  ${r.snippet.replace(/<mark>/g, chalk.yellow.bold('')).replace(/<\/mark>/g, '')}`);
+        console.log();
+      }
+    }
+
+    if (atomResults.length > 0) {
+      console.log(chalk.blue.bold('Knowledge Atoms'));
+      for (const r of atomResults) {
+        const scopeColor = r.atom.scope === 'global' ? chalk.cyan : r.atom.scope === 'shared' ? chalk.magenta : chalk.dim;
+        const scope = scopeColor(`[${r.atom.scope}]`);
+        const project = r.atom.project ? chalk.gray(r.atom.project) : chalk.gray('global');
+        const type = chalk.gray(`(${r.atom.atom_type})`);
+
+        console.log(`${chalk.bold(r.atom.title)} ${scope} ${type}`);
+        console.log(`  ${project} | ${chalk.dim(r.atom.source_path)}`);
+        console.log(`  ${r.snippet.replace(/<mark>/g, chalk.yellow.bold('')).replace(/<\/mark>/g, '')}`);
+        console.log();
+      }
     }
 
     db.close();
