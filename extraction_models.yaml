@@ -36,9 +36,12 @@ recall:
 capture:
   auto_approve_confidence: 0.85 # >= this is stored approved; below = pending review
   dedup_cosine_threshold: 0.86  # a candidate this similar to an existing memory = merge
-  # Where the DB→markdown export writes. A leading ~/ is expanded to your home dir.
-  # Cutover complete (2026-05-29): exports write directly to the harness memory dir.
-  export_dir: ~/.claude/projects
+  # export_dir intentionally omitted here — falls back to the code default in
+  # src/core/config.ts (~/.claude/memories/exports), a Nexus-owned sandbox.
+  # Do NOT point this at ~/.claude/projects: that is Claude Code's own
+  # auto-memory directory, auto-loaded in full at every session start, which
+  # duplicates and conflicts with prompt-runner's per-prompt relevance-floored
+  # recall. See _documents/decisions/ for the ADR on this reversal.
 
 # Reranker — cross-encoder pass (jina-reranker-v2-base-multilingual) applied to
 # prompt-driven recall candidates before the relevance floor. Auto-spawned on
