@@ -13,7 +13,8 @@ import {
   getStats,
   getDiagnostics,
 } from '../core/search.js';
-import { runFullIndex, reindexFile, cwdToProjectSlug } from '../indexer/indexer.js';
+import { runFullIndex, reindexFile } from '../indexer/indexer.js';
+import { resolveProjectSlug } from '../core/project-root.js';
 import { reindexSessionMessages, searchSessionMessages } from '../indexer/session-messages.js';
 import { refreshSessionStatuses } from './session-monitor.js';
 import { reflect } from '../capture/reflector.js';
@@ -86,7 +87,7 @@ app.post('/api/reflect', (req, res) => {
       const result = await reflect(db, {
         session_id,
         transcript_path,
-        project: project ?? (cwd ? cwdToProjectSlug(cwd) : null),
+        project: project ?? (cwd ? resolveProjectSlug(cwd) : null),
         cwd,
       });
       if (!result.skipped && (result.inserted > 0 || result.merged > 0)) exportAll(db);
@@ -104,7 +105,7 @@ app.post('/api/recall', (req, res) => {
   const { project, cwd, query, maxTokens } = (req.body ?? {}) as {
     project?: string; cwd?: string; query?: string; maxTokens?: number;
   };
-  const effectiveProject = project ?? (cwd ? cwdToProjectSlug(cwd) : null);
+  const effectiveProject = project ?? (cwd ? resolveProjectSlug(cwd) : null);
   res.json(recallMemories(db, { project: effectiveProject, query, maxTokens }));
 });
 
