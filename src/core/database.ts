@@ -56,6 +56,7 @@ const MIGRATIONS: Migration[] = [
   { version: 5, name: 'session-messages-fts', up: migrateSessionMessagesFts },
   { version: 6, name: 'corpus-expansion', up: migrateCorpusExpansion },
   { version: 7, name: 'remove-task-support', up: migrateRemoveTaskSupport },
+  { version: 8, name: 'project-aliases', up: migrateProjectAliases },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -380,6 +381,20 @@ function migrateRemoveTaskSupport(db: Database.Database): void {
       DELETE FROM atoms_vec WHERE rowid = old.rowid;
     END`);
   } catch { /* vector search disabled — embeddings rebuild on next reindex */ }
+}
+
+// ── Migration 8: project aliases ─────────────────────────────────────
+// Records project slugs that were folded into a canonical slug by the
+// git-root project-resolution merge (see src/capture/project-migrate.ts).
+
+function migrateProjectAliases(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS project_aliases (
+      alias_slug     TEXT PRIMARY KEY,
+      canonical_slug TEXT NOT NULL,
+      created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }
 
 function migrateCoworkSupport(db: Database.Database): void {
