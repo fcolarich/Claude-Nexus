@@ -1,10 +1,12 @@
 /**
  * Markdown export — materializes approved memories from the DB to disk.
  *
- * The DB is the system of record; this regenerates a human-readable mirror.
- * Phase 2 writes to capture.export_dir (a Nexus-owned sandbox). The deliberate
- * cutover repoints export_dir at ~/.claude/projects/<project>/memory once
- * capture is verified — only then does the harness load DB-generated memory.
+ * The DB is the system of record; this regenerates a human-readable mirror
+ * under capture.export_dir (a Nexus-owned sandbox, default
+ * ~/.claude/memories/exports). Deliberately NOT ~/.claude/projects/<project>/memory:
+ * that directory is auto-loaded in full by Claude Code's own native
+ * auto-memory feature at every session start, which would duplicate and
+ * conflict with prompt-runner's per-prompt relevance-floored recall.
  */
 
 import { mkdirSync, writeFileSync, readdirSync, rmSync, existsSync } from 'fs';
