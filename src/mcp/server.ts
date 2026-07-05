@@ -6,7 +6,8 @@ import { join } from 'path';
 import { createHash } from 'crypto';
 import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
-import { runFullIndex, cwdToProjectSlug } from '../indexer/indexer.js';
+import { runFullIndex } from '../indexer/indexer.js';
+import { resolveProjectSlug } from '../core/project-root.js';
 import { buildBm25Corpus, rrfMerge } from '../core/links.js';
 import type { RankedResult } from '../core/links.js';
 import { generateEmbedding } from '../core/embeddings.js';
@@ -53,7 +54,8 @@ const server = new McpServer({
 
 /**
  * Resolve a project slug from a working-directory path.
- * 1. Derived slug via cwdToProjectSlug (full path convention, e.g. "C--Fran-Monster-Hotel").
+ * 1. Git-root-resolved slug via resolveProjectSlug (collapses worktrees and
+ *    subdirectories onto the repo root, e.g. "C--Fran-Monster-Hotel").
  * 2. Short-name fallback (last path segment lowercased, e.g. "monster-hotel"). Handles projects
  *    whose tasks were created with a short name rather than the full path slug.
  * Each candidate is checked against atoms AND sessions so backfill resolution works too.
@@ -63,7 +65,7 @@ function resolveProjectFromCwd(cwd: string): string {
     !!db.prepare(`SELECT 1 FROM atoms    WHERE project = ? LIMIT 1`).get(slug) ||
     !!db.prepare(`SELECT 1 FROM sessions WHERE project = ? LIMIT 1`).get(slug);
 
-  const derived = cwdToProjectSlug(cwd);
+  const derived = resolveProjectSlug(cwd);
   if (derived && known(derived)) return derived;
 
   const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
