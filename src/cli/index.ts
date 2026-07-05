@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { runFullIndex } from '../indexer/indexer.js';
-import { search, hybridSearch, hybridSearchMemories, listAtoms, getDiagnostics, getStats, fetchContext, getSharedKnowledge, listSessions } from '../core/search.js';
+import { search, hybridSearch, hybridSearchMemories, listAtoms, getDiagnostics, getStats, fetchContext, fetchMemoryContext, getSharedKnowledge, listSessions } from '../core/search.js';
 import { startWatcher } from '../indexer/watcher.js';
 import { backfillSessions, selectBackfillSessions } from '../capture/backfill.js';
 import { deleteMemory } from '../core/memories.js';
@@ -104,17 +104,23 @@ program
 
 program
   .command('context <topics...>')
-  .description('Smart fetch: merge multiple topics into one output')
+  .description('Smart fetch: merge multiple topics into one output (captured memories + knowledge atoms)')
   .option('-p, --project <project>', 'Filter by project')
   .action((topics, opts) => {
     const db = openDatabase();
-    const merged = fetchContext(db, topics, { project: opts.project });
+    const memMerged = fetchMemoryContext(db, topics, { project: opts.project });
+    const atomMerged = fetchContext(db, topics, { project: opts.project });
 
-    if (!merged) {
-      console.log(chalk.yellow('No atoms found for the given topics.'));
-    } else {
-      console.log(merged);
+    if (!memMerged && !atomMerged) {
+      console.log(chalk.yellow('No knowledge found for the given topics.'));
+      db.close();
+      return;
     }
+
+    const parts: string[] = [];
+    if (memMerged) parts.push(memMerged);
+    if (atomMerged) parts.push(atomMerged);
+    console.log(parts.join('\n\n---\n\n'));
 
     db.close();
   });
