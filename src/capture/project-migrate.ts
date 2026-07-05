@@ -41,12 +41,17 @@ export interface MigrateProjectsDeps {
   exportAll?: (db: Database.Database, exportDirOverride?: string) => ExportResult;
 }
 
-/** Find every project whose most-recently-active session cwd resolves to a different slug. */
+/**
+ * Find every project whose recorded slug doesn't match git-root resolution of a
+ * cwd it actually ran from. Any session's cwd works — historical rows almost
+ * always share the exact same cwd for a given project bucket (that's the whole
+ * point), and last_active is NULL for most bulk-indexed rows so it can't be used
+ * to prefer "the most recent" one.
+ */
 export function buildProjectAliases(db: Database.Database): ProjectAlias[] {
   const rows = db.prepare(`
-    SELECT project, cwd FROM sessions s
+    SELECT project, cwd FROM sessions
     WHERE cwd IS NOT NULL AND cwd != '' AND project IS NOT NULL
-      AND last_active = (SELECT MAX(last_active) FROM sessions s2 WHERE s2.project = s.project)
     GROUP BY project
   `).all() as { project: string; cwd: string }[];
 
