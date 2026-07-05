@@ -174,6 +174,11 @@ program
   .action((opts) => {
     const db = openDatabase();
     const diags = getDiagnostics(db, opts.type);
+    const stats = getStats(db);
+
+    console.log(chalk.blue.bold('Nexus Health Report'));
+    console.log(`${chalk.bold('Atoms:')} ${stats.totalAtoms} | ${chalk.bold('Memories:')} ${stats.totalMemories} | ${chalk.bold('Links:')} ${stats.totalLinks} | ${chalk.bold('Sessions:')} ${stats.totalSessions}`);
+    console.log(`${chalk.bold('Issues:')} ${stats.totalDiagnostics}\n`);
 
     if (diags.length === 0) {
       console.log(chalk.green('No issues found!'));
