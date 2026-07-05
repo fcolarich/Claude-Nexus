@@ -227,6 +227,13 @@ program
     for (const [project, count] of Object.entries(stats.atomsByProject)) {
       console.log(`  ${project}: ${count}`);
     }
+    console.log(`${chalk.bold('Embedded:')} ${stats.embeddedAtoms}`);
+
+    console.log(`\n${chalk.bold('Memories:')} ${stats.totalMemories}`);
+    for (const [status, count] of Object.entries(stats.memoriesByReview)) {
+      console.log(`  ${status}: ${count}`);
+    }
+    console.log(`${chalk.bold('Embedded:')} ${stats.embeddedMemories}`);
 
     console.log(`\n${chalk.bold('Links:')} ${stats.totalLinks}`);
     console.log(`${chalk.bold('Sessions:')} ${stats.totalSessions}`);
