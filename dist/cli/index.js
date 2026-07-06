@@ -8,6 +8,7 @@ import { backfillSessions, selectBackfillSessions } from '../capture/backfill.js
 import { deleteMemory } from '../core/memories.js';
 import { selectNarrationMemories } from '../capture/prune.js';
 import { exportAll } from '../capture/export.js';
+import { migrateProjects } from '../capture/project-migrate.js';
 const program = new Command();
 program
     .name('nexus')
@@ -305,6 +306,33 @@ program
             deleted++;
     const exp = exportAll(db);
     console.log(chalk.green(`Deleted ${deleted} memories; re-exported ${exp.files} files across ${exp.buckets} project bucket(s).`));
+    db.close();
+});
+// ── nexus migrate-projects ──────────────────────────────────────────
+program
+    .command('migrate-projects')
+    .description('Merge project buckets fragmented by pre-fix slug bugs or subdirectory-per-project sessions, via git-root resolution')
+    .option('--apply', 'Actually merge rows and clean up stale export directories (default is a dry-run)')
+    .action(async (opts) => {
+    const db = openDatabase();
+    initializeSchema(db);
+    const report = await migrateProjects(db, { dryRun: !opts.apply });
+    if (report.aliases.length === 0) {
+        console.log(chalk.green('No fragmented projects found — nothing to merge.'));
+        db.close();
+        return;
+    }
+    console.log(chalk.blue(`${report.aliases.length} project(s) would merge:\n`));
+    for (const { alias, canonical } of report.aliases) {
+        console.log(`  ${chalk.red(alias)} -> ${chalk.green(canonical)}`);
+    }
+    if (!opts.apply) {
+        console.log(chalk.yellow('\nDry-run — re-run with --apply to merge and clean up stale export directories.'));
+        db.close();
+        return;
+    }
+    console.log(chalk.green(`\nMerged: ${report.memoriesUpdated} memories, ${report.atomsUpdated} atoms, ${report.sessionsUpdated} sessions.`));
+    console.log(`Deduplicated ${report.merged} near-identical memory pair(s) created by the merge.`);
     db.close();
 });
 program.parse();

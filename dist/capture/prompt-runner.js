@@ -15,15 +15,7 @@ import { homedir } from 'os';
 import { openDatabase } from '../core/database.js';
 import { recallByQuery } from '../core/recall.js';
 import { getNexusConfig } from '../core/config.js';
-/** Project slug from a cwd — mirrors the indexer convention; collapses git
- *  worktrees onto their parent project so recall finds the main checkout's memories. */
-function cwdToProjectSlug(cwd) {
-    const slug = cwd
-        .replace(/[:\\/ ._]/g, '-')
-        .replace(/-+(claude-)?worktrees?-.*$/, '')
-        .replace(/^-+|-+$/g, '');
-    return slug.length >= 3 ? slug : null;
-}
+import { resolveProjectSlug } from '../core/project-root.js';
 async function readStdin() {
     let input = '';
     process.stdin.setEncoding('utf-8');
@@ -60,7 +52,7 @@ async function main() {
     // Gate 1: skip trivial prompts ("yes", "ok", "do it") — nothing to match on.
     if (prompt.split(/\s+/).filter(Boolean).length < cfg.min_words)
         return;
-    const project = cwdToProjectSlug(payload.cwd || process.cwd()) ?? null;
+    const project = resolveProjectSlug(payload.cwd || process.cwd()) ?? null;
     const injected = sessionId ? loadInjected(sessionId) : new Set();
     const db = openDatabase(process.env.NEXUS_DB);
     try {

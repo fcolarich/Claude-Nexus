@@ -33,17 +33,7 @@ export declare function indexFile(db: Database.Database, stmts: PreparedStatemen
  * Index a session JSONL file — extracts metadata without parsing full conversation.
  */
 export declare function indexSession(db: Database.Database, stmts: PreparedStatements, jsonlPath: string, projectSlug: string): void;
-/**
- * Derive the project slug from a cwd path, matching the current Claude Code
- * ~/.claude/projects/ convention: replace :, path separators, spaces, dots, and
- * underscores with '-'. ("LLM_Workflow_Optimization" → "C--Fran-LLM-Workflow-Optimization",
- * "Voodoo Magic" → "C--Fran-Voodoo-Magic", "com.x.y" → "com-x-y").
- *
- * Additionally collapses git worktree / branch checkouts onto their parent project
- * (`<proj>/.worktrees/<name>` and `<proj>/.claude-worktrees/<name>` → `<proj>`), so a
- * session run in a worktree records and recalls memories under the main project bucket.
- */
-export declare function cwdToProjectSlug(cwd: string): string | null;
+export { cwdToProjectSlug, resolveProjectSlug } from '../core/project-root.js';
 /**
  * Index a Cowork (desktop app) audit.jsonl session.
  */
@@ -61,5 +51,4 @@ export declare function runFullIndex(db: Database.Database): Promise<IndexStats>
  * Re-index a single file (for file watcher).
  */
 export declare function reindexFile(db: Database.Database, filePath: string, sourceType: SourceType): void;
-export {};
 //# sourceMappingURL=indexer.d.ts.map

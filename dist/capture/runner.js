@@ -5,7 +5,7 @@
  * Usage: node dist/capture/runner.js <session_id> <transcript_path> [cwd]
  */
 import { openDatabase, initializeSchema } from '../core/database.js';
-import { cwdToProjectSlug } from '../indexer/indexer.js';
+import { resolveProjectSlug } from '../core/project-root.js';
 import { reflect } from './reflector.js';
 import { exportAll } from './export.js';
 async function main() {
@@ -18,7 +18,7 @@ async function main() {
     // sessions in OTel/Langfuse. The spawned `claude` CLI (Agent SDK) inherits process.env.
     // Override any inherited value so the nexus identity is clean.
     process.env.OTEL_RESOURCE_ATTRIBUTES = 'service.namespace=nexus,automation=nexus';
-    const project = cwd ? cwdToProjectSlug(cwd) : null;
+    const project = cwd ? resolveProjectSlug(cwd) : null;
     const db = openDatabase();
     initializeSchema(db);
     try {

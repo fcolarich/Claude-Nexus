@@ -1,12 +1,14 @@
 /**
  * Markdown export — materializes approved memories from the DB to disk.
  *
- * The DB is the system of record; this regenerates a human-readable mirror.
- * Phase 2 writes to capture.export_dir (a Nexus-owned sandbox). The deliberate
- * cutover repoints export_dir at ~/.claude/projects/<project>/memory once
- * capture is verified — only then does the harness load DB-generated memory.
+ * The DB is the system of record; this regenerates a human-readable mirror
+ * under capture.export_dir (a Nexus-owned sandbox, default
+ * ~/.claude/memories/exports). Deliberately NOT ~/.claude/projects/<project>/memory:
+ * that directory is auto-loaded in full by Claude Code's own native
+ * auto-memory feature at every session start, which would duplicate and
+ * conflict with prompt-runner's per-prompt relevance-floored recall.
  */
-import { mkdirSync, writeFileSync, readdirSync, rmSync } from 'fs';
+import { mkdirSync, writeFileSync, readdirSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import { stringify as yamlStringify } from 'yaml';
 import { getNexusConfig } from '../core/config.js';
@@ -78,6 +80,25 @@ export function exportAll(db, exportDirOverride) {
         }
         writeFileSync(join(dir, 'MEMORY.md'), index.join('\n'));
         files++;
+    }
+    // Prune project directories whose memory/ export Nexus wrote previously but
+    // which no longer correspond to any live bucket (project renamed, merged via
+    // project_aliases, or the memory entirely removed). Only ever deletes the
+    // memory/ subdir Nexus owns — a sibling .jsonl session file (Claude Code's
+    // own data) always survives, and the parent dir is removed only once empty.
+    if (existsSync(exportDir)) {
+        for (const entry of readdirSync(exportDir, { withFileTypes: true })) {
+            if (!entry.isDirectory() || byBucket.has(entry.name))
+                continue;
+            const projectDir = join(exportDir, entry.name);
+            const memDir = join(projectDir, 'memory');
+            if (!existsSync(memDir))
+                continue;
+            rmSync(memDir, { recursive: true, force: true });
+            if (readdirSync(projectDir).length === 0) {
+                rmSync(projectDir, { recursive: true, force: true });
+            }
+        }
     }
     return { buckets: byBucket.size, files, dir: exportDir };
 }

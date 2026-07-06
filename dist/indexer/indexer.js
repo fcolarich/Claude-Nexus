@@ -6,6 +6,7 @@ import { readFileSync, statSync, existsSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { generateEmbedding, ensureEmbeddingModelReady } from '../core/embeddings.js';
 import { vecToBlob } from '../core/memories.js';
+import { resolveProjectSlug } from '../core/project-root.js';
 function prepareStatements(db) {
     return {
         getAtomBySourceAndIndex: db.prepare(`SELECT id, content_hash FROM atoms WHERE source_path = ? AND id = ?`),
@@ -217,23 +218,10 @@ export function indexSession(db, stmts, jsonlPath, projectSlug) {
         // Skip malformed JSONL files
     }
 }
-/**
- * Derive the project slug from a cwd path, matching the current Claude Code
- * ~/.claude/projects/ convention: replace :, path separators, spaces, dots, and
- * underscores with '-'. ("LLM_Workflow_Optimization" → "C--Fran-LLM-Workflow-Optimization",
- * "Voodoo Magic" → "C--Fran-Voodoo-Magic", "com.x.y" → "com-x-y").
- *
- * Additionally collapses git worktree / branch checkouts onto their parent project
- * (`<proj>/.worktrees/<name>` and `<proj>/.claude-worktrees/<name>` → `<proj>`), so a
- * session run in a worktree records and recalls memories under the main project bucket.
- */
-export function cwdToProjectSlug(cwd) {
-    const slug = cwd
-        .replace(/[:\\/ ._]/g, '-')
-        .replace(/-+(claude-)?worktrees?-.*$/, '')
-        .replace(/^-+|-+$/g, '');
-    return slug.length >= 3 ? slug : null;
-}
+// cwdToProjectSlug / resolveProjectSlug live in ../core/project-root.js so the
+// lightweight UserPromptSubmit hook can use slug logic without pulling in the
+// rest of the indexer (glob, better-sqlite3 transitively via this module).
+export { cwdToProjectSlug, resolveProjectSlug } from '../core/project-root.js';
 /**
  * Index a Cowork (desktop app) audit.jsonl session.
  */
@@ -296,7 +284,7 @@ export function indexCoworkSession(db, session) {
         if (!title && summary)
             title = generateTitle(summary);
         // Use userSelectedFolders[0] as project (the actual folder the user worked in)
-        const project = userFolder ? cwdToProjectSlug(userFolder) : workspaceId;
+        const project = userFolder ? resolveProjectSlug(userFolder) : workspaceId;
         db.prepare(`
       INSERT INTO sessions (session_id, project, git_branch, slug, jsonl_path, started_at, last_active, status, message_count, subagent_count, summary, title, is_cowork, workspace_id, participant_id)
       VALUES (@session_id, @project, @git_branch, @slug, @jsonl_path, @started_at, @last_active, @status, @message_count, @subagent_count, @summary, @title, @is_cowork, @workspace_id, @participant_id)
