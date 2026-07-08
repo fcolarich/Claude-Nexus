@@ -42,15 +42,15 @@ const FIXED_VEC = (() => {
 
 const candA: MemoryCandidate = {
   title: 'No global variables', body: 'Avoid global variables in this project; use dependency injection instead.',
-  memory_type: 'convention', scope: 'project', decay_class: 'stable', confidence: 0.9, tags: ['style'],
+  memory_type: 'convention', scope: 'project', decay_class: 'stable', confidence: 0.9, tags: ['style'], promotion_target: 'none',
 };
 const candB: MemoryCandidate = {
   title: 'Async over promises', body: 'Prefer async/await syntax over raw promise chains for readability.',
-  memory_type: 'preference', scope: 'global', decay_class: 'stable', confidence: 0.9, tags: ['style'],
+  memory_type: 'preference', scope: 'global', decay_class: 'stable', confidence: 0.9, tags: ['style'], promotion_target: 'none',
 };
 const candC: MemoryCandidate = {
   title: 'No globals restated', body: 'Global state is discouraged here — inject dependencies through constructors.',
-  memory_type: 'convention', scope: 'project', decay_class: 'stable', confidence: 0.9, tags: ['style'],
+  memory_type: 'convention', scope: 'project', decay_class: 'stable', confidence: 0.9, tags: ['style'], promotion_target: 'none',
 };
 
 function freshDb() {

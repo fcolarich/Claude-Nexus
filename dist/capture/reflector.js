@@ -69,6 +69,7 @@ export async function reflect(db, opts, deps = {}) {
             source_session_id: opts.session_id,
             discovered_from: null,
             tags: c.tags,
+            promotion_target: c.promotion_target,
         });
         if (res.inserted) {
             inserted++;

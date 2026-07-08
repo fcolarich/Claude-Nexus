@@ -41,7 +41,7 @@ describe('flagStaleMemories', () => {
   const base: Omit<MemoryInput, 'title' | 'body'> = {
     memory_type: 'convention', scope: 'project', project: 'p', confidence: 0.8,
     decay_class: 'implementation', review_status: 'approved',
-    source_session_id: null, discovered_from: null, tags: [],
+    source_session_id: null, discovered_from: null, tags: [], promotion_target: 'none',
   };
 
   it('flags decayed memories and rewrites stale diagnostics idempotently', () => {

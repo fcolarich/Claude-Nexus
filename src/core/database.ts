@@ -57,6 +57,7 @@ const MIGRATIONS: Migration[] = [
   { version: 6, name: 'corpus-expansion', up: migrateCorpusExpansion },
   { version: 7, name: 'remove-task-support', up: migrateRemoveTaskSupport },
   { version: 8, name: 'project-aliases', up: migrateProjectAliases },
+  { version: 9, name: 'promotion-classification', up: migratePromotionClassification },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -395,6 +396,12 @@ function migrateProjectAliases(db: Database.Database): void {
       created_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+}
+
+function migratePromotionClassification(db: Database.Database): void {
+  try { db.exec(`ALTER TABLE memories ADD COLUMN promotion_target TEXT NOT NULL DEFAULT 'none' CHECK(promotion_target IN ('none','adr','ddr','best_practice','recipe','note'))`); } catch {}
+  try { db.exec(`ALTER TABLE memories ADD COLUMN promoted_to TEXT`); } catch {}
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_promotion ON memories(promotion_target) WHERE promotion_target != 'none'`);
 }
 
 function migrateCoworkSupport(db: Database.Database): void {

@@ -4,7 +4,7 @@
  * later, by recall.
  */
 import Database from 'better-sqlite3';
-import type { Memory, MemoryType, DecayClass, ReviewStatus, AtomScope } from './types.js';
+import type { Memory, MemoryType, DecayClass, ReviewStatus, AtomScope, PromotionTarget } from './types.js';
 export interface MemoryInput {
     title: string;
     body: string;
@@ -17,6 +17,7 @@ export interface MemoryInput {
     source_session_id: string | null;
     discovered_from: string | null;
     tags: string[];
+    promotion_target: PromotionTarget;
     load_at_init?: boolean;
 }
 /** Content-addressed id — identical (type, body) collapses to one row. */

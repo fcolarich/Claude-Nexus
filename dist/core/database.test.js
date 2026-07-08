@@ -114,6 +114,53 @@ describe('schema migrations', () => {
         expect(db.prepare(`SELECT COUNT(*) AS c FROM atoms`).get().c).toBe(4);
         db.close();
     });
+    it('migration v9: promotion_target and promoted_to columns exist after initializeSchema', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(columnExists(db, 'memories', 'promotion_target')).toBe(true);
+        expect(columnExists(db, 'memories', 'promoted_to')).toBe(true);
+        expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+        db.close();
+    });
+    it('migration v9: partial index idx_memories_promotion exists', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        const idx = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memories_promotion'`).get();
+        expect(idx).toBeTruthy();
+        db.close();
+    });
+    it('migration v9: promotion_target defaults to "none" for rows inserted without specifying it', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        db.prepare(`
+      INSERT INTO memories (id, title, body, memory_type, content_hash)
+      VALUES ('test-promo-default', 'Test', 'body', 'insight', 'hash-promo')
+    `).run();
+        const row = db.prepare(`SELECT promotion_target FROM memories WHERE id = 'test-promo-default'`).get();
+        expect(row.promotion_target).toBe('none');
+        db.close();
+    });
+    it('migration v9: promotion_target CHECK rejects invalid values', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(() => {
+            db.prepare(`
+        INSERT INTO memories (id, title, body, memory_type, content_hash, promotion_target)
+        VALUES ('bad-promo', 'Bad', 'body', 'insight', 'hash-bad', 'invalid_target')
+      `).run();
+        }).toThrow();
+        db.close();
+    });
+    it('migration v9: re-running initializeSchema is idempotent (schema_version row count unchanged)', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        const afterFirst = db.prepare(`SELECT COUNT(*) AS c FROM schema_version`).get().c;
+        initializeSchema(db);
+        const afterSecond = db.prepare(`SELECT COUNT(*) AS c FROM schema_version`).get().c;
+        expect(afterSecond).toBe(afterFirst);
+        expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+        db.close();
+    });
     it('migration v7 removes task support while preserving corpus-expansion columns', () => {
         const db = openDatabase(':memory:');
         // Seed a v6-shaped atoms table: has linked_at + project_doc + task columns,

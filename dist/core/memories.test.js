@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { openDatabase, initializeSchema } from './database.js';
-import { rememberBatch, getMemory } from './memories.js';
+import { insertMemory, rememberBatch, getMemory } from './memories.js';
 /** Minimal in-memory DB with schema, no embedding (embed injected as no-op). */
 function freshDb() {
     const db = openDatabase(':memory:');
@@ -22,6 +22,7 @@ function item(overrides = {}) {
         source_session_id: null,
         discovered_from: null,
         tags: [],
+        promotion_target: 'none',
         load_at_init: false,
         ...overrides,
     };
@@ -58,6 +59,33 @@ describe('rememberBatch', () => {
         const embed = async (id) => { embedded.push(id); return true; };
         const res = await rememberBatch(db, [item({ body: 'e1' }), item({ body: 'e2' })], embed);
         expect(embedded.sort()).toEqual(res.results.map(r => r.id).sort());
+        db.close();
+    });
+});
+describe('insertMemory promotion_target round-trip', () => {
+    it('persists promotion_target and leaves promoted_to null', () => {
+        const db = freshDb();
+        const input = {
+            title: 'ADR candidate',
+            body: 'some architecture decision body',
+            memory_type: 'decision',
+            scope: 'project',
+            project: 'test-project',
+            confidence: 0.9,
+            decay_class: 'stable',
+            review_status: 'approved',
+            source_session_id: null,
+            discovered_from: null,
+            tags: [],
+            promotion_target: 'adr',
+            load_at_init: false,
+        };
+        const { id, inserted } = insertMemory(db, input);
+        expect(inserted).toBe(true);
+        const mem = getMemory(db, id);
+        expect(mem).toBeTruthy();
+        expect(mem.promotion_target).toBe('adr');
+        expect(mem.promoted_to).toBeNull();
         db.close();
     });
 });

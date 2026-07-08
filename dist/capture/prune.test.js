@@ -4,7 +4,7 @@ import { initializeSchema } from '../core/database.js';
 import { insertMemory, deleteMemory } from '../core/memories.js';
 import { selectNarrationMemories } from './prune.js';
 function seed(db) {
-    const base = { scope: 'project', project: 'p', confidence: 0.9, review_status: 'approved', source_session_id: 's', discovered_from: null, tags: [] };
+    const base = { scope: 'project', project: 'p', confidence: 0.9, review_status: 'approved', source_session_id: 's', discovered_from: null, tags: [], promotion_target: 'none' };
     insertMemory(db, { ...base, title: 'Odin soft dependency', body: 'Odin is a hard dependency only for some packages.', memory_type: 'decision', decay_class: 'architecture' });
     insertMemory(db, { ...base, title: 'Doc spine initialized', body: 'Scaffold complete for the project.', memory_type: 'handoff', decay_class: 'implementation' });
     insertMemory(db, { ...base, title: 'Vinspector knowledge extraction completed', body: 'Extracted patterns from the plugin.', memory_type: 'reference', decay_class: 'implementation' });

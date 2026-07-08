@@ -51,11 +51,11 @@ const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString
 
 const candConvention: MemoryCandidate = {
   title: 'No hardcoded paths', body: 'Paths must be configurable, never hardcoded in source.',
-  memory_type: 'convention', scope: 'project', decay_class: 'stable', confidence: 0.9, tags: ['config'],
+  memory_type: 'convention', scope: 'project', decay_class: 'stable', confidence: 0.9, tags: ['config'], promotion_target: 'none',
 };
 const candPreference: MemoryCandidate = {
   title: 'Lint before commit', body: 'Always run the linter before committing changes.',
-  memory_type: 'preference', scope: 'global', decay_class: 'stable', confidence: 0.9, tags: ['workflow'],
+  memory_type: 'preference', scope: 'global', decay_class: 'stable', confidence: 0.9, tags: ['workflow'], promotion_target: 'none',
 };
 
 describe('integration: capture -> recall', () => {
@@ -92,7 +92,7 @@ describe('integration: decay lifecycle', () => {
     const base: Omit<MemoryInput, 'title' | 'body'> = {
       memory_type: 'insight', scope: 'project', project: 'proj', confidence: 0.8,
       decay_class: 'implementation', review_status: 'approved',
-      source_session_id: null, discovered_from: null, tags: [],
+      source_session_id: null, discovered_from: null, tags: [], promotion_target: 'none',
     };
     const { id } = insertMemory(db, { ...base, title: 'Impl detail', body: 'an implementation detail' });
     db.prepare(`UPDATE memories SET last_verified_at=? WHERE id=?`).run(daysAgo(400), id);
@@ -173,7 +173,7 @@ describe('integration: consolidation', () => {
     const base: Omit<MemoryInput, 'title' | 'body'> = {
       memory_type: 'convention', scope: 'project', project: 'proj', confidence: 0.9,
       decay_class: 'stable', review_status: 'approved',
-      source_session_id: null, discovered_from: null, tags: [],
+      source_session_id: null, discovered_from: null, tags: [], promotion_target: 'none',
     };
     insertMemory(db, { ...base, title: 'A', body: 'first phrasing of the rule', confidence: 0.9 });
     insertMemory(db, { ...base, title: 'B', body: 'second phrasing of the rule', confidence: 0.7 });

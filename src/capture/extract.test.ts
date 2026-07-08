@@ -10,6 +10,7 @@ function cand(overrides: Partial<MemoryCandidate>): MemoryCandidate {
     decay_class: 'implementation',
     confidence: 0.8,
     tags: ['a'],
+    promotion_target: 'none',
     ...overrides,
   };
 }
@@ -22,6 +23,7 @@ const valid = {
   decay_class: 'stable',
   confidence: 0.9,
   tags: ['style', 'communication'],
+  promotion_target: 'none',
 };
 
 describe('parseCandidates', () => {
@@ -79,6 +81,28 @@ describe('parseCandidates', () => {
     ]);
     expect(parseCandidates(raw)).toHaveLength(0);
   });
+
+  it.each(['none', 'adr', 'ddr', 'best_practice', 'recipe', 'note'] as const)(
+    'passes valid promotion_target %s through unchanged',
+    (target) => {
+      const out = parseCandidates(JSON.stringify([{ ...valid, promotion_target: target }]));
+      expect(out).toHaveLength(1);
+      expect(out[0].promotion_target).toBe(target);
+    },
+  );
+
+  it('defaults promotion_target to none when field is missing', () => {
+    const { promotion_target: _omitted, ...withoutTarget } = valid;
+    const out = parseCandidates(JSON.stringify([withoutTarget]));
+    expect(out).toHaveLength(1);
+    expect(out[0].promotion_target).toBe('none');
+  });
+
+  it('defaults promotion_target to none for an invalid value', () => {
+    const out = parseCandidates(JSON.stringify([{ ...valid, promotion_target: 'bogus' }]));
+    expect(out).toHaveLength(1);
+    expect(out[0].promotion_target).toBe('none');
+  });
 });
 
 describe('refineCandidates', () => {
@@ -129,5 +153,30 @@ describe('refineCandidates', () => {
     const out = refineCandidates([c]);
     expect(out).toHaveLength(1);
     expect(out[0].memory_type).toBe('decision');
+  });
+
+  it('forces promotion_target to none on a restatement even if input had adr', () => {
+    const c = cand({
+      title: 'Project root resolution',
+      body: 'Codified in ADR-051.',
+      memory_type: 'decision',
+      promotion_target: 'adr',
+    });
+    const out = refineCandidates([c]);
+    expect(out).toHaveLength(1);
+    expect(out[0].memory_type).toBe('reference');
+    expect(out[0].promotion_target).toBe('none');
+  });
+
+  it('preserves promotion_target on a non-restatement candidate', () => {
+    const c = cand({
+      title: 'SQLite FTS5 for semantic search',
+      body: 'Use SQLite FTS5 for full-text search. Avoids external search infra.',
+      memory_type: 'insight',
+      promotion_target: 'best_practice',
+    });
+    const out = refineCandidates([c]);
+    expect(out).toHaveLength(1);
+    expect(out[0].promotion_target).toBe('best_practice');
   });
 });

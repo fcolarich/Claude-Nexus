@@ -140,6 +140,7 @@ export async function distillMemories(db, embedFn = generateEmbedding, callFn = 
             discovered_from: null,
             tags,
             load_at_init: cluster.some(c => c.load_at_init === 1),
+            promotion_target: 'none',
         });
         if (!ins.inserted)
             continue;

@@ -1,0 +1,171 @@
+{
+	"feature": "Promotion Classification",
+	"branch": "feature/promotion-classification",
+	"tasks": [
+		{
+			"id": "task-001",
+			"title": "Add PromotionTarget union type to types.ts",
+			"description": "In src/core/types.ts, add `export type PromotionTarget = 'none' | 'adr' | 'ddr' | 'best_practice' | 'recipe' | 'note';` next to MemoryType (currently line 9). Type declaration only — no Memory-interface change here (that is task-002). No runtime code, compiler is the check.",
+			"files": ["src/core/types.ts"],
+			"depends_on": [],
+			"estimated_tokens": 1200,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		},
+		{
+			"id": "task-002",
+			"title": "Add promotion_target and promoted_to to the Memory interface",
+			"description": "In src/core/types.ts, extend the Memory interface (lines 44-66) with `promotion_target: PromotionTarget;` (NOT NULL, default 'none' at the DB) and `promoted_to: string | null;` (artifact ref once promoted, else null). Mirrors the DB columns added in task-006. Import/use the PromotionTarget from task-001.",
+			"files": ["src/core/types.ts"],
+			"depends_on": ["task-001"],
+			"estimated_tokens": 1200,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		},
+		{
+			"id": "task-003",
+			"title": "Add promotion_target to MemoryCandidate + PROMOTION_TARGETS set + SYSTEM_PROMPT classification block",
+			"description": "In src/capture/extract.ts: (1) add `promotion_target: PromotionTarget;` to MemoryCandidate (lines 12-20) and import PromotionTarget from ../core/types.js. (2) Add `const PROMOTION_TARGETS = new Set<string>(['none','adr','ddr','best_practice','recipe','note']);` as a sibling of MEMORY_TYPES (line 25). (3) Append the classification block to SYSTEM_PROMPT (lines 48-89) immediately AFTER the memory_type block (ends ~line 60), VERBATIM from spec §1 — the `promotion_target — should this memory graduate...` list of six options plus the three Rules lines (INDEPENDENT of memory_type, be conservative, never flag narration/restatements/derivable facts). Also add `promotion_target` to the JSON output-keys sentence at the end of SYSTEM_PROMPT (line 89). Do NOT change parseCandidates/refineCandidates yet (tasks 004/005). Guardrail D-008: no recall/injection/review_status changes.",
+			"files": ["src/capture/extract.ts"],
+			"depends_on": ["task-001"],
+			"estimated_tokens": 3200,
+			"complexity": "complex",
+			"constraints": ["D-008"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-004",
+			"title": "parseCandidates validates promotion_target, defaults 'none'; add parse tests",
+			"description": "In src/capture/extract.ts parseCandidates (lines 92-126): read `o.promotion_target`, coerce to 'none' when missing or not in PROMOTION_TARGETS, and include it on the pushed object (line 122). Backward compatible — old JSON without the field parses as 'none' (AC-5). Write Vitest cases in src/capture/extract.test.ts FIRST (TDD): each of the six targets round-trips; missing field -> 'none'; invalid/garbage value -> 'none'. Follow existing test-file style (tabs, Vitest).",
+			"files": ["src/capture/extract.ts", "src/capture/extract.test.ts"],
+			"depends_on": ["task-003"],
+			"estimated_tokens": 2600,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		},
+		{
+			"id": "task-005",
+			"title": "refineCandidates forces promotion_target='none' on restatements; add force-none tests",
+			"description": "In src/capture/extract.ts refineCandidates (lines 134-150): in the existing restatement branch (`c.memory_type==='decision' && RESTATEMENT_RE.test(c.body) && c.body.length<=200`, line 139), add `promotion_target: 'none'` to the emitted reference object (currently spreads ...c and overrides memory_type/decay_class/body at line 143) so a codified decision never re-enters review even if Haiku wrongly tagged it 'adr'. Do NOT alter the restatement gate condition or the split/append body logic (lines 141-142). Write Vitest cases FIRST in src/capture/extract.test.ts: a decision body matching RESTATEMENT_RE carrying input promotion_target='adr' -> emitted reference has promotion_target='none'; a non-restatement candidate preserves its promotion_target.",
+			"files": ["src/capture/extract.ts", "src/capture/extract.test.ts"],
+			"depends_on": ["task-004"],
+			"estimated_tokens": 2400,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		},
+		{
+			"id": "task-006",
+			"title": "Add migration v9 (promotion-classification) to database.ts",
+			"description": "In src/core/database.ts: append `{ version: 9, name: 'promotion-classification', up: migratePromotionClassification }` to MIGRATIONS[] (lines 51-60) — LATEST_SCHEMA_VERSION auto-derives (line 62). Define `function migratePromotionClassification(db: Database.Database): void` mirroring migrateCoworkSupport (lines 400-404) — D-002 numbered-migration framework with swallowed try/catch ALTERs, NOT PRAGMA checks. Body exactly: `try { db.exec(\"ALTER TABLE memories ADD COLUMN promotion_target TEXT NOT NULL DEFAULT 'none' CHECK(promotion_target IN ('none','adr','ddr','best_practice','recipe','note'))\"); } catch {}` then `try { db.exec('ALTER TABLE memories ADD COLUMN promoted_to TEXT'); } catch {}` then `db.exec(\"CREATE INDEX IF NOT EXISTS idx_memories_promotion ON memories(promotion_target) WHERE promotion_target != 'none'\");`. CHECK-on-ALTER is valid in better-sqlite3. Existing rows auto-fill 'none' via the NOT NULL DEFAULT. Tabs for indentation.",
+			"files": ["src/core/database.ts"],
+			"depends_on": [],
+			"estimated_tokens": 2400,
+			"complexity": "complex",
+			"constraints": ["D-002"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-007",
+			"title": "Migration v9 tests: columns present, partial index, idempotency, pre-existing rows default 'none'",
+			"description": "Add Vitest tests for migration v9 against a temp/in-memory better-sqlite3 DB, following the existing database test style. Cases: (1) fresh DB after initializeSchema -> schema_version has 9, PRAGMA table_info(memories) shows promotion_target and promoted_to, index idx_memories_promotion exists. (2) Idempotency (AC-6): initializeSchema twice = no-op (v9 not re-applied); directly calling migratePromotionClassification a second time swallows duplicate-column errors and does not throw. (3) Insert a memory row BEFORE the ALTER (or assert on an existing baseline row) -> after migrate it reads promotion_target='none'. Locate the file the existing database migration tests live in and add there (or a sibling *.test.ts).",
+			"files": ["src/core/database.test.ts"],
+			"depends_on": ["task-006"],
+			"estimated_tokens": 2600,
+			"complexity": "simple",
+			"constraints": ["D-002"],
+			"risk": "low"
+		},
+		{
+			"id": "task-008",
+			"title": "Add promotion_target to MemoryInput and the insertMemory INSERT (D-001)",
+			"description": "In src/core/memories.ts: add required `promotion_target: PromotionTarget;` to MemoryInput (lines 12-25) and import PromotionTarget from ./types.js. In insertMemory (lines 63-89) add `promotion_target` to BOTH the column list and the VALUES/@params of the `INSERT OR IGNORE` (lines 65-87), binding `promotion_target: input.promotion_target`. Per D-001 this insert is INSERT OR IGNORE with NO SET clause — do not add an upsert. promoted_to is deliberately NOT written here (starts NULL via column default). Making promotion_target required forces every call site to supply it (compiler surfaces gaps).",
+			"files": ["src/core/memories.ts"],
+			"depends_on": ["task-002", "task-006"],
+			"estimated_tokens": 2200,
+			"complexity": "simple",
+			"constraints": ["D-001"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-009",
+			"title": "insertMemory round-trip test for promotion_target",
+			"description": "Add a Vitest round-trip test (in the existing memories test file or a sibling): insertMemory with promotion_target='adr' -> getMemory returns promotion_target='adr' and promoted_to=null. Requires migration v9 applied to the test DB. Follow existing memories test setup (tabs, Vitest, temp DB).",
+			"files": ["src/core/memories.test.ts"],
+			"depends_on": ["task-008"],
+			"estimated_tokens": 1800,
+			"complexity": "simple",
+			"constraints": ["D-001"],
+			"risk": "low"
+		},
+		{
+			"id": "task-010",
+			"title": "Reflector passthrough + fix existing MemoryCandidate/MemoryInput fixtures",
+			"description": "In src/capture/reflector.ts, add `promotion_target: c.promotion_target` to the insertMemory input object at the call site (lines 107-119). Do NOT touch the dedup short-circuit path (lines 99-103, touchMemory only) — D-007: merge is a reconfirm, first-stored classification wins, no field-merge. Then fix compile fallout: grep for any existing test/fixture that constructs a MemoryCandidate or MemoryInput literal (now that promotion_target is required) and add `promotion_target: 'none'`. Goal: existing suite compiles and stays green (AC-4).",
+			"files": ["src/capture/reflector.ts", "src/capture/reflector.test.ts"],
+			"depends_on": ["task-008"],
+			"estimated_tokens": 2400,
+			"complexity": "simple",
+			"constraints": ["D-007"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-011",
+			"title": "Add nexus_promotions MCP tool (read-only listing, grouped by target)",
+			"description": "In src/mcp/server.ts add `nexus_promotions` with params `{ project: z.string().optional(), cwd: z.string().optional(), target: z.enum(['adr','ddr','best_practice','recipe','note']).optional() }`. D-004 query: `SELECT id, title, body, confidence, source_session_id, promotion_target FROM memories WHERE promotion_target != 'none' AND promoted_to IS NULL AND review_status != 'rejected' AND superseded_by IS NULL` + optional `AND project = ?` (resolve via resolveProjectFromCwd at line 63 when cwd/project given) and `AND promotion_target = ?`; `ORDER BY promotion_target, confidence DESC`. Render grouped-by-target markdown bullets (id/title/body/confidence/source_session_id). D-003 shape: mirror nexus_sessions (lines 257-281) — return `{ content:[{type:'text',text}] }`; empty result -> text 'No promotion candidates found.'. Read-only — never writes review_status (D-008 guardrail).",
+			"files": ["src/mcp/server.ts"],
+			"depends_on": ["task-008"],
+			"estimated_tokens": 3000,
+			"complexity": "complex",
+			"constraints": ["D-003", "D-004", "D-008"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-012",
+			"title": "Add nexus_mark_promoted MCP tool (set promoted_to, rewrite body to thin pointer, re-embed)",
+			"description": "In src/mcp/server.ts add `nexus_mark_promoted` with params `{ id: z.string(), artifact_ref: z.string() }`. Load the memory (getMemory); if absent -> `{ content:[{type:'text',text:'Error: memory not found with id ...'}] }`, no write (mirror nexus_set_init not-found, lines 200-227). D-006 body rewrite (reuse refineCandidates split/append, extract.ts:141-142): `firstSentence = body.split(/(?<=[.!?])\\s/)[0].trim()`, new body = firstSentence + ' → ' + artifact_ref ONLY if firstSentence does not already contain artifact_ref; title unchanged. Single `UPDATE memories SET body=?, promoted_to=?, updated_at=datetime('now') WHERE id=?` (FTS auto-syncs via memories_au trigger). D-005: after the UPDATE call `embedMemory(db, id)` to re-embed the rewritten body (import from ../core/memories.js) — best-effort: if it returns false the tool still succeeds. review_status untouched (D-008). D-003 shape: one-line confirmation text on success.",
+			"files": ["src/mcp/server.ts"],
+			"depends_on": ["task-008"],
+			"estimated_tokens": 3200,
+			"complexity": "complex",
+			"constraints": ["D-003", "D-005", "D-006", "D-008"],
+			"risk": "high"
+		},
+		{
+			"id": "task-013",
+			"title": "MCP tool tests for nexus_promotions and nexus_mark_promoted",
+			"description": "Add Vitest tests against a temp DB seeded via insertMemory (migration v9 applied). nexus_promotions: returns only rows matching all four predicates; excludes promoted_to-set, review_status='rejected', superseded_by-set, and 'none'; target filter narrows to one group; empty -> 'No promotion candidates found.'. nexus_mark_promoted: sets promoted_to; body ends '→ <artifact_ref>' (AC-3 with 'ADR-063'); title unchanged; review_status unchanged; unknown id -> error text with no write; re-embed invoked (assert via injected embed fake or memories_vec rowid change) AND tool still succeeds when embed returns false (D-005). Exercise the tool handlers directly (import the module or extract the handler) following existing server/tool test patterns.",
+			"files": ["src/mcp/server.test.ts"],
+			"depends_on": ["task-011", "task-012"],
+			"estimated_tokens": 3400,
+			"complexity": "complex",
+			"constraints": ["D-003", "D-004", "D-005", "D-006"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-014",
+			"title": "OPTIONAL / SKIPPABLE — dashboard 'promotion candidates' filter chip",
+			"description": "LOWEST PRIORITY, EXPLICITLY OPTIONAL — skip entirely if effort balloons or precision is not yet validated (spec §3, design §Constraints, spec implementation-order step 5). Add a 'promotion candidates' filter chip to the memories view: a read-only web endpoint in src/web that runs the D-004 nexus_promotions predicates, plus a frontend chip in src/frontend that toggles it on the existing memories column. Do NOT change recall/injection (D-008). Not on the acceptance path — dropping this task does not affect any AC. Confirm exact web/frontend file paths at implementation time before editing.",
+			"files": ["src/web/server.ts", "src/frontend"],
+			"depends_on": ["task-011"],
+			"estimated_tokens": 3000,
+			"complexity": "complex",
+			"constraints": ["D-004", "D-008"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-015",
+			"title": "Acceptance validation — full suite green + backward-compat checks",
+			"description": "Run `npm test` and confirm ALL tests pass — the ~107 existing tests stay green (AC-4) plus the new extract/database/memories/mcp tests. Verify at the suite level: old extraction JSON without promotion_target parses as 'none' (AC-5, via task-004 cases), migration v9 is idempotent on re-open (AC-6, via task-007), and nexus_mark_promoted leaves a body ending '→ ADR-063' (AC-3, via task-013). This is a validation gate, not new production code; if red, route back to the owning task. Note: SYSTEM_PROMPT classification precision (AC-1 model behavior) is a MANUAL end-to-end check (run one real session) — not automatable in the suite.",
+			"files": [],
+			"depends_on": ["task-013", "task-010"],
+			"estimated_tokens": 1800,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		}
+	]
+}

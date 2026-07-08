@@ -28,7 +28,7 @@ import {
   listAtoms,
 } from '../core/search.js';
 import { recallMemories } from '../core/recall.js';
-import { verifyMemory, recordFeedback, insertMemory, embedMemory, rememberBatch } from '../core/memories.js';
+import { verifyMemory, recordFeedback, insertMemory, embedMemory, rememberBatch, getMemory } from '../core/memories.js';
 import type { MemoryType, DecayClass } from '../core/types.js';
 import { consolidateMemories } from '../core/consolidate.js';
 import { distillMemories } from '../core/distill.js';
@@ -367,6 +367,7 @@ server.tool(
       source_session_id: null,
       discovered_from: null,
       tags: tags ?? [],
+      promotion_target: 'none',
       load_at_init: load_at_init ?? false,
     });
 
@@ -421,6 +422,7 @@ server.tool(
         source_session_id: null,
         discovered_from: null,
         tags: m.tags ?? tags ?? [],
+        promotion_target: 'none' as const,
         load_at_init: m.load_at_init ?? load_at_init ?? false,
       };
     });
@@ -674,6 +676,110 @@ server.tool(
     }
 
     return { content: [{ type: 'text', text: parts.join('\n\n') }] };
+  }
+);
+
+// ── nexus_promotions ─────────────────────────────────────────────────
+
+server.tool(
+  'nexus_promotions',
+  'List memories flagged as promotion candidates (promotion_target != none, not yet promoted, not rejected, not superseded). Grouped by target type. Read-only — never writes.',
+  {
+    project: z.string().optional().describe('Filter by project slug'),
+    cwd:     z.string().optional().describe('Caller working directory — derives project slug automatically. Use instead of project.'),
+    target:  z.enum(['adr', 'ddr', 'best_practice', 'recipe', 'note']).optional().describe('Filter by promotion target type'),
+  },
+  async ({ project, cwd, target }) => {
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+
+    let sql = `SELECT id, title, body, confidence, source_session_id, promotion_target
+               FROM memories
+               WHERE promotion_target != 'none'
+                 AND promoted_to IS NULL
+                 AND review_status != 'rejected'
+                 AND superseded_by IS NULL`;
+    const params: (string)[] = [];
+
+    if (effectiveProject) {
+      sql += ` AND project = ?`;
+      params.push(effectiveProject);
+    }
+    if (target) {
+      sql += ` AND promotion_target = ?`;
+      params.push(target);
+    }
+
+    sql += ` ORDER BY promotion_target, confidence DESC`;
+
+    const rows = db.prepare(sql).all(...params) as {
+      id: string;
+      title: string;
+      body: string;
+      confidence: number;
+      source_session_id: string | null;
+      promotion_target: string;
+    }[];
+
+    if (rows.length === 0) {
+      return { content: [{ type: 'text', text: 'No promotion candidates found.' }] };
+    }
+
+    // Group by promotion_target
+    const grouped = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const bucket = grouped.get(row.promotion_target) ?? [];
+      bucket.push(row);
+      grouped.set(row.promotion_target, bucket);
+    }
+
+    const sections: string[] = [];
+    for (const [tgt, candidates] of grouped) {
+      const lines = candidates.map(c => {
+        const session = c.source_session_id ? ` session:${c.source_session_id.slice(0, 8)}` : '';
+        const conf = (c.confidence * 100).toFixed(0);
+        return `- **${c.title}** (${conf}%${session})\n  ${c.body.slice(0, 200).replace(/\n/g, ' ')}\n  _id: ${c.id}_`;
+      });
+      sections.push(`## ${tgt}\n\n${lines.join('\n')}`);
+    }
+
+    return {
+      content: [{ type: 'text', text: `# Promotion Candidates (${rows.length} total)\n\n${sections.join('\n\n')}` }],
+    };
+  }
+);
+
+// ── nexus_mark_promoted ──────────────────────────────────────────────
+
+server.tool(
+  'nexus_mark_promoted',
+  'Mark a memory as promoted to an external artifact (ADR, DDR, best-practice doc, etc.). Rewrites the body to a thin pointer (first sentence → artifact_ref) and re-embeds. review_status is never touched.',
+  {
+    id:           z.string().describe('Memory id to promote'),
+    artifact_ref: z.string().describe('Reference to the promoted artifact (e.g. "ADR-013", "ddr-005-promotion-classification.md")'),
+  },
+  async ({ id, artifact_ref }) => {
+    const memory = getMemory(db, id);
+    if (!memory) {
+      return { content: [{ type: 'text', text: `Error: memory not found with id ${id}` }] };
+    }
+
+    // D-006: rewrite body to thin pointer — first sentence → artifact_ref,
+    // appending the ref only if it is not already present.
+    const firstSentence = memory.body.split(/(?<=[.!?])\s/)[0].trim();
+    const newBody = firstSentence && !firstSentence.includes(artifact_ref)
+      ? `${firstSentence} → ${artifact_ref}`
+      : firstSentence;
+
+    db.prepare(
+      `UPDATE memories SET body = ?, promoted_to = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(newBody, artifact_ref, id);
+
+    // D-005: re-embed the rewritten body — best-effort, failure does not fail the tool
+    embedMemory(db, id).catch(() => {});
+
+    return {
+      content: [{ type: 'text', text: `"${memory.title}" marked promoted → ${artifact_ref}` }],
+    };
   }
 );
 

@@ -31,7 +31,7 @@ const fakeMerge = async () => JSON.stringify({
 const base: Omit<MemoryInput, 'title' | 'body'> = {
   memory_type: 'convention', scope: 'project', project: 'p', confidence: 0.8,
   decay_class: 'stable', review_status: 'approved',
-  source_session_id: null, discovered_from: null, tags: [],
+  source_session_id: null, discovered_from: null, tags: [], promotion_target: 'none',
 };
 const liveCount = (db: ReturnType<typeof freshDb>) =>
   (db.prepare(`SELECT COUNT(*) c FROM memories WHERE superseded_by IS NULL`).get() as { c: number }).c;

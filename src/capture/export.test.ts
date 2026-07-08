@@ -20,6 +20,7 @@ const base = {
   source_session_id: null,
   discovered_from: null,
   tags: ['t'],
+  promotion_target: 'none' as const,
 };
 
 describe('exportAll', () => {

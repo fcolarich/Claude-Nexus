@@ -44,10 +44,10 @@ export function insertMemory(db, input) {
     const res = db.prepare(`
     INSERT OR IGNORE INTO memories
       (id, title, body, memory_type, scope, project, confidence, decay_class,
-       review_status, source_session_id, discovered_from, tags, content_hash, load_at_init)
+       review_status, promotion_target, source_session_id, discovered_from, tags, content_hash, load_at_init)
     VALUES
       (@id, @title, @body, @memory_type, @scope, @project, @confidence, @decay_class,
-       @review_status, @source_session_id, @discovered_from, @tags, @content_hash, @load_at_init)
+       @review_status, @promotion_target, @source_session_id, @discovered_from, @tags, @content_hash, @load_at_init)
   `).run({
         id,
         title: input.title,
@@ -58,6 +58,7 @@ export function insertMemory(db, input) {
         confidence: input.confidence,
         decay_class: input.decay_class,
         review_status: input.review_status,
+        promotion_target: input.promotion_target,
         source_session_id: input.source_session_id,
         discovered_from: input.discovered_from,
         tags: JSON.stringify(input.tags),

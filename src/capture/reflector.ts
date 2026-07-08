@@ -116,6 +116,7 @@ export async function reflect(
       source_session_id: opts.session_id,
       discovered_from: null,
       tags: c.tags,
+      promotion_target: c.promotion_target,
     });
 
     if (res.inserted) {

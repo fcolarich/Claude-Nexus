@@ -46,7 +46,7 @@ describe('buildProjectAliases', () => {
 describe('applyProjectAliases', () => {
   it('merges memories, atoms, and sessions onto the canonical slug', () => {
     const db = freshDb();
-    insertMemory(db, { scope: 'project', project: 'old-slug', title: 'A', body: 'body a', memory_type: 'convention', decay_class: 'stable', confidence: 0.8, review_status: 'approved', source_session_id: null, discovered_from: null, tags: [] });
+    insertMemory(db, { scope: 'project', project: 'old-slug', title: 'A', body: 'body a', memory_type: 'convention', decay_class: 'stable', confidence: 0.8, review_status: 'approved', source_session_id: null, discovered_from: null, tags: [], promotion_target: 'none' });
     insertSession(db, { id: 's1', project: 'old-slug', cwd: 'x', lastActive: '2026-06-01' });
 
     const report = applyProjectAliases(db, [{ alias: 'old-slug', canonical: 'new-slug' }], false);
@@ -73,7 +73,7 @@ describe('migrateProjects', () => {
   it('applies aliases and calls the injected consolidate + export dependencies', async () => {
     const db = freshDb();
     insertSession(db, { id: 's1', project: 'old-slug', cwd: 'C:\\x', lastActive: '2026-06-01' });
-    insertMemory(db, { scope: 'project', project: 'old-slug', title: 'A', body: 'body a', memory_type: 'convention', decay_class: 'stable', confidence: 0.8, review_status: 'approved', source_session_id: null, discovered_from: null, tags: [] });
+    insertMemory(db, { scope: 'project', project: 'old-slug', title: 'A', body: 'body a', memory_type: 'convention', decay_class: 'stable', confidence: 0.8, review_status: 'approved', source_session_id: null, discovered_from: null, tags: [], promotion_target: 'none' });
     resolveProjectSlugMock.mockReturnValue('new-slug');
 
     const consolidate = vi.fn().mockResolvedValue({ embedded: 0, merged: 2, pruned: 0 });

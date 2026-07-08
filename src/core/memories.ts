@@ -6,7 +6,7 @@
 
 import Database from 'better-sqlite3';
 import { createHash } from 'crypto';
-import type { Memory, MemoryType, DecayClass, ReviewStatus, AtomScope } from './types.js';
+import type { Memory, MemoryType, DecayClass, ReviewStatus, AtomScope, PromotionTarget } from './types.js';
 import { generateEmbedding, ensureEmbeddingModelReady } from './embeddings.js';
 
 export interface MemoryInput {
@@ -21,6 +21,7 @@ export interface MemoryInput {
   source_session_id: string | null;
   discovered_from: string | null;
   tags: string[];
+  promotion_target: PromotionTarget;
   load_at_init?: boolean;
 }
 
@@ -65,10 +66,10 @@ export function insertMemory(db: Database.Database, input: MemoryInput): { id: s
   const res = db.prepare(`
     INSERT OR IGNORE INTO memories
       (id, title, body, memory_type, scope, project, confidence, decay_class,
-       review_status, source_session_id, discovered_from, tags, content_hash, load_at_init)
+       review_status, promotion_target, source_session_id, discovered_from, tags, content_hash, load_at_init)
     VALUES
       (@id, @title, @body, @memory_type, @scope, @project, @confidence, @decay_class,
-       @review_status, @source_session_id, @discovered_from, @tags, @content_hash, @load_at_init)
+       @review_status, @promotion_target, @source_session_id, @discovered_from, @tags, @content_hash, @load_at_init)
   `).run({
     id,
     title: input.title,
@@ -79,6 +80,7 @@ export function insertMemory(db: Database.Database, input: MemoryInput): { id: s
     confidence: input.confidence,
     decay_class: input.decay_class,
     review_status: input.review_status,
+    promotion_target: input.promotion_target,
     source_session_id: input.source_session_id,
     discovered_from: input.discovered_from,
     tags: JSON.stringify(input.tags),

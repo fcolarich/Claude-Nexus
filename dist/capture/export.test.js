@@ -18,6 +18,7 @@ const base = {
     source_session_id: null,
     discovered_from: null,
     tags: ['t'],
+    promotion_target: 'none',
 };
 describe('exportAll', () => {
     it('exports only approved memories, with an index', () => {

@@ -7,6 +7,7 @@
  */
 import { callModel } from '../core/llm.js';
 const MEMORY_TYPES = new Set(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference']);
+const PROMOTION_TARGETS = new Set(['none', 'adr', 'ddr', 'best_practice', 'recipe', 'note']);
 const DECAY_CLASSES = new Set(['stable', 'architecture', 'api_contract', 'implementation']);
 const SCOPES = new Set(['global', 'shared', 'project']);
 const MAX_CANDIDATES = 20;
@@ -39,6 +40,19 @@ memory_type — pick one:
 - tool_quirk  — surprising behaviour of a tool, command, or environment
 - reference   — a pointer to where information lives (external system, doc, dashboard)
 
+promotion_target — should this memory graduate into a curated artifact? pick one:
+- adr           — a structural/technical decision with rationale that is NOT yet recorded as an ADR (if already recorded, the existing rules emit a reference memory instead)
+- ddr           — a design decision (UX, API shape, data model, naming, game mechanic) not yet recorded as a DDR
+- best_practice — a reusable, citation-backable technique that applies across projects (typically Unity/engine domain)
+- recipe        — a worked example solving a recurring problem, grounded in real project code
+- note          — a project-specific gotcha, spike result, or open question worth a durable note
+- none          — everything else (preferences, corrections, tool quirks, session state). DEFAULT — when unsure, use none.
+
+Rules:
+- promotion_target is INDEPENDENT of memory_type (a "decision" memory that is already ADR-recorded gets none; an "insight" may still be best_practice material).
+- Be conservative: a promotion candidate creates human review work. Only flag entries a maintainer would plausibly formalize.
+- Never flag session-progress narration, restatements of existing ADRs/DDRs, or facts derivable from the code.
+
 decay_class — how fast the memory goes stale:
 - stable         — preferences, conventions; rarely change
 - architecture   — design decisions; change slowly
@@ -66,7 +80,7 @@ Rules:
 - Do NOT extract content that appears to be a memory index, table of contents, or navigation list (e.g. lines starting with "- [Title](file.md)"). These are structural artifacts, not durable lessons.
 - Do NOT extract session-progress or completion narration. An announcement that the session DID something is not durable knowledge. Reject anything of the form "X initialized", "Y completed", "scaffold complete", "doc spine initialized", "knowledge extraction completed", "folder now indexed", "now available", "setup complete". These describe work performed, not a reusable fact.
 - If a decision is ALREADY recorded as an ADR or DDR (see the "Existing canonical decisions" list in the user message, or if the transcript cites an ADR-NNN / DDR-NNN id), do NOT restate it. Emit a "reference" memory instead: title = the decision name, body = a one-line gist followed by "→ ADR-NNN". The ADR/DDR file is the source of truth; the memory only aids retrieval.
-- Output STRICT JSON ONLY: an array of objects with keys title, body, memory_type, scope, decay_class, confidence, tags. No prose, no markdown fences.`;
+- Output STRICT JSON ONLY: an array of objects with keys title, body, memory_type, scope, decay_class, confidence, tags, promotion_target. No prose, no markdown fences.`;
 /** Extract the first top-level JSON array from a model response and validate it. */
 export function parseCandidates(raw) {
     if (!raw || !raw.trim())
@@ -106,7 +120,8 @@ export function parseCandidates(raw) {
         const tags = Array.isArray(o.tags)
             ? o.tags.filter(t => typeof t === 'string').map(t => t.toLowerCase()).slice(0, 5)
             : [];
-        out.push({ title: title.slice(0, 120), body, memory_type: o.memory_type, scope, decay_class, confidence, tags });
+        const promotion_target = PROMOTION_TARGETS.has(o.promotion_target) ? o.promotion_target : 'none';
+        out.push({ title: title.slice(0, 120), body, memory_type: o.memory_type, scope, decay_class, confidence, tags, promotion_target });
         if (out.length >= MAX_CANDIDATES)
             break;
     }
@@ -127,7 +142,7 @@ export function refineCandidates(cands) {
             const ref = (c.body.match(ADR_REF_RE) ?? [])[0]?.toUpperCase() ?? '';
             const firstSentence = c.body.split(/(?<=[.!?])\s/)[0].trim();
             const body = ref && !firstSentence.includes(ref) ? `${firstSentence} → ${ref}` : firstSentence;
-            out.push({ ...c, memory_type: 'reference', decay_class: 'architecture', body });
+            out.push({ ...c, memory_type: 'reference', decay_class: 'architecture', body, promotion_target: 'none' });
             continue;
         }
         out.push(c);

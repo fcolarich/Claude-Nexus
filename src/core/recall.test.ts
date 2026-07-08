@@ -25,6 +25,7 @@ const base: Omit<MemoryInput, 'title' | 'body'> = {
   source_session_id: null,
   discovered_from: null,
   tags: [],
+  promotion_target: 'none',
 };
 const add = (db: ReturnType<typeof freshDb>, o: Partial<MemoryInput> & { title: string; body: string }) =>
   insertMemory(db, { ...base, ...o });

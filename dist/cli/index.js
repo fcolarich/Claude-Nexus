@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { runFullIndex } from '../indexer/indexer.js';
-import { search, listAtoms, getDiagnostics, getStats, fetchContext, listSessions } from '../core/search.js';
+import { hybridSearch, hybridSearchMemories, listAtoms, getDiagnostics, getStats, fetchContext, fetchMemoryContext, listSessions } from '../core/search.js';
 import { startWatcher } from '../indexer/watcher.js';
 import { backfillSessions, selectBackfillSessions } from '../capture/backfill.js';
 import { deleteMemory } from '../core/memories.js';
@@ -37,51 +37,71 @@ program
 // ── nexus search ─────────────────────────────────────────────────────
 program
     .command('search <query>')
-    .description('Full-text search across all atoms')
+    .description('Hybrid (FTS5+vector) search across captured memories and knowledge atoms')
     .option('-p, --project <project>', 'Filter by project slug')
-    .option('-t, --type <type>', 'Filter by atom type')
+    .option('-t, --type <type>', 'Filter atoms by type (memories are unaffected by this flag)')
     .option('-s, --scope <scope>', 'Filter by scope (global/shared/project)')
-    .option('-l, --limit <limit>', 'Max results', '10')
-    .action((query, opts) => {
+    .option('-l, --limit <limit>', 'Max results per store', '10')
+    .action(async (query, opts) => {
     const db = openDatabase();
-    const results = search(db, query, {
-        project: opts.project,
-        type: opts.type,
-        scope: opts.scope,
-        limit: parseInt(opts.limit),
-    });
-    if (results.length === 0) {
+    const limit = parseInt(opts.limit);
+    const [atomResults, memResults] = await Promise.all([
+        hybridSearch(db, query, { project: opts.project, type: opts.type, scope: opts.scope, limit }),
+        hybridSearchMemories(db, query, { project: opts.project, scope: opts.scope, limit }),
+    ]);
+    if (atomResults.length === 0 && memResults.length === 0) {
         console.log(chalk.yellow('No results found.'));
         db.close();
         return;
     }
-    console.log(chalk.blue(`Found ${results.length} result(s) for "${query}":\n`));
-    for (const r of results) {
-        const scopeColor = r.atom.scope === 'global' ? chalk.cyan : r.atom.scope === 'shared' ? chalk.magenta : chalk.dim;
-        const scope = scopeColor(`[${r.atom.scope}]`);
-        const project = r.atom.project ? chalk.gray(r.atom.project) : chalk.gray('global');
-        const type = chalk.gray(`(${r.atom.atom_type})`);
-        console.log(`${chalk.bold(r.atom.title)} ${scope} ${type}`);
-        console.log(`  ${project} | ${chalk.dim(r.atom.source_path)}`);
-        console.log(`  ${r.snippet.replace(/<mark>/g, chalk.yellow.bold('')).replace(/<\/mark>/g, '')}`);
-        console.log();
+    console.log(chalk.blue(`Found ${memResults.length} memory result(s) and ${atomResults.length} atom result(s) for "${query}":\n`));
+    if (memResults.length > 0) {
+        console.log(chalk.blue.bold('Captured Memories'));
+        for (const r of memResults) {
+            const scopeColor = r.memory.scope === 'global' ? chalk.cyan : r.memory.scope === 'shared' ? chalk.magenta : chalk.dim;
+            const scope = scopeColor(`[${r.memory.scope}]`);
+            const type = chalk.gray(`(${r.memory.memory_type})`);
+            const conf = chalk.gray(`${(r.memory.confidence * 100).toFixed(0)}%`);
+            console.log(`${chalk.bold(r.memory.title)} ${scope} ${type} ${conf}`);
+            console.log(`  ${r.snippet.replace(/<mark>/g, chalk.yellow.bold('')).replace(/<\/mark>/g, '')}`);
+            console.log();
+        }
+    }
+    if (atomResults.length > 0) {
+        console.log(chalk.blue.bold('Knowledge Atoms'));
+        for (const r of atomResults) {
+            const scopeColor = r.atom.scope === 'global' ? chalk.cyan : r.atom.scope === 'shared' ? chalk.magenta : chalk.dim;
+            const scope = scopeColor(`[${r.atom.scope}]`);
+            const project = r.atom.project ? chalk.gray(r.atom.project) : chalk.gray('global');
+            const type = chalk.gray(`(${r.atom.atom_type})`);
+            console.log(`${chalk.bold(r.atom.title)} ${scope} ${type}`);
+            console.log(`  ${project} | ${chalk.dim(r.atom.source_path)}`);
+            console.log(`  ${r.snippet.replace(/<mark>/g, chalk.yellow.bold('')).replace(/<\/mark>/g, '')}`);
+            console.log();
+        }
     }
     db.close();
 });
 // ── nexus context ────────────────────────────────────────────────────
 program
     .command('context <topics...>')
-    .description('Smart fetch: merge multiple topics into one output')
+    .description('Smart fetch: merge multiple topics into one output (captured memories + knowledge atoms)')
     .option('-p, --project <project>', 'Filter by project')
     .action((topics, opts) => {
     const db = openDatabase();
-    const merged = fetchContext(db, topics, { project: opts.project });
-    if (!merged) {
-        console.log(chalk.yellow('No atoms found for the given topics.'));
+    const memMerged = fetchMemoryContext(db, topics, { project: opts.project });
+    const atomMerged = fetchContext(db, topics, { project: opts.project });
+    if (!memMerged && !atomMerged) {
+        console.log(chalk.yellow('No knowledge found for the given topics.'));
+        db.close();
+        return;
     }
-    else {
-        console.log(merged);
-    }
+    const parts = [];
+    if (memMerged)
+        parts.push(memMerged);
+    if (atomMerged)
+        parts.push(atomMerged);
+    console.log(parts.join('\n\n---\n\n'));
     db.close();
 });
 // ── nexus list ───────────────────────────────────────────────────────
@@ -127,6 +147,10 @@ program
     .action((opts) => {
     const db = openDatabase();
     const diags = getDiagnostics(db, opts.type);
+    const stats = getStats(db);
+    console.log(chalk.blue.bold('Nexus Health Report'));
+    console.log(`${chalk.bold('Atoms:')} ${stats.totalAtoms} | ${chalk.bold('Memories:')} ${stats.totalMemories} | ${chalk.bold('Links:')} ${stats.totalLinks} | ${chalk.bold('Sessions:')} ${stats.totalSessions}`);
+    console.log(`${chalk.bold('Issues:')} ${stats.totalDiagnostics}\n`);
     if (diags.length === 0) {
         console.log(chalk.green('No issues found!'));
         db.close();
@@ -170,6 +194,12 @@ program
     for (const [project, count] of Object.entries(stats.atomsByProject)) {
         console.log(`  ${project}: ${count}`);
     }
+    console.log(`${chalk.bold('Embedded:')} ${stats.embeddedAtoms}`);
+    console.log(`\n${chalk.bold('Memories:')} ${stats.totalMemories}`);
+    for (const [status, count] of Object.entries(stats.memoriesByReview)) {
+        console.log(`  ${status}: ${count}`);
+    }
+    console.log(`${chalk.bold('Embedded:')} ${stats.embeddedMemories}`);
     console.log(`\n${chalk.bold('Links:')} ${stats.totalLinks}`);
     console.log(`${chalk.bold('Sessions:')} ${stats.totalSessions}`);
     console.log(`${chalk.bold('Diagnostics:')} ${stats.totalDiagnostics}`);

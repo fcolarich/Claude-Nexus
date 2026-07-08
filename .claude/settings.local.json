@@ -1,28 +1,25 @@
 {
+  "env": {
+    "OTEL_RESOURCE_ATTRIBUTES": "project=claude_nexus"
+  },
   "permissions": {
     "allow": [
       "Bash(node -e ' *)",
       "Bash(npx tsx -e ' *)",
       "Bash(npx tsx *)",
-      "Bash(find /c/Users/Fran/.claude/projects -name \"*.jsonl\" -type f -exec grep -l '\"type\".*\"document\"\\\\|\"type\".*\"image\"\\\\|\"type\".*\"file\"\\\\|\"type\".*\"attachment\"' {} \\\\;)",
       "Bash(python3)",
-      "Bash(find /c/Users/Fran/.claude/projects -name \"*.jsonl\" -type f -exec grep -l '\"type\":\"document\"\\\\|\"type\":\"pdf\"' {} \\\\;)",
       "Bash(npm run *)",
       "Bash(node dist/mcp/server.js)",
-      "Bash(python3 -m json.tool)",
       "Bash(sqlite3 /c/Users/Fran/.claude-nexus/nexus.db \"SELECT source_path, title, project FROM atoms WHERE atom_type='task' LIMIT 10;\")",
-      "mcp__plugin_claude-nexus_claude-nexus__nexus_backfill",
-      "mcp__plugin_claude-nexus_claude-nexus__nexus_sessions",
-      "mcp__plugin_claude-nexus_claude-nexus__nexus_consolidate",
-      "PowerShell(python \"$env:LOCAL_MARKETPLACE/plugins/flow-shared/hooks/scripts/flow-state-write.py\" --flow-id flow-initialize-project --flow-path \"$env:LOCAL_MARKETPLACE/plugins/flow-initialize-project\" --phase intake)",
       "PowerShell(cd C:\\\\Fran\\\\claude-nexus; node dist/mcp/server.js --help 2>&1 | Select-Object -First 5; echo \"---exit:$LASTEXITCODE\")",
-      "PowerShell(curl -s http://localhost:3210/api/stats 2>&1)",
-      "PowerShell(curl -s http://localhost:11434/api/tags 2>&1)",
       "PowerShell(Get-WmiObject Win32_Process -Filter \"name='node.exe'\" | Where-Object { $_.CommandLine -match \"nexus|claude-nexus\" } | Select-Object ProcessId, CommandLine)",
-      "PowerShell(cd C:\\\\Fran\\\\claude-nexus; node dist/web/server.js 2>&1 &; Start-Sleep 5; Invoke-RestMethod http://localhost:3210/api/stats 2>&1)"
+      "PowerShell(cd C:\\\\Fran\\\\claude-nexus; node dist/web/server.js 2>&1 &; Start-Sleep 5; Invoke-RestMethod http://localhost:3210/api/stats 2>&1)",
+      "PowerShell(python \"$env:LOCAL_MARKETPLACE/plugins/flow-shared/hooks/scripts/flow-state-write.py\" --phase merge)",
+      "PowerShell(git diff main -- src/capture/extract.ts src/capture/extract.test.ts src/capture/reflector.ts src/capture/reflector.test.ts src/core/database.ts src/core/database.test.ts src/core/memories.ts src/core/memories.test.ts src/core/types.ts src/mcp/server.ts src/mcp/server.test.ts src/capture/backfill.test.ts src/capture/export.test.ts src/capture/project-migrate.test.ts src/capture/prune.test.ts src/core/decay.test.ts src/core/distill.test.ts src/core/distill.ts src/core/lifecycle.test.ts src/core/recall.test.ts src/integration.test.ts > \"$env:TEMP\\\\promo-diff.patch\" 2>$null; \\(Get-Item \"$env:TEMP\\\\promo-diff.patch\"\\).Length)",
+      "PowerShell(echo $env:TEMP)",
+      "PowerShell(python \"$env:LOCAL_MARKETPLACE\\\\..\\\\..\\\\..\\\\Users\\\\Fran\\\\.claude\\\\plugins\\\\cache\\\\local\\\\session-kanban\\\\scripts\\\\card_write.py\" \"Run one real session end-to-end for Promotion Classification feature; check nexus_promotions/SYSTEM_PROMPT classification precision \\(AC-1\\) and tighten conservative-flagging prompt rules if Haiku over-flags promotion_target\" 2>&1)",
+      "PowerShell(git -C C:\\\\Fran\\\\claude-nexus log -1 --format=%cd dist/mcp/server.js 2>$null)",
+      "PowerShell(git -C C:\\\\Fran\\\\claude-nexus status --short src/mcp/server.ts)"
     ]
-  },
-  "env": {
-    "OTEL_RESOURCE_ATTRIBUTES": "project=claude_nexus"
   }
 }

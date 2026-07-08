@@ -5,7 +5,7 @@ import { insertMemory, deleteMemory } from '../core/memories.js';
 import { selectNarrationMemories } from './prune.js';
 
 function seed(db: Database.Database) {
-  const base = { scope: 'project' as const, project: 'p', confidence: 0.9, review_status: 'approved' as const, source_session_id: 's', discovered_from: null, tags: [] as string[] };
+  const base = { scope: 'project' as const, project: 'p', confidence: 0.9, review_status: 'approved' as const, source_session_id: 's', discovered_from: null, tags: [] as string[], promotion_target: 'none' as const };
   insertMemory(db, { ...base, title: 'Odin soft dependency', body: 'Odin is a hard dependency only for some packages.', memory_type: 'decision', decay_class: 'architecture' });
   insertMemory(db, { ...base, title: 'Doc spine initialized', body: 'Scaffold complete for the project.', memory_type: 'handoff', decay_class: 'implementation' });
   insertMemory(db, { ...base, title: 'Vinspector knowledge extraction completed', body: 'Extracted patterns from the plugin.', memory_type: 'reference', decay_class: 'implementation' });

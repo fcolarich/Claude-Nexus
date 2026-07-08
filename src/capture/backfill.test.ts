@@ -76,7 +76,7 @@ describe('backfillSessions', () => {
     insertSession(db, { id: 's1', messages: 20, jsonl: makeTranscript() });
     const cand: MemoryCandidate = {
       title: 'No hardcoding', body: 'never hardcode paths in source', memory_type: 'convention',
-      scope: 'project', decay_class: 'stable', confidence: 0.9, tags: [],
+      scope: 'project', decay_class: 'stable', confidence: 0.9, tags: [], promotion_target: 'none',
     };
     const r = await backfillSessions(db, {}, {
       extract: async () => [cand],

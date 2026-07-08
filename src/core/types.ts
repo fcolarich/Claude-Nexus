@@ -7,6 +7,7 @@ export type DiagnosticType = 'broken_reference' | 'missing_frontmatter' | 'dupli
 
 // v2 autonomous memory engine
 export type MemoryType = 'preference' | 'convention' | 'failure' | 'correction' | 'decision' | 'insight' | 'tool_quirk' | 'reference' | 'handoff';
+export type PromotionTarget = 'none' | 'adr' | 'ddr' | 'best_practice' | 'recipe' | 'note';
 export type DecayClass = 'stable' | 'architecture' | 'api_contract' | 'implementation';
 export type ReviewStatus = 'pending' | 'approved' | 'rejected';
 
@@ -57,6 +58,8 @@ export interface Memory {
   discovered_from: string | null;
   superseded_by: string | null;
   review_status: ReviewStatus;
+  promotion_target: PromotionTarget;
+  promoted_to: string | null;
   tags: string[];
   content_hash: string;
   created_at: string;

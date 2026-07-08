@@ -5,7 +5,7 @@
  * OAuth auth, no API key) or `openai-compatible` (a local llama.cpp / Ollama /v1
  * endpoint). Provider + model come from extraction_models.yaml.
  */
-import type { MemoryType, DecayClass, AtomScope } from '../core/types.js';
+import type { MemoryType, DecayClass, AtomScope, PromotionTarget } from '../core/types.js';
 export interface MemoryCandidate {
     title: string;
     body: string;
@@ -14,6 +14,7 @@ export interface MemoryCandidate {
     decay_class: DecayClass;
     confidence: number;
     tags: string[];
+    promotion_target: PromotionTarget;
 }
 /** Injectable for testing — the Reflector accepts a fake of this shape. */
 export type Extractor = (condensed: string, ctx: {

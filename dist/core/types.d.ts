@@ -5,6 +5,7 @@ export type LinkType = 'references' | 'extends' | 'refines' | 'contradicts' | 's
 export type SessionStatus = 'active' | 'waiting_input' | 'processing' | 'idle' | 'dead';
 export type DiagnosticType = 'broken_reference' | 'missing_frontmatter' | 'duplicate' | 'orphan' | 'stale';
 export type MemoryType = 'preference' | 'convention' | 'failure' | 'correction' | 'decision' | 'insight' | 'tool_quirk' | 'reference' | 'handoff';
+export type PromotionTarget = 'none' | 'adr' | 'ddr' | 'best_practice' | 'recipe' | 'note';
 export type DecayClass = 'stable' | 'architecture' | 'api_contract' | 'implementation';
 export type ReviewStatus = 'pending' | 'approved' | 'rejected';
 export interface Atom {
@@ -52,6 +53,8 @@ export interface Memory {
     discovered_from: string | null;
     superseded_by: string | null;
     review_status: ReviewStatus;
+    promotion_target: PromotionTarget;
+    promoted_to: string | null;
     tags: string[];
     content_hash: string;
     created_at: string;

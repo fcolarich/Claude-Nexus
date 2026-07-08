@@ -22,6 +22,7 @@ const base = {
     source_session_id: null,
     discovered_from: null,
     tags: [],
+    promotion_target: 'none',
 };
 const add = (db, o) => insertMemory(db, { ...base, ...o });
 describe('recallMemories', () => {

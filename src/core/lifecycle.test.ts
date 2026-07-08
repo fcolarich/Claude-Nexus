@@ -12,7 +12,7 @@ function freshDb() {
 const base: Omit<MemoryInput, 'title' | 'body'> = {
   memory_type: 'convention', scope: 'project', project: 'p', confidence: 0.6,
   decay_class: 'stable', review_status: 'approved',
-  source_session_id: null, discovered_from: null, tags: [],
+  source_session_id: null, discovered_from: null, tags: [], promotion_target: 'none',
 };
 
 /** Constant embedder — every memory embeds identically, so all are near-dups. */
