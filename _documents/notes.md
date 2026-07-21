@@ -6,3 +6,4 @@
 
 | ID | Title | Date |
 |----|-------|------|
+| [NOTE-001](notes/note-001-mcp-tool-surface-audit-2026-07-21.md) | MCP tool surface audit — 2026-07-21 | 2026-07-21 |

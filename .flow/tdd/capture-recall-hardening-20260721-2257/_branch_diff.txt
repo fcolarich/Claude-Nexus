@@ -1,0 +1,1238 @@
+diff --git a/_documents/notes.md b/_documents/notes.md
+index 76a9eb8..9718733 100644
+--- a/_documents/notes.md
++++ b/_documents/notes.md
+@@ -6,3 +6,4 @@
+ 
+ | ID | Title | Date |
+ |----|-------|------|
++| [NOTE-001](notes/note-001-mcp-tool-surface-audit-2026-07-21.md) | MCP tool surface audit — 2026-07-21 | 2026-07-21 |
+diff --git a/package.json b/package.json
+index 9553025..18fc834 100644
+--- a/package.json
++++ b/package.json
+@@ -27,6 +27,7 @@
+     "cors": "^2.8.6",
+     "express": "^5.2.1",
+     "glob": "^11.0.0",
++    "gpt-tokenizer": "^2.0.0",
+     "gray-matter": "^4.0.3",
+     "sqlite-vec": "^0.1.9",
+     "svelte": "^5.55.0",
+diff --git a/src/capture/export.test.ts b/src/capture/export.test.ts
+index 81ced4f..c65cc9f 100644
+--- a/src/capture/export.test.ts
++++ b/src/capture/export.test.ts
+@@ -87,4 +87,90 @@ describe('exportAll', () => {
+     expect(existsSync(join(dir, 'still-active-sessions', 'memory'))).toBe(false);
+     db.close();
+   });
++
++  it('caps MEMORY.md index at memory_md_max_items (200) and appends a pointer line on overflow', () => {
++    const db = freshDb();
++    const total = 205;
++    // Insert 205 approved stable memories with unique confidence values 1..205.
++    // decay_class stable => effectiveConfidence = confidence, so rank order is deterministic.
++    for (let i = 1; i <= total; i++) {
++      insertMemory(db, {
++        ...base,
++        title: `Cap Mem ${i}`,
++        body: `cap body unique ${i}`,
++        memory_type: 'convention',
++        review_status: 'approved',
++        confidence: i,  // i=1 is lowest rank, i=205 is highest
++      });
++    }
++
++    const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
++    exportAll(db, dir);
++
++    const index = readFileSync(join(dir, 'proj', 'memory', 'MEMORY.md'), 'utf-8');
++    const entryLines = index.split('\n').filter((l) => l.startsWith('- ['));
++    expect(entryLines).toHaveLength(200);
++
++    // Bottom 5 (confidence 1..5) must be cut. Bracket-anchor the title so
++    // "Cap Mem 1" doesn't false-match as a substring of "Cap Mem 100"..."Cap Mem 199".
++    for (let i = 1; i <= 5; i++) {
++      expect(index).not.toContain(`[Cap Mem ${i}]`);
++    }
++    // Top entries (confidence 6..205) must be retained
++    expect(index).toContain('[Cap Mem 6]');
++    expect(index).toContain('[Cap Mem 205]');
++
++    // Exactly one pointer line with correct remaining count
++    const pointerLines = index.split('\n').filter((l) => l.startsWith('> …'));
++    expect(pointerLines).toHaveLength(1);
++    expect(pointerLines[0]).toBe('> … 5 more memories — use nexus_search to retrieve them.');
++    db.close();
++  });
++
++  it('writes no pointer line when entry count is under the cap', () => {
++    const db = freshDb();
++    for (let i = 1; i <= 10; i++) {
++      insertMemory(db, {
++        ...base,
++        title: `Under Mem ${i}`,
++        body: `under body unique ${i}`,
++        memory_type: 'convention',
++        review_status: 'approved',
++        confidence: i * 0.05,
++      });
++    }
++
++    const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
++    exportAll(db, dir);
++
++    const index = readFileSync(join(dir, 'proj', 'memory', 'MEMORY.md'), 'utf-8');
++    const entryLines = index.split('\n').filter((l) => l.startsWith('- ['));
++    expect(entryLines).toHaveLength(10);
++    expect(index).not.toContain('more memories');
++    db.close();
++  });
++
++  it('writes no pointer line when entry count is exactly at the cap (strict >)', () => {
++    const db = freshDb();
++    const cap = 200;
++    for (let i = 1; i <= cap; i++) {
++      insertMemory(db, {
++        ...base,
++        title: `Exact Mem ${i}`,
++        body: `exact body unique ${i}`,
++        memory_type: 'convention',
++        review_status: 'approved',
++        confidence: i * 0.004,
++      });
++    }
++
++    const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
++    exportAll(db, dir);
++
++    const index = readFileSync(join(dir, 'proj', 'memory', 'MEMORY.md'), 'utf-8');
++    const entryLines = index.split('\n').filter((l) => l.startsWith('- ['));
++    expect(entryLines).toHaveLength(cap);
++    expect(index).not.toContain('more memories');
++    db.close();
++  });
+ });
+diff --git a/src/capture/export.ts b/src/capture/export.ts
+index f312bfc..da04c2a 100644
+--- a/src/capture/export.ts
++++ b/src/capture/export.ts
+@@ -14,6 +14,7 @@ import { join } from 'path';
+ import Database from 'better-sqlite3';
+ import { stringify as yamlStringify } from 'yaml';
+ import { getNexusConfig } from '../core/config.js';
++import { effectiveConfidence } from '../core/decay.js';
+ import type { Memory } from '../core/types.js';
+ 
+ export interface ExportResult {
+@@ -36,7 +37,9 @@ function rowToMemory(r: Record<string, unknown>): Memory {
+  * a MEMORY.md index and one file per memory. Stale .md files are pruned.
+  */
+ export function exportAll(db: Database.Database, exportDirOverride?: string): ExportResult {
+-  const exportDir = exportDirOverride ?? getNexusConfig().capture.export_dir;
++  const cfg = getNexusConfig();
++  const exportDir = exportDirOverride ?? cfg.capture.export_dir;
++  const cap = cfg.capture.memory_md_max_items ?? 200;
+ 
+   const rows = db.prepare(`
+     SELECT * FROM memories
+@@ -62,6 +65,12 @@ export function exportAll(db: Database.Database, exportDirOverride?: string): Ex
+       if (f.endsWith('.md')) rmSync(join(dir, f));
+     }
+ 
++    // Sort by decay rank desc so the index always shows the most-relevant memories.
++    // Use stable sort: ties preserved in SQL-fetch order (memory_type, confidence DESC, title).
++    const sorted = [...mems].sort((a, b) => effectiveConfidence(b) - effectiveConfidence(a));
++    const totalCount = sorted.length;
++    const topMems = sorted.slice(0, cap);
++
+     const byType = new Map<string, { title: string; file: string; hook: string }[]>();
+ 
+     for (const m of mems) {
+@@ -81,14 +90,17 @@ export function exportAll(db: Database.Database, exportDirOverride?: string): Ex
+ 
+       writeFileSync(join(dir, fname), `---\n${frontmatter}\n---\n\n# ${m.title}\n\n${m.body}\n`);
+       files++;
++    }
+ 
++    // Build index from top-N only
++    for (const m of topMems) {
++      const fname = `${m.id}-${slug(m.title)}.md`;
+       const hook = m.body.split('\n')[0].slice(0, 100);
+       if (!byType.has(m.memory_type)) byType.set(m.memory_type, []);
+       byType.get(m.memory_type)!.push({ title: m.title, file: fname, hook });
+     }
+ 
+-    // Index
+-    const index: string[] = [`# Memory — ${bucket}`, '', `_${mems.length} memories · generated by Claude Nexus_`, ''];
++    const index: string[] = [`# Memory — ${bucket}`, '', `_${totalCount} memories · generated by Claude Nexus_`, ''];
+     for (const [type, items] of [...byType.entries()].sort()) {
+       index.push(`## ${type}`, '');
+       for (const it of items) {
+@@ -96,6 +108,9 @@ export function exportAll(db: Database.Database, exportDirOverride?: string): Ex
+       }
+       index.push('');
+     }
++    if (totalCount > cap) {
++      index.push(`> … ${totalCount - cap} more memories — use nexus_search to retrieve them.`);
++    }
+     writeFileSync(join(dir, 'MEMORY.md'), index.join('\n'));
+     files++;
+   }
+diff --git a/src/capture/extract.ts b/src/capture/extract.ts
+index e07fab5..6d41119 100644
+--- a/src/capture/extract.ts
++++ b/src/capture/extract.ts
+@@ -146,6 +146,13 @@ export function parseCandidates(raw: string): MemoryCandidate[] {
+  * - Drops completion / progress narration.
+  * - Converts an ADR/DDR-citing `decision` into a thin `reference` pointer so the
+  *   ADR stays canonical and the memory only aids retrieval (no content drift).
++ *
++ * Q4 NO-GO — per-candidate pre-LLM signal scoring: evaluated and declined.
++ * The reflector observer gate (whole-extraction gate) already rejects low-signal
++ * transcript windows before the LLM is called. This post-hoc COMPLETION_RE filter
++ * then strips the residual narration that slips through. Together they cover the
++ * practical case. Scoring each candidate individually before the LLM call would
++ * add complexity for negligible gain — do not add it here.
+  */
+ export function refineCandidates(cands: MemoryCandidate[]): MemoryCandidate[] {
+   const out: MemoryCandidate[] = [];
+diff --git a/src/core/config.test.ts b/src/core/config.test.ts
+new file mode 100644
+index 0000000..b7158b7
+--- /dev/null
++++ b/src/core/config.test.ts
+@@ -0,0 +1,32 @@
++import { vi, describe, it, expect, beforeEach } from 'vitest';
++
++// We reset modules between cases so the module-level `cached` var is cleared
++// and vi.doMock can inject a fresh fs stub before each dynamic import.
++
++describe('getNexusConfig — reranker.enabled default (SC-6)', () => {
++	beforeEach(() => {
++		vi.resetModules();
++	});
++
++	it('Case A: reranker.enabled === true when yaml omits the reranker key', async () => {
++		// Simulate a yaml that has only embedding config — no reranker section.
++		// loaded.reranker is undefined, so the merge falls back entirely to DEFAULTS.reranker.
++		vi.doMock('fs', () => ({
++			existsSync: vi.fn().mockReturnValue(true),
++			readFileSync: vi.fn().mockReturnValue('embedding:\n  model: test-model\n'),
++		}));
++		const { getNexusConfig } = await import('./config.js');
++		expect(getNexusConfig().reranker.enabled).toBe(true);
++	});
++
++	it('Case B: explicit reranker.enabled: false in yaml overrides the true default', async () => {
++		// Simulate a yaml that explicitly opts out of the reranker.
++		// The spread { ...DEFAULTS.reranker, ...loaded.reranker } must let this win.
++		vi.doMock('fs', () => ({
++			existsSync: vi.fn().mockReturnValue(true),
++			readFileSync: vi.fn().mockReturnValue('reranker:\n  enabled: false\n'),
++		}));
++		const { getNexusConfig } = await import('./config.js');
++		expect(getNexusConfig().reranker.enabled).toBe(false);
++	});
++});
+diff --git a/src/core/config.ts b/src/core/config.ts
+index 7310cfe..d290507 100644
+--- a/src/core/config.ts
++++ b/src/core/config.ts
+@@ -44,6 +44,7 @@ export interface NexusConfig {
+     auto_approve_confidence: number;
+     dedup_cosine_threshold: number;
+     export_dir: string;
++    memory_md_max_items: number;
+   };
+   reranker: {
+     enabled: boolean;
+@@ -89,9 +90,10 @@ const DEFAULTS: NexusConfig = {
+     auto_approve_confidence: 0.85,
+     dedup_cosine_threshold: 0.86,
+     export_dir: join(homedir(), '.claude', 'memories', 'exports'),
++    memory_md_max_items: 200,
+   },
+   reranker: {
+-    enabled: false,
++    enabled: true,
+     endpoint: 'http://127.0.0.1:8931/rerank',
+     script_path: 'C:/Fran/Cloned Repos/local-reranker-mcp/server.py',
+     threshold: 0.2,
+diff --git a/src/core/consolidate.ts b/src/core/consolidate.ts
+index f531a50..ffc6a14 100644
+--- a/src/core/consolidate.ts
++++ b/src/core/consolidate.ts
+@@ -24,6 +24,28 @@ export interface ConsolidateResult {
+   pruned: number;     // rejected memories deleted
+ }
+ 
++/**
++ * Q4 REWRITE NO-GO — LLM body-compaction/rewrite evaluated and declined.
++ *
++ * Rationale:
++ *   1. Volume: embed + prune-rejected + merge-by-supersede (steps below) is
++ *      sufficient at current per-bucket memory volume. A full-corpus LLM
++ *      rewrite pass would add latency and API cost with no measurable quality
++ *      gain at this scale.
++ *
++ *   2. Index bloat: downstream MEMORY.md bloat is addressed by the per-bucket
++ *      item cap in export.ts (capture.memory_md_max_items), not by rewriting
++ *      bodies. Rewriting bodies to shrink the export is the wrong layer.
++ *
++ *   3. Provenance: no schema column exists to record that a body was
++ *      LLM-rewritten (e.g. a rewrite_source / rewrite_version field). Without
++ *      provenance, a rewritten body is indistinguishable from an extraction
++ *      artefact — this breaks audit and rollback. Adding the schema is
++ *      deferred; revisit when volume forces the issue.
++ *
++ * Decision: do NOT add LLM rewrite logic here. The three reasons above must
++ * each be addressed before this decision can be reversed.
++ */
+ export async function consolidateMemories(
+   db: Database.Database,
+   embedFn: (text: string) => Promise<Float32Array | null> = generateEmbedding
+diff --git a/src/core/recall.test.ts b/src/core/recall.test.ts
+index 0ab35a2..a1a06bf 100644
+--- a/src/core/recall.test.ts
++++ b/src/core/recall.test.ts
+@@ -1,14 +1,35 @@
+ import { describe, it, expect, vi } from 'vitest';
+ import { openDatabase, initializeSchema } from './database.js';
+ import { insertMemory, embedMemory, type MemoryInput } from './memories.js';
+-import { recallMemories, recallByQuery } from './recall.js';
++import { recallMemories, recallByQuery, estTokensForTest } from './recall.js';
+ import * as embeddings from './embeddings.js';
++import * as gptTokenizer from 'gpt-tokenizer';
+ 
+ vi.mock('./embeddings.js', async () => {
+   const actual = await vi.importActual<typeof import('./embeddings.js')>('./embeddings.js');
+   return { ...actual, generateEmbedding: vi.fn().mockResolvedValue(null) };
+ });
+ 
++// This dev machine happens to run a real local-reranker HTTP daemon (see
++// extraction_models.yaml, reranker.enabled: true), and DEFAULTS.reranker.enabled
++// is now also true (task-012). Without this mock, every recallByQuery() call in
++// this file that doesn't pass an explicit `rerankFn` would hit that real network
++// service — nondeterministic on machines without the daemon, and a source of
++// cross-suite latency contention when the full Vitest suite runs many files in
++// parallel (surfaced as an unrelated backfill.test.ts timeout during the task-013
++// integration gate). Default to "unavailable" (null), matching the reranker's own
++// documented contract for disabled/unreachable. Tests that need real reranking
++// behavior inject their own `rerankFn` via recallByQuery's opts, which bypasses
++// this module mock entirely (`doRerank = opts.rerankFn ?? rerankDocuments`).
++vi.mock('./reranker.js', () => ({ rerank: vi.fn().mockResolvedValue(null) }));
++
++// Wrap real encode in a vi.fn so we can override it in the fallback test.
++// All other tests use the real implementation transparently.
++vi.mock('gpt-tokenizer', async () => {
++  const actual = await vi.importActual<typeof import('gpt-tokenizer')>('gpt-tokenizer');
++  return { ...actual, encode: vi.fn((s: string) => actual.encode(s)) };
++});
++
+ function freshDb() {
+   const db = openDatabase(':memory:');
+   initializeSchema(db);
+@@ -147,6 +168,47 @@ describe('recallByQuery', () => {
+   });
+ });
+ 
++describe('estTokens', () => {
++	// Fixtures chosen because the chars/4 heuristic is meaningfully inaccurate for
++	// both: code tokens are dense (many chars per token), prose is close but not exact.
++	const codeSnippet = 'function add(a, b) { return a + b; }\n';
++	const prose = 'The quick brown fox jumps over the lazy dog.';
++
++	it('empty string → 0', () => {
++		expect(estTokensForTest('')).toBe(0);
++	});
++
++	it('code-snippet: BPE estimate equals actual; heuristic is strictly less accurate', () => {
++		// BPE is exact by definition (encode().length IS the true token count).
++		// chars/4 rounds up so it differs from actual for this code string.
++		const actual = gptTokenizer.encode(codeSnippet).length;
++		const bpe = estTokensForTest(codeSnippet);
++		const heuristicErr = Math.abs(Math.ceil(codeSnippet.length / 4) - actual);
++		expect(bpe).toBe(actual);
++		// Heuristic must deviate (if it were equal, BPE would provide zero added value).
++		expect(heuristicErr).toBeGreaterThan(0);
++	});
++
++	it('prose: BPE estimate equals actual cl100k_base count', () => {
++		// actual is derived from the same encoder — BPE must return the exact count.
++		// Old chars/4 heuristic returns Math.ceil(44/4)=11 for this string but actual is 10.
++		const actual = gptTokenizer.encode(prose).length;
++		const bpe = estTokensForTest(prose);
++		expect(bpe).toBe(actual);
++	});
++
++	it('fallback: returns ceil(len/4) when encode throws; does not propagate', () => {
++		// Unique string guarantees no memo hit so encode is actually attempted.
++		const s = 'fallback_unique_' + Math.random().toString(36);
++		vi.mocked(gptTokenizer.encode).mockClear();
++		vi.mocked(gptTokenizer.encode).mockImplementationOnce(() => { throw new Error('encode error'); });
++		const expected = Math.ceil(s.length / 4);
++		expect(estTokensForTest(s)).toBe(expected);
++		// encode was attempted (try branch) but fell back gracefully without propagating.
++		expect(vi.mocked(gptTokenizer.encode)).toHaveBeenCalledWith(s);
++	});
++});
++
+ // memories_vec is a fixed-width vec0(embedding float[1024]) table — vectors
+ // must match that width or the INSERT silently no-ops (embedMemory swallows
+ // the error). One-hot vectors at distinct indices give deterministic cosine
+@@ -157,6 +219,140 @@ function oneHot(dim: number): Float32Array {
+   return v;
+ }
+ 
++describe('recallByQuery RRF fusion (SC-5)', () => {
++  // All tests mock generateEmbedding to return non-null so the vector path runs
++  // alongside FTS5, enabling real fusion behaviour to be exercised.
++
++  it('SC-5: FTS5-exact hit that vector-only would suppress appears in fused top-N', async () => {
++    // Pre-fusion (old) behaviour: ftsHit has cosine sim ≈ 0 → dropped by floor.
++    // Post-fusion (new) behaviour: ftsHit is in ftsSet → floor bypassed → appears.
++    const db = freshDb();
++    const ftsHit = add(db, { title: 'FTS Hit', body: 'alphakeyword unique term here' });
++    const vecDominant = add(db, { title: 'Vec Dominant', body: 'completely unrelated content' });
++
++    await embedMemory(db, ftsHit.id, async () => oneHot(50));   // orthogonal → sim ≈ 0
++    await embedMemory(db, vecDominant.id, async () => oneHot(0)); // aligned → sim = 1.0
++    vi.mocked(embeddings.generateEmbedding).mockResolvedValueOnce(oneHot(0));
++
++    const r = await recallByQuery(db, {
++      project: 'projA',
++      query: 'alphakeyword',
++      minSimilarity: 0.5,   // ftsHit sim=0 < floor; but ftsSet bypass keeps it alive
++      // Force the fallback path so this test exercises fusion/floor logic in
++      // isolation, independent of whatever local reranker daemon extraction_models.yaml
++      // points at (reranker.enabled: true there) — that interaction is covered
++      // separately by the two reranker-focused SC-5 tests below.
++      rerankFn: async () => null,
++    });
++
++    const titles = r.items.map(i => i.memory.title);
++    expect(titles).toContain('FTS Hit');       // SC-5: must survive despite low cosine sim
++    expect(titles).toContain('Vec Dominant');  // strong vector match still present
++    db.close();
++  });
++
++  it('minSimilarity floor bypasses FTS5-matched ids and drops vec-only below floor', async () => {
++    const db = freshDb();
++    const ftsHit = add(db, { title: 'FTS Hit', body: 'betakeyword exact match' });
++    const vecAboveFloor = add(db, { title: 'Vec Above', body: 'no keyword high sim' });
++    const vecBelowFloor = add(db, { title: 'Vec Below', body: 'no keyword low sim' });
++
++    await embedMemory(db, ftsHit.id, async () => oneHot(60));    // sim=0 (below floor)
++    await embedMemory(db, vecAboveFloor.id, async () => oneHot(0)); // sim=1.0 (above floor)
++    await embedMemory(db, vecBelowFloor.id, async () => oneHot(70)); // sim=0 (below floor)
++    vi.mocked(embeddings.generateEmbedding).mockResolvedValueOnce(oneHot(0));
++
++    const r = await recallByQuery(db, {
++      project: 'projA',
++      query: 'betakeyword',
++      minSimilarity: 0.5,
++      rerankFn: async () => null,  // isolate floor logic from the live reranker daemon
++    });
++
++    const titles = r.items.map(i => i.memory.title);
++    expect(titles).toContain('FTS Hit');        // ftsSet bypass: survives despite sim=0
++    expect(titles).toContain('Vec Above');      // sim=1.0 passes floor
++    expect(titles).not.toContain('Vec Below');  // vec-only, sim=0 < floor → correctly dropped
++    db.close();
++  });
++
++  it('drops excludeIds from fused result even when the memory ranks highly', async () => {
++    const db = freshDb();
++    // excluded has keyword in body AND high cosine sim → top of both FTS5 and vector lists
++    const excluded = add(db, { title: 'Excluded', body: 'gammakeyword highly relevant' });
++    // kept has keyword only (vec sim=0 → in ftsSet, bypasses floor)
++    const kept = add(db, { title: 'Kept', body: 'gammakeyword also here' });
++
++    await embedMemory(db, excluded.id, async () => oneHot(0));  // sim=1.0
++    await embedMemory(db, kept.id, async () => oneHot(80));     // sim=0
++    vi.mocked(embeddings.generateEmbedding).mockResolvedValueOnce(oneHot(0));
++
++    const r = await recallByQuery(db, {
++      project: 'projA',
++      query: 'gammakeyword',
++      excludeIds: [excluded.id],
++      minSimilarity: 0.5,
++      rerankFn: async () => null,  // isolate excludeIds logic from the live reranker daemon
++    });
++
++    const titles = r.items.map(i => i.memory.title);
++    expect(titles).not.toContain('Excluded');  // excluded even though it would rank highest
++    expect(titles).toContain('Kept');          // kept is in ftsSet → floor bypassed
++    db.close();
++  });
++
++  it('reranker receives the fused set including FTS5-only memories', async () => {
++    const db = freshDb();
++    // ftsOnly: keyword match, low sim → in ftsSet → must reach reranker despite low cosine
++    const ftsOnly = add(db, { title: 'FTS Only', body: 'deltakeyword fts only memory' });
++    // vecOnly: no keyword, high sim → passes floor → also reaches reranker
++    const vecOnly = add(db, { title: 'Vec Only', body: 'no keyword high similarity' });
++
++    await embedMemory(db, ftsOnly.id, async () => oneHot(90)); // sim=0
++    await embedMemory(db, vecOnly.id, async () => oneHot(0));  // sim=1.0
++    vi.mocked(embeddings.generateEmbedding).mockResolvedValueOnce(oneHot(0));
++
++    const capturedDocs: string[] = [];
++    const spyRerank = vi.fn(async (_q: string, documents: string[]) => {
++      capturedDocs.push(...documents);
++      return documents.map((_, index) => ({ index, score: 0.8 }));
++    });
++
++    await recallByQuery(db, {
++      project: 'projA',
++      query: 'deltakeyword',
++      rerankFn: spyRerank,
++      minSimilarity: 0.5,
++    });
++
++    expect(spyRerank).toHaveBeenCalledOnce();
++    // Reranker must see both: FTS5-only memory (sim=0, ftsSet bypass) and vec-only (sim=1)
++    expect(capturedDocs).toContain('deltakeyword fts only memory');
++    expect(capturedDocs).toContain('no keyword high similarity');
++    db.close();
++  });
++
++  it('reranker throw falls back to fused order without crashing', async () => {
++    const db = freshDb();
++    const m = add(db, { title: 'Some Memory', body: 'epsilonkeyword content here' });
++    await embedMemory(db, m.id, async () => oneHot(0)); // sim=1.0
++    vi.mocked(embeddings.generateEmbedding).mockResolvedValueOnce(oneHot(0));
++
++    const throwingRerank = vi.fn(async () => { throw new Error('reranker service down'); });
++
++    // Must not throw — falls back to fused order
++    const r = await recallByQuery(db, {
++      project: 'projA',
++      query: 'epsilonkeyword',
++      rerankFn: throwingRerank,
++    });
++
++    expect(throwingRerank).toHaveBeenCalledOnce();
++    expect(r.items.map(i => i.memory.title)).toContain('Some Memory');
++    db.close();
++  });
++});
++
+ describe('recallByQuery reranking', () => {
+   // These tests drive the vector-KNN path directly (via embedMemory + a mocked
+   // query embedding) so the rerank floor can be exercised without a real
+diff --git a/src/core/recall.ts b/src/core/recall.ts
+index 83e0d51..41d3fe5 100644
+--- a/src/core/recall.ts
++++ b/src/core/recall.ts
+@@ -8,12 +8,14 @@
+  */
+ 
+ import Database from 'better-sqlite3';
++import { encode } from 'gpt-tokenizer';
+ import { getNexusConfig } from './config.js';
+ import { sanitizeFts5Query } from './search.js';
+ import { effectiveConfidence } from './decay.js';
+ import { generateEmbedding } from './embeddings.js';
+ import { rerank as rerankDocuments } from './reranker.js';
+ import { normalize } from './memories.js';
++import { rrfFuse } from './rrf.js';
+ import type { Memory } from './types.js';
+ 
+ export interface RecalledItem {
+@@ -29,7 +31,24 @@ export interface RecallResult {
+   total: number;        // candidates considered before the budget walk
+ }
+ 
+-const estTokens = (s: string): number => Math.ceil(s.length / 4);
++const _tokenMemo = new Map<string, number>();
++
++const estTokens = (s: string): number => {
++  if (s.length === 0) return 0;
++  const cached = _tokenMemo.get(s);
++  if (cached !== undefined) return cached;
++  let count: number;
++  try {
++    count = encode(s).length;
++  } catch {
++    count = Math.ceil(s.length / 4);
++  }
++  _tokenMemo.set(s, count);
++  return count;
++};
++
++/** Exported only for tests — do not call from production code. */
++export const estTokensForTest = estTokens;
+ 
+ function rowToMemory(r: Record<string, unknown>): Memory {
+   return { ...(r as unknown as Memory), tags: JSON.parse((r.tags as string) || '[]') };
+@@ -149,17 +168,14 @@ export function recallMemories(
+ }
+ 
+ /**
+- * Prompt-driven recall: rank memories by vector cosine similarity to a query,
+- * keep only those above a relevance floor, exclude a caller-supplied id set
+- * (per-session dedup), and return the top `limit`. Falls back to FTS5 only when
+- * no embedding is available or the corpus has no vectors — never bypasses the
+- * floor on an embedded corpus.
++ * Prompt-driven recall: fuses FTS5 keyword results and vector KNN results via
++ * Reciprocal Rank Fusion, drops excluded ids, applies the minSimilarity cosine
++ * floor to vector-originated candidates only (FTS5-matched ids bypass the floor
++ * so fusion is not undone — see spec § "Floor vs FTS5"), optionally reranks the
++ * bounded fused set with a cross-encoder, and returns the top `limit` memories.
+  *
+- * When the local cross-encoder reranker is available, KNN candidates are
+- * reranked against the query and floored on rerank score instead of cosine
+- * similarity — a cross-encoder catches conceptually-relevant matches cosine
+- * misses, and drops near-duplicates cosine over-ranks. If the reranker is
+- * disabled or unreachable, this falls back to the cosine-floor path unchanged.
++ * Pool sizes: FTS5 limit*3, vector limit*6. Rerank input bounded to ~limit*3.
++ * If the reranker throws or is disabled, falls back to RRF-fused order.
+  */
+ export async function recallByQuery(
+   db: Database.Database,
+@@ -184,9 +200,27 @@ export async function recallByQuery(
+   const scopeClause = `(m.scope IN ('global','shared') OR (m.scope='project' AND m.project = @project))`;
+   const doRerank = opts.rerankFn ?? rerankDocuments;
+ 
+-  const candidates: { m: Memory; sim: number }[] = []; // pre-floor, in-scope, not excluded
+-  const scored: { m: Memory; score: number }[] = [];
+-  let vecEligible = 0; // in-scope approved candidates the vector index produced (pre-floor)
++  // ── FTS5 pool (limit*3) ──────────────────────────────────────────────────────
++  const ftsRowids: number[] = [];
++  const sanitizedQ = sanitizeFts5Query(opts.query);
++  if (sanitizedQ) {
++    const ftsRows = db.prepare(`
++      SELECT m.rowid FROM memories_fts f
++      JOIN memories m ON m.rowid = f.rowid
++      WHERE memories_fts MATCH @q
++        AND m.review_status = 'approved' AND m.superseded_by IS NULL
++        AND ${scopeClause}
++      ORDER BY f.rank
++      LIMIT @lim
++    `).all({ q: sanitizedQ, project, lim: limit * 3 }) as { rowid: number }[];
++    for (const r of ftsRows) ftsRowids.push(r.rowid);
++  }
++  const ftsSet = new Set(ftsRowids);
++
++  // ── Vector KNN pool (limit*6) ────────────────────────────────────────────────
++  const vecRowids: number[] = [];
++  const vecSimMap = new Map<number, number>(); // rowid → cosine similarity
++  const vecMemMap = new Map<number, Memory>();  // rowid → hydrated Memory (pre-loaded)
+ 
+   const queryVec = await generateEmbedding(opts.query);
+   const vecTable = db.prepare(
+@@ -214,54 +248,87 @@ export async function recallByQuery(
+       `).get({ rowid: r.rowid, project }) as Record<string, unknown> | undefined;
+       if (!row) continue;
+       const m = rowToMemory(row);
+-      vecEligible++; // corpus is embedded and produced an in-scope candidate
+-      if (exclude.has(m.id)) continue;
+-      // Stored vectors are unit-normalized: cosine similarity = 1 - d^2/2
++      // Stored vectors are unit-normalised: cosine similarity = 1 - d²/2
+       const sim = Math.max(0, Math.min(1, 1 - (r.distance * r.distance) / 2));
+-      candidates.push({ m, sim });
++      vecRowids.push(r.rowid);
++      vecSimMap.set(r.rowid, sim);
++      vecMemMap.set(r.rowid, m);
+     }
+   }
+ 
+-  // Rerank pass: cross-encoder floor replaces the cosine floor when available.
+-  let reranked: { index: number; score: number }[] | null = null;
+-  if (candidates.length >= 2 && rerankerCfg.enabled) {
+-    reranked = await doRerank(opts.query, candidates.map(c => c.m.body), rerankerCfg.threshold);
+-  }
+-
+-  if (reranked) {
+-    // Endpoint already sorts descending and floors by threshold — map straight through.
+-    for (const r of reranked) scored.push({ m: candidates[r.index].m, score: r.score });
+-  } else {
+-    // Fallback: cosine floor, unchanged from the pre-reranker behavior.
+-    for (const { m, sim } of candidates) {
++  // ── RRF fusion (FTS5 list first, vector list second) ────────────────────────
++  const fused = rrfFuse([ftsRowids, vecRowids]);
++
++  // ── Hydrate, drop excludeIds, apply floor ────────────────────────────────────
++  // minSimilarity floor applies only to vector-originated candidates; FTS5-matched
++  // ids bypass the floor entirely — re-applying the floor after fusion would undo
++  // the rescue of keyword-exact hits (spec § "Floor vs FTS5").
++  const hydrateStmt = db.prepare(`
++    SELECT m.* FROM memories m
++    WHERE m.rowid = @rowid
++      AND m.review_status = 'approved' AND m.superseded_by IS NULL
++      AND ${scopeClause}
++  `);
++  const hydrated: { m: Memory; rrfScore: number }[] = [];
++
++  for (const { id: rowid, score: rrfScore } of fused) {
++    const mFromVec = vecMemMap.get(rowid);
++    let m: Memory;
++    if (mFromVec) {
++      m = mFromVec;
++    } else {
++      const row = hydrateStmt.get({ rowid, project }) as Record<string, unknown> | undefined;
++      if (!row) continue;
++      m = rowToMemory(row);
++    }
++    if (exclude.has(m.id)) continue;
++    // Vector-only candidates must clear the cosine floor
++    if (!ftsSet.has(rowid)) {
++      const sim = vecSimMap.get(rowid) ?? 0;
+       if (sim < minSimilarity) continue;
+-      scored.push({ m, score: sim });
+     }
++    hydrated.push({ m, rrfScore });
+   }
+ 
+-  // FTS5 fallback ONLY when the vector path could not run (no embedding / no
+-  // vectors). If vectors existed but nothing cleared the floor, respect that.
+-  if (scored.length === 0 && vecEligible === 0) {
+-    const rows = db.prepare(`
+-      SELECT m.* FROM memories_fts f
+-      JOIN memories m ON m.rowid = f.rowid
+-      WHERE memories_fts MATCH @q
+-        AND m.review_status = 'approved' AND m.superseded_by IS NULL
+-        AND ${scopeClause}
+-      ORDER BY f.rank
+-      LIMIT @lim
+-    `).all({ q: sanitizeFts5Query(opts.query), project, lim: limit * 3 }) as Record<string, unknown>[];
+-    for (const row of rows) {
+-      const m = rowToMemory(row);
+-      if (exclude.has(m.id)) continue;
+-      scored.push({ m, score: 0 });
+-    }
++  if (hydrated.length === 0) return empty;
++
++  // ── Rerank bounded fused set ─────────────────────────────────────────────────
++  // task-011 latency spot-check (SC-6): measured doRerank() wall-clock time against
++  // the live jina-reranker-v2-base-multilingual daemon (127.0.0.1:8931), 3-5 warm
++  // calls per size, sweeping candidate count:
++  //   N=1: ~31ms   N=3: ~72ms   N=4: ~96ms   N=5: ~110ms
++  //   N=8: ~169ms  N=10: ~232ms N=15: ~348ms (the original limit*3 bound at limit=5)
++  // The original `limit*3` bound (15 candidates at the default limit=5) measured
++  // ~350ms — over 3x the 100ms envelope ceiling. Rather than shrinking the whole
++  // candidate pool (which would also shrink the non-reranked fallback below
++  // `limit`), only the network call is capped: the RRF-fused pool keeps its full
++  // breadth (~limit*3) for output purposes, but just the head (RERANK_INPUT_CAP=3,
++  // ~72ms avg, comfortable margin below 100ms — N=4 was already borderline at
++  // ~96ms with one sample at 114ms) is sent to the reranker. The unsent tail keeps
++  // its RRF-fused order and is appended after the reranked head. Revisit if the
++  // local daemon is swapped for a faster backend, or if reranking only the top 3
++  // proves too shallow in practice.
++  const bounded = hydrated.slice(0, limit * 3);
++  const RERANK_INPUT_CAP = 3;
++  const rerankHead = bounded.slice(0, RERANK_INPUT_CAP);
++  const rerankTail = bounded.slice(RERANK_INPUT_CAP);
++  const useReranker = rerankerCfg.enabled || opts.rerankFn !== undefined;
++  let reranked: { m: Memory; score: number }[] | null = null;
++
++  if (useReranker && rerankHead.length >= 1) {
++    try {
++      const rrResult = await doRerank(opts.query, rerankHead.map(c => c.m.body), rerankerCfg.threshold);
++      if (rrResult && rrResult.length > 0) {
++        reranked = [
++          ...rrResult.map(r => ({ m: rerankHead[r.index].m, score: r.score })),
++          ...rerankTail.map(c => ({ m: c.m, score: c.rrfScore })),
++        ];
++      }
++    } catch { /* reranker unavailable — fall back to fused order */ }
+   }
+ 
+-  if (scored.length === 0) return empty;
+-
+-  scored.sort((a, b) => b.score - a.score);
+-  const top = scored.slice(0, limit);
++  const finalCandidates = reranked ?? bounded.map(c => ({ m: c.m, score: c.rrfScore }));
++  const top = finalCandidates.slice(0, limit);
+ 
+   const items: RecalledItem[] = top.map(({ m, score }) => ({ memory: m, score, mode: 'full' as const }));
+   const HEADER = '# Recalled Memory\n';
+@@ -269,5 +336,5 @@ export async function recallByQuery(
+   for (const i of items) parts.push(renderFull(i.memory).trim());
+   const markdown = parts.join('\n\n');
+ 
+-  return { items, markdown, tokenEstimate: estTokens(markdown), total: scored.length };
++  return { items, markdown, tokenEstimate: estTokens(markdown), total: hydrated.length };
+ }
+diff --git a/src/core/rrf.test.ts b/src/core/rrf.test.ts
+new file mode 100644
+index 0000000..ca6e77b
+--- /dev/null
++++ b/src/core/rrf.test.ts
+@@ -0,0 +1,94 @@
++import { describe, it, expect } from 'vitest'
++import { rrfFuse, RRF_K } from './rrf.js'
++
++describe('rrfFuse', () => {
++	it('exports RRF_K = 60', () => {
++		expect(RRF_K).toBe(60)
++	})
++
++	it('returns [] for empty input', () => {
++		expect(rrfFuse([])).toEqual([])
++	})
++
++	it('returns [] for input containing only empty lists', () => {
++		expect(rrfFuse([[], []])).toEqual([])
++	})
++
++	it('single-list input preserves original order', () => {
++		const result = rrfFuse([[10, 20, 30]])
++		expect(result.map(r => r.id)).toEqual([10, 20, 30])
++	})
++
++	it('single-list: exact scores use 1/(k+rank) with 1-indexed rank', () => {
++		// id=10 rank=1 → 1/61, id=20 rank=2 → 1/62, id=30 rank=3 → 1/63
++		const result = rrfFuse([[10, 20, 30]])
++		expect(result[0].score).toBeCloseTo(1 / 61, 10)
++		expect(result[1].score).toBeCloseTo(1 / 62, 10)
++		expect(result[2].score).toBeCloseTo(1 / 63, 10)
++	})
++
++	it('two lists: known fusion produces expected order and scores', () => {
++		// list A: [1, 2, 3]  → id1 rank=1, id2 rank=2, id3 rank=3
++		// list B: [3, 1, 2]  → id3 rank=1, id1 rank=2, id2 rank=3
++		// k=60
++		// id1: 1/61 + 1/62 = 0.016393... + 0.016129... = 0.032522...
++		// id2: 1/62 + 1/63 = 0.016129... + 0.015873... = 0.032002...
++		// id3: 1/63 + 1/61 = 0.015873... + 0.016393... = 0.032266...
++		// order: id1 > id3 > id2
++		const result = rrfFuse([[1, 2, 3], [3, 1, 2]])
++		expect(result[0].id).toBe(1)
++		expect(result[1].id).toBe(3)
++		expect(result[2].id).toBe(2)
++
++		expect(result[0].score).toBeCloseTo(1 / 61 + 1 / 62, 10)
++		expect(result[1].score).toBeCloseTo(1 / 63 + 1 / 61, 10)
++		expect(result[2].score).toBeCloseTo(1 / 62 + 1 / 63, 10)
++	})
++
++	it('id missing from one list contributes 0 from that list', () => {
++		// list A: [1, 2]   → id1 rank=1, id2 rank=2
++		// list B: [2, 3]   → id2 rank=1, id3 rank=2
++		// id1: 1/61 (only in A)
++		// id2: 1/62 + 1/61
++		// id3: 1/62 (only in B)
++		const result = rrfFuse([[1, 2], [2, 3]])
++		const byId = Object.fromEntries(result.map(r => [r.id, r.score]))
++		expect(byId[1]).toBeCloseTo(1 / 61, 10)
++		expect(byId[2]).toBeCloseTo(1 / 62 + 1 / 61, 10)
++		expect(byId[3]).toBeCloseTo(1 / 62, 10)
++		// id2 should rank first
++		expect(result[0].id).toBe(2)
++	})
++
++	it('duplicate id in one list: first (best) position wins, later occurrences ignored', () => {
++		// list A: [5, 5, 10]  → id5 first rank=1, duplicate at rank=2 ignored; id10 rank=3
++		const result = rrfFuse([[5, 5, 10]])
++		// id5 should appear once with score 1/61 (rank 1), not 1/61 + 1/62
++		expect(result.filter(r => r.id === 5)).toHaveLength(1)
++		expect(result.find(r => r.id === 5)!.score).toBeCloseTo(1 / 61, 10)
++		expect(result.find(r => r.id === 10)!.score).toBeCloseTo(1 / 63, 10)
++	})
++
++	it('three lists: aggregates contributions from all lists', () => {
++		// list A: [7]  → id7 rank=1 → 1/61
++		// list B: [7]  → id7 rank=1 → 1/61
++		// list C: [7]  → id7 rank=1 → 1/61
++		// total id7 score = 3/61
++		const result = rrfFuse([[7], [7], [7]])
++		expect(result).toHaveLength(1)
++		expect(result[0].id).toBe(7)
++		expect(result[0].score).toBeCloseTo(3 / 61, 10)
++	})
++
++	it('custom k parameter overrides default', () => {
++		// k=0 would divide by rank; tested with k=10
++		// id=1, rank=1 → 1/(10+1) = 1/11
++		const result = rrfFuse([[1]], 10)
++		expect(result[0].score).toBeCloseTo(1 / 11, 10)
++	})
++
++	it('k <= 0 throws', () => {
++		expect(() => rrfFuse([[1]], 0)).toThrow()
++		expect(() => rrfFuse([[1]], -5)).toThrow()
++	})
++})
+diff --git a/src/core/rrf.ts b/src/core/rrf.ts
+new file mode 100644
+index 0000000..5adf846
+--- /dev/null
++++ b/src/core/rrf.ts
+@@ -0,0 +1,34 @@
++// Reciprocal Rank Fusion — pure math helper, no DB or embedding imports.
++// Score for an id = sum over each ranked list of 1/(k + rank), where rank is 1-indexed.
++// An id absent from a list contributes 0 (no term added).
++// If an id appears more than once in a single list, only its first (best) position is used.
++// k <= 0: throws — division by zero or negative denominator has no meaningful interpretation here.
++
++export const RRF_K = 60
++
++export function rrfFuse(
++	rankedLists: number[][],
++	k: number = RRF_K,
++): Array<{ id: number; score: number }> {
++	if (k <= 0) throw new RangeError(`rrfFuse: k must be > 0, got ${k}`)
++
++	const scores = new Map<number, number>()
++
++	for (const list of rankedLists) {
++		const seen = new Set<number>()
++		let rank = 1
++		for (const id of list) {
++			if (!seen.has(id)) {
++				seen.add(id)
++				const contribution = 1 / (k + rank)
++				scores.set(id, (scores.get(id) ?? 0) + contribution)
++			}
++			// rank always advances — duplicate ids still occupy a position in the list
++			rank++
++		}
++	}
++
++	return Array.from(scores.entries())
++		.map(([id, score]) => ({ id, score }))
++		.sort((a, b) => b.score - a.score)
++}
+diff --git a/src/core/search.test.ts b/src/core/search.test.ts
+new file mode 100644
+index 0000000..4095dee
+--- /dev/null
++++ b/src/core/search.test.ts
+@@ -0,0 +1,236 @@
++import { vi, describe, it, expect, beforeEach } from 'vitest'
++import Database from 'better-sqlite3'
++import { openDatabase, initializeSchema } from './database.js'
++import { insertMemory, embedMemory } from './memories.js'
++import { sanitizeFts5Query, searchMemories, hybridSearchMemories } from './search.js'
++
++// Mock generateEmbedding so tests don't require Ollama running.
++// Default: returns null (vec unavailable), overridden per-test for hybrid path.
++vi.mock('./embeddings.js', () => ({
++	generateEmbedding: vi.fn().mockResolvedValue(null),
++	ensureEmbeddingModelReady: vi.fn().mockResolvedValue(undefined),
++}))
++
++// Spy wrapper for rrfFuse — delegates to real implementation so ordering tests
++// still produce correct results. Lets us assert rrfFuse is called by the refactored
++// hybridSearchMemories path (RED before refactor, GREEN after).
++vi.mock('./rrf.js', async (importOriginal) => {
++	const original = await importOriginal<typeof import('./rrf.js')>()
++	return {
++		...original,
++		rrfFuse: vi.fn(original.rrfFuse),
++	}
++})
++
++import { generateEmbedding } from './embeddings.js'
++import { rrfFuse } from './rrf.js'
++
++// ── helpers ──────────────────────────────────────────────────────────────────
++
++function freshDb() {
++	const db = openDatabase(':memory:')
++	initializeSchema(db)
++	return db
++}
++
++const memBase = {
++	scope: 'project' as const,
++	project: 'test-proj',
++	confidence: 0.9,
++	decay_class: 'stable' as const,
++	source_session_id: null,
++	discovered_from: null,
++	tags: [],
++	promotion_target: 'none' as const,
++	review_status: 'approved' as const,
++}
++
++// ── sanitizeFts5Query ─────────────────────────────────────────────────────────
++
++describe('sanitizeFts5Query', () => {
++	it('returns "" for empty string', () => {
++		expect(sanitizeFts5Query('')).toBe('""')
++	})
++
++	it('returns "" for whitespace-only input', () => {
++		expect(sanitizeFts5Query('   ')).toBe('""')
++	})
++
++	it('wraps a single token in double quotes', () => {
++		expect(sanitizeFts5Query('hello')).toBe('"hello"')
++	})
++
++	it('wraps each space-separated token individually', () => {
++		expect(sanitizeFts5Query('foo bar')).toBe('"foo" "bar"')
++	})
++
++	it('passes FTS5 boolean operators through unquoted', () => {
++		expect(sanitizeFts5Query('foo AND bar')).toBe('"foo" AND "bar"')
++		expect(sanitizeFts5Query('foo OR bar NOT baz')).toBe('"foo" OR "bar" NOT "baz"')
++	})
++
++	it('passes a quoted phrase through unchanged', () => {
++		expect(sanitizeFts5Query('"exact phrase"')).toBe('"exact phrase"')
++	})
++
++	it('converts a prefix token (word*) to "word" * form', () => {
++		expect(sanitizeFts5Query('hell*')).toBe('"hell" *')
++	})
++
++	it('strips embedded double-quotes from ordinary tokens', () => {
++		expect(sanitizeFts5Query('say"hello')).toBe('"sayhello"')
++	})
++})
++
++// ── searchMemories ────────────────────────────────────────────────────────────
++
++describe('searchMemories', () => {
++	it('returns [] when memories_fts table is absent', () => {
++		const db = new Database(':memory:')
++		expect(searchMemories(db, 'anything')).toEqual([])
++		db.close()
++	})
++
++	it('returns FTS matches for approved memories', () => {
++		const db = freshDb()
++		insertMemory(db, { ...memBase, title: 'Alpha Memory', body: 'alpha alpha alpha', memory_type: 'convention' })
++		insertMemory(db, { ...memBase, title: 'Unrelated Memory', body: 'delta epsilon zeta', memory_type: 'convention' })
++
++		const results = searchMemories(db, 'alpha')
++		expect(results).toHaveLength(1)
++		expect(results[0].memory.title).toBe('Alpha Memory')
++		db.close()
++	})
++
++	it('excludes pending and rejected memories', () => {
++		const db = freshDb()
++		insertMemory(db, { ...memBase, title: 'Pending', body: 'alpha content', memory_type: 'convention', review_status: 'pending' })
++		insertMemory(db, { ...memBase, title: 'Approved', body: 'alpha approved', memory_type: 'convention', review_status: 'approved' })
++
++		const results = searchMemories(db, 'alpha')
++		expect(results).toHaveLength(1)
++		expect(results[0].memory.title).toBe('Approved')
++		db.close()
++	})
++
++	it('filters by project when option supplied', () => {
++		const db = freshDb()
++		insertMemory(db, { ...memBase, project: 'proj-a', title: 'A', body: 'alpha content here', memory_type: 'convention' })
++		insertMemory(db, { ...memBase, project: 'proj-b', title: 'B', body: 'alpha content here', memory_type: 'convention' })
++
++		const results = searchMemories(db, 'alpha', { project: 'proj-a' })
++		expect(results).toHaveLength(1)
++		expect(results[0].memory.title).toBe('A')
++		db.close()
++	})
++})
++
++// ── hybridSearchMemories ──────────────────────────────────────────────────────
++
++describe('hybridSearchMemories', () => {
++	beforeEach(() => {
++		vi.mocked(generateEmbedding).mockResolvedValue(null)
++		vi.mocked(rrfFuse).mockClear()
++	})
++
++	it('falls back to FTS results when generateEmbedding returns null', async () => {
++		const db = freshDb()
++		insertMemory(db, { ...memBase, title: 'Alpha Hit', body: 'alpha beta gamma delta', memory_type: 'convention' })
++
++		const results = await hybridSearchMemories(db, 'alpha')
++		expect(results).toHaveLength(1)
++		expect(results[0].memory.title).toBe('Alpha Hit')
++		db.close()
++	})
++
++	it('returns FTS results unchanged when memories_vec table is absent', async () => {
++		// DB without vec table: initializeSchema creates it via sqlite-vec if available,
++		// but the fallback branch still exercises `if (vecRank.size === 0) return ftsResults`.
++		const queryVec = new Float32Array(1024)
++		queryVec[0] = 1.0
++		vi.mocked(generateEmbedding).mockResolvedValue(queryVec)
++
++		// Bare DB: no schema at all → searchMemories returns [] → ftsResults is empty
++		// so vecMemIds.length === 0 fallback fires.
++		const db = new Database(':memory:')
++		const results = await hybridSearchMemories(db, 'alpha')
++		expect(results).toEqual([])
++		db.close()
++	})
++
++	// ── characterization test — fused ordering + RED guard ───────────────────
++	//
++	// Layout:
++	//   Mem A: FTS rank 1 (4× "alpha" in 4-word doc), vec rank 3 (dim-2 unit vector)
++	//   Mem B: FTS rank 2 (1× "alpha" in 4-word doc), vec rank 1 (dim-0 unit vector, aligned with query)
++	//   Mem C: not in FTS ("delta epsilon"), vec rank 2 (dim-1 unit vector, ~45° from query)
++	//
++	// Query vec = [1, 0, 0, ...] (dim-0 unit vector)
++	//   L2 distance: B=0, C≈√2*0.7071≈1, A=√2≈1.41 → vec ranks B=1, C=2, A=3
++	//
++	// RRF (k=60, 1-indexed):
++	//   A: 1/61 + 1/63 ≈ 0.03226
++	//   B: 1/62 + 1/61 ≈ 0.03252
++	//   C:  0   + 1/62 ≈ 0.01613
++	//   Expected order: B > A > C
++	//
++	// RED before refactor: rrfFuse is never called in the inlined loop.
++	// GREEN after refactor: hybridSearchMemories delegates to rrfFuse.
++	it('delegates fusion to rrfFuse and returns results in fused order (B > A > C)', async () => {
++		const queryVec = new Float32Array(1024)
++		queryVec[0] = 1.0
++		vi.mocked(generateEmbedding).mockResolvedValue(queryVec)
++
++		const db = freshDb()
++
++		// Mem A — strong FTS hit, weak vec alignment
++		const { id: idA } = insertMemory(db, {
++			...memBase,
++			title: 'Mem A',
++			body: 'alpha alpha alpha alpha',
++			memory_type: 'convention',
++		})
++		const vecA = new Float32Array(1024)
++		vecA[2] = 1.0 // dim-2 unit vector — L2 distance from query [1,0,0,...] is √2 ≈ 1.41
++		await embedMemory(db, idA, async () => vecA)
++
++		// Mem B — moderate FTS hit, strong vec alignment
++		const { id: idB } = insertMemory(db, {
++			...memBase,
++			title: 'Mem B',
++			body: 'alpha beta gamma delta',
++			memory_type: 'convention',
++		})
++		const vecB = new Float32Array(1024)
++		vecB[0] = 1.0 // dim-0 unit vector — identical direction to query, distance = 0
++		await embedMemory(db, idB, async () => vecB)
++
++		// Mem C — no FTS match, medium vec alignment
++		const { id: idC } = insertMemory(db, {
++			...memBase,
++			title: 'Mem C',
++			body: 'delta epsilon zeta omega',
++			memory_type: 'convention',
++		})
++		const vecC = new Float32Array(1024)
++		vecC[0] = 0.7071
++		vecC[1] = 0.7071 // ~45° from query, L2 dist ≈ √(0.086+0.5) ≈ 0.765 (between B and A)
++		await embedMemory(db, idC, async () => vecC)
++
++		const results = await hybridSearchMemories(db, 'alpha')
++
++		// RED guard: rrfFuse must have been called by the refactored path
++		expect(rrfFuse).toHaveBeenCalled()
++
++		// Characterization: fused order B > A > C
++		const titles = results.map((r) => r.memory.title)
++		expect(titles[0]).toBe('Mem B')
++		expect(titles[1]).toBe('Mem A')
++		expect(titles[2]).toBe('Mem C')
++
++		// rank field follows negative-score convention (lower = better BM25/RRF)
++		expect(results[0].rank).toBeLessThan(0)
++
++		db.close()
++	})
++})
+diff --git a/src/core/search.ts b/src/core/search.ts
+index 89b9e82..ff34a8d 100644
+--- a/src/core/search.ts
++++ b/src/core/search.ts
+@@ -1,6 +1,7 @@
+ import Database from 'better-sqlite3';
+ import type { Atom, AtomLink, SearchResult, Diagnostic, Session, Memory } from './types.js';
+ import { generateEmbedding } from './embeddings.js';
++import { rrfFuse } from './rrf.js';
+ 
+ export interface MemorySearchResult {
+   memory: Memory;
+@@ -244,15 +245,9 @@ export async function hybridSearchMemories(
+   options?: { project?: string; scope?: string; limit?: number }
+ ): Promise<MemorySearchResult[]> {
+   const limit = options?.limit ?? 20;
+-  const RRF_K = 60;
+ 
+   const ftsResults = searchMemories(db, query, { ...options, limit });
+-  const ftsRank = new Map<string, number>();
+-  for (let i = 0; i < ftsResults.length; i++) {
+-    ftsRank.set(ftsResults[i].memory.id, i);
+-  }
+ 
+-  let vecRank = new Map<string, number>();
+   let vecMemIds: string[] = [];
+ 
+   const queryVec = await generateEmbedding(query);
+@@ -275,7 +270,6 @@ export async function hybridSearchMemories(
+             WHERE rowid = ? AND review_status = 'approved' AND superseded_by IS NULL
+           `).get(vecRows[i].rowid) as { id: string } | undefined;
+           if (memRow) {
+-            vecRank.set(memRow.id, i);
+             vecMemIds.push(memRow.id);
+           }
+         }
+@@ -285,20 +279,26 @@ export async function hybridSearchMemories(
+     }
+   }
+ 
+-  if (vecRank.size === 0) return ftsResults;
+-
+-  const allIds = new Set<string>([
+-    ...ftsResults.map(r => r.memory.id),
+-    ...vecMemIds,
+-  ]);
++  if (vecMemIds.length === 0) return ftsResults;
+ 
+-  const rrfScores = new Map<string, number>();
+-  for (const id of allIds) {
+-    const ftsPosScore = ftsRank.has(id) ? 1 / (RRF_K + ftsRank.get(id)!) : 0;
+-    const vecPosScore = vecRank.has(id) ? 1 / (RRF_K + vecRank.get(id)!) : 0;
+-    rrfScores.set(id, ftsPosScore + vecPosScore);
++  // Map string memory IDs → integers for rrfFuse, then map back.
++  const strToInt = new Map<string, number>();
++  let nextIdx = 0;
++  for (const r of ftsResults) {
++    if (!strToInt.has(r.memory.id)) strToInt.set(r.memory.id, nextIdx++);
++  }
++  for (const id of vecMemIds) {
++    if (!strToInt.has(id)) strToInt.set(id, nextIdx++);
+   }
++  const intToStr = new Map<number, string>();
++  for (const [sid, idx] of strToInt) intToStr.set(idx, sid);
++
++  const ftsNumIds = ftsResults.map(r => strToInt.get(r.memory.id)!);
++  const vecNumIds = vecMemIds.map(id => strToInt.get(id)!);
++
++  const fused = rrfFuse([ftsNumIds, vecNumIds]);
+ 
++  // Hydrate results: FTS rows already have snippets; vec-only rows fetched on demand.
+   const resultByMemId = new Map<string, MemorySearchResult>();
+   for (const r of ftsResults) resultByMemId.set(r.memory.id, r);
+ 
+@@ -317,15 +317,13 @@ export async function hybridSearchMemories(
+     }
+   }
+ 
+-  const sorted = Array.from(allIds)
+-    .filter(id => resultByMemId.has(id))
+-    .sort((a, b) => (rrfScores.get(b) ?? 0) - (rrfScores.get(a) ?? 0))
+-    .slice(0, limit);
+-
+-  return sorted.map(id => ({
+-    ...resultByMemId.get(id)!,
+-    rank: -(rrfScores.get(id) ?? 0),
+-  }));
++  return fused
++    .slice(0, limit)
++    .flatMap(f => {
++      const sid = intToStr.get(f.id);
++      if (sid === undefined || !resultByMemId.has(sid)) return [];
++      return [{ ...resultByMemId.get(sid)!, rank: -f.score }];
++    });
+ }
+ 
+ /**

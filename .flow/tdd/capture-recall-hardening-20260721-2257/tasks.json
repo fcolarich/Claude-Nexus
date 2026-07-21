@@ -1,0 +1,149 @@
+{
+	"feature": "Capture/Recall Hardening",
+	"branch": "feature/capture-recall-hardening",
+	"tasks": [
+		{
+			"id": "task-001",
+			"title": "Add gpt-tokenizer dependency",
+			"description": "Add `gpt-tokenizer` (pure-JS cl100k_base BPE, no native/WASM build) as a pinned dependency in package.json and install. No other change. Acceptance: package.json lists gpt-tokenizer and `import { encode } from 'gpt-tokenizer'` resolves at build. Keep it consistent with the flat, dependency-light style.",
+			"files": ["package.json"],
+			"depends_on": [],
+			"estimated_tokens": 1200,
+			"complexity": "simple",
+			"constraints": ["Q1"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-002",
+			"title": "Swap estTokens to BPE with heuristic fallback",
+			"description": "TDD: extend recall.test.ts with cases asserting the new estTokens error margin vs real cl100k_base counts is meaningfully tighter than Math.ceil(s.length/4) on both code-snippet and prose bodies, plus a fallback case (encode throws -> chars/4). Then reimplement estTokens(s: string): number in recall.ts to encode() via gpt-tokenizer, memoized by string, wrapped in try/catch falling back to Math.ceil(s.length/4). Signature and callers unchanged; the single change covers both the full-body budget walk and the title-only elision walk. Acceptance: SC-1 test passes; existing recall.test.ts green.",
+			"files": ["src/core/recall.ts", "src/core/recall.test.ts"],
+			"depends_on": ["task-001"],
+			"estimated_tokens": 3500,
+			"complexity": "simple",
+			"constraints": ["Q1"],
+			"risk": "low"
+		},
+		{
+			"id": "task-003",
+			"title": "MCP tool-surface audit note",
+			"description": "Read src/mcp/server.ts, enumerate every exposed MCP tool, and produce _documents/notes/note-NNN-mcp-tool-surface-audit.md via the add-note skill (assigns NNN, rebuilds _documents/notes.md through scripts/rebuild_index.py — do not hand-edit the index). Contents: current tool count vs the ADR-011 consolidation baseline, one line per tool, concrete grouping/consolidation candidates if any, and exactly one recommendation from {consolidate now | revisit later | no action}. Audit only — no MCP code change. Acceptance: SC-2 — note exists, index rebuilt, recommendation explicit.",
+			"files": ["src/mcp/server.ts", "_documents/notes/note-NNN-mcp-tool-surface-audit.md", "_documents/notes.md"],
+			"depends_on": [],
+			"estimated_tokens": 6000,
+			"complexity": "complex",
+			"constraints": ["Q6"],
+			"risk": "low"
+		},
+		{
+			"id": "task-004",
+			"title": "Record consolidate rewrite NO-GO comment",
+			"description": "Add a header comment on consolidateMemories() in src/capture/consolidate.ts recording the Q4 rewrite NO-GO: LLM body-compaction/rewrite evaluated and declined — embed + prune-rejected + merge-by-supersede is sufficient at current per-bucket volume; downstream index bloat is handled by the MEMORY.md cap in export.ts, not by rewriting bodies; no schema exists to record rewrite provenance. No behavioral change, signature unchanged. Acceptance: SC-3 — go/no-go documented unambiguously in code; consolidate tests green.",
+			"files": ["src/capture/consolidate.ts"],
+			"depends_on": ["task-002"],
+			"estimated_tokens": 2000,
+			"complexity": "simple",
+			"constraints": ["Q4"],
+			"risk": "low"
+		},
+		{
+			"id": "task-005",
+			"title": "Record pre-LLM scoring NO-GO comment",
+			"description": "Add a comment near refineCandidates() in src/capture/extract.ts recording the Q4 pre-LLM-scoring NO-GO: per-candidate pre-LLM signal scoring evaluated and declined — the reflector observer gate (whole-extraction gate) plus refineCandidates' post-hoc COMPLETION_RE narration filter already cover the practical case for negligible gain. No behavioral change. Acceptance: supports SC-3 — decision documented in code; extract tests green.",
+			"files": ["src/capture/extract.ts"],
+			"depends_on": ["task-002"],
+			"estimated_tokens": 2500,
+			"complexity": "simple",
+			"constraints": ["Q4"],
+			"risk": "low"
+		},
+		{
+			"id": "task-006",
+			"title": "Add capture.memory_md_max_items default",
+			"description": "Add capture.memory_md_max_items = 200 to the baked-in DEFAULTS in src/core/config.ts (new key consumed by export.ts). getNexusConfig() merge logic unchanged; yaml may override. Do NOT touch reranker here. Acceptance: getNexusConfig().capture.memory_md_max_items === 200 when yaml omits the key (validated downstream by export.test.ts in task-007).",
+			"files": ["src/core/config.ts"],
+			"depends_on": ["task-002"],
+			"estimated_tokens": 1800,
+			"complexity": "simple",
+			"constraints": ["Q5"],
+			"risk": "low"
+		},
+		{
+			"id": "task-007",
+			"title": "Cap MEMORY.md index with truncation pointer",
+			"description": "TDD: extend export.test.ts with a large synthetic per-bucket memory set exceeding the cap, asserting the written MEMORY.md index is capped at capture.memory_md_max_items entries, retains the top entries by decay rank desc, and appends exactly one pointer line '> … {remaining} more memories — use nexus_search to retrieve them.' with correct remaining count; plus an under-cap case with no pointer and no truncation. Then implement in exportAll() (src/capture/export.ts): per bucket order approved memories by decay rank desc, keep top N = config.capture.memory_md_max_items, append the pointer line only on overflow. Acceptance: SC-4 passes; existing export.test.ts green.",
+			"files": ["src/capture/export.ts", "src/capture/export.test.ts"],
+			"depends_on": ["task-006"],
+			"estimated_tokens": 4000,
+			"complexity": "simple",
+			"constraints": ["Q5"],
+			"risk": "low"
+		},
+		{
+			"id": "task-008",
+			"title": "Create pure rrfFuse helper",
+			"description": "TDD: create src/core/rrf.test.ts asserting the fusion math — known ranked lists fuse to expected order, an id missing from a list contributes 0 from that list, single-list input preserves order, empty input returns [], scores use sum(1/(k+rank)). Then create src/core/rrf.ts exporting RRF_K = 60 and rrfFuse(rankedLists: number[][], k = RRF_K): Array<{id: number; score: number}> sorted by fused score desc. Pure, storage-agnostic, no DB/embedding imports. Acceptance: rrf.test.ts passes.",
+			"files": ["src/core/rrf.ts", "src/core/rrf.test.ts"],
+			"depends_on": ["task-007"],
+			"estimated_tokens": 2200,
+			"complexity": "simple",
+			"constraints": ["Q2"],
+			"risk": "low"
+		},
+		{
+			"id": "task-009",
+			"title": "Refactor hybridSearchMemories onto rrfFuse",
+			"description": "Refactor hybridSearchMemories() in src/core/search.ts to build its FTS5-ranked and vector-ranked id lists and delegate fusion to rrfFuse([ftsIds, vecIds]) instead of its inlined RRF loop, then hydrate rows in fused order. Public signature and external behavior unchanged; atoms-side hybridSearch() intentionally left untouched. Keep/extend search.ts-adjacent tests (src/core/search.test.ts) as a characterization guard that fused ordering matches the pre-refactor output. Acceptance: existing search tests green; fusion now sourced from the shared helper (Q2).",
+			"files": ["src/core/search.ts", "src/core/search.test.ts"],
+			"depends_on": ["task-008"],
+			"estimated_tokens": 4000,
+			"complexity": "simple",
+			"constraints": ["Q2"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-010",
+			"title": "Fuse FTS5+vector in recallByQuery",
+			"description": "TDD: extend recall.test.ts with the SC-5 case — a keyword-exact FTS5 match that a stronger cosine match currently suppresses appears in the fused top-N after the change; plus assertions that excludeIds are dropped, the minSimilarity floor does NOT re-suppress FTS5-exact hits, and the reranker runs over the fused set. Then rework recallByQuery() in src/core/recall.ts: vector pool limit*6, FTS5 pool limit*3, fuse via rrfFuse([ftsIds, vecIds]), drop excludeIds, apply the minSimilarity floor to vector-originated candidates only (FTS5-exact ids bypass the floor so fusion is not undone), then rerank the bounded fused set (~top limit*3) when enabled, falling back to fused order if the reranker throws or is disabled. Preserve the estTokens budget walk. Acceptance: SC-5 passes; existing recall tests green.",
+			"files": ["src/core/recall.ts", "src/core/recall.test.ts"],
+			"depends_on": ["task-008"],
+			"estimated_tokens": 6500,
+			"complexity": "complex",
+			"constraints": ["Q2", "Q3"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-011",
+			"title": "Latency spot-check of fused-set rerank",
+			"description": "Latency spot-check (not a benchmark harness): measure recallByQuery's reranker pass over the fused candidate set at per-prompt call frequency and confirm it holds within the 50–100ms envelope. Record the observed figure and the validation as a comment at the rerank call site in src/core/recall.ts. If it exceeds the envelope, tighten the bounded fused-set rerank input cap (Q3) in recall.ts until it fits and note the final cap. Acceptance: part of SC-6 — observed per-prompt fused-set rerank latency recorded and within envelope; gates task-012.",
+			"files": ["src/core/recall.ts"],
+			"depends_on": ["task-010"],
+			"estimated_tokens": 3000,
+			"complexity": "simple",
+			"constraints": ["Q3"],
+			"risk": "low"
+		},
+		{
+			"id": "task-012",
+			"title": "Flip reranker enabled default to true",
+			"description": "TDD: add src/core/config.test.ts asserting getNexusConfig().reranker.enabled === true when extraction_models.yaml omits reranker.enabled, and that an explicit yaml reranker.enabled: false still wins. Then flip DEFAULTS.reranker.enabled from false to true in src/core/config.ts (was config.ts:94); getNexusConfig() merge logic unchanged. Land only after task-011's latency confirmation. Acceptance: SC-6 config test passes; a fresh install with no yaml key gets reranked recall.",
+			"files": ["src/core/config.ts", "src/core/config.test.ts"],
+			"depends_on": ["task-011"],
+			"estimated_tokens": 2800,
+			"complexity": "simple",
+			"constraints": ["Q3"],
+			"risk": "medium"
+		},
+		{
+			"id": "task-013",
+			"title": "Full-suite green integration gate",
+			"description": "Final integration gate: run the full Vitest suite on feature/capture-recall-hardening (recall, search, export, extract, rrf, config) and confirm all green with the new per-item tests present and no assertions weakened. Fix any cross-item regression surfaced, especially the RRF-fusion × reranker-default interaction. Acceptance: SC-7 — all five items shipped on one branch, suites green, new tests added per item rather than modified to weaken assertions.",
+			"files": ["src/core/recall.test.ts", "src/core/search.test.ts", "src/capture/export.test.ts", "src/capture/extract.test.ts", "src/core/rrf.test.ts", "src/core/config.test.ts"],
+			"depends_on": ["task-012", "task-009"],
+			"estimated_tokens": 2500,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		}
+	]
+}

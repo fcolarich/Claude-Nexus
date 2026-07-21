@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import type { Atom, AtomLink, SearchResult, Diagnostic, Session, Memory } from './types.js';
 import { generateEmbedding } from './embeddings.js';
+import { rrfFuse } from './rrf.js';
 
 export interface MemorySearchResult {
   memory: Memory;
@@ -244,15 +245,9 @@ export async function hybridSearchMemories(
   options?: { project?: string; scope?: string; limit?: number }
 ): Promise<MemorySearchResult[]> {
   const limit = options?.limit ?? 20;
-  const RRF_K = 60;
 
   const ftsResults = searchMemories(db, query, { ...options, limit });
-  const ftsRank = new Map<string, number>();
-  for (let i = 0; i < ftsResults.length; i++) {
-    ftsRank.set(ftsResults[i].memory.id, i);
-  }
 
-  let vecRank = new Map<string, number>();
   let vecMemIds: string[] = [];
 
   const queryVec = await generateEmbedding(query);
@@ -275,7 +270,6 @@ export async function hybridSearchMemories(
             WHERE rowid = ? AND review_status = 'approved' AND superseded_by IS NULL
           `).get(vecRows[i].rowid) as { id: string } | undefined;
           if (memRow) {
-            vecRank.set(memRow.id, i);
             vecMemIds.push(memRow.id);
           }
         }
@@ -285,20 +279,26 @@ export async function hybridSearchMemories(
     }
   }
 
-  if (vecRank.size === 0) return ftsResults;
+  if (vecMemIds.length === 0) return ftsResults;
 
-  const allIds = new Set<string>([
-    ...ftsResults.map(r => r.memory.id),
-    ...vecMemIds,
-  ]);
-
-  const rrfScores = new Map<string, number>();
-  for (const id of allIds) {
-    const ftsPosScore = ftsRank.has(id) ? 1 / (RRF_K + ftsRank.get(id)!) : 0;
-    const vecPosScore = vecRank.has(id) ? 1 / (RRF_K + vecRank.get(id)!) : 0;
-    rrfScores.set(id, ftsPosScore + vecPosScore);
+  // Map string memory IDs → integers for rrfFuse, then map back.
+  const strToInt = new Map<string, number>();
+  let nextIdx = 0;
+  for (const r of ftsResults) {
+    if (!strToInt.has(r.memory.id)) strToInt.set(r.memory.id, nextIdx++);
   }
+  for (const id of vecMemIds) {
+    if (!strToInt.has(id)) strToInt.set(id, nextIdx++);
+  }
+  const intToStr = new Map<number, string>();
+  for (const [sid, idx] of strToInt) intToStr.set(idx, sid);
 
+  const ftsNumIds = ftsResults.map(r => strToInt.get(r.memory.id)!);
+  const vecNumIds = vecMemIds.map(id => strToInt.get(id)!);
+
+  const fused = rrfFuse([ftsNumIds, vecNumIds]);
+
+  // Hydrate results: FTS rows already have snippets; vec-only rows fetched on demand.
   const resultByMemId = new Map<string, MemorySearchResult>();
   for (const r of ftsResults) resultByMemId.set(r.memory.id, r);
 
@@ -317,15 +317,13 @@ export async function hybridSearchMemories(
     }
   }
 
-  const sorted = Array.from(allIds)
-    .filter(id => resultByMemId.has(id))
-    .sort((a, b) => (rrfScores.get(b) ?? 0) - (rrfScores.get(a) ?? 0))
-    .slice(0, limit);
-
-  return sorted.map(id => ({
-    ...resultByMemId.get(id)!,
-    rank: -(rrfScores.get(id) ?? 0),
-  }));
+  return fused
+    .slice(0, limit)
+    .flatMap(f => {
+      const sid = intToStr.get(f.id);
+      if (sid === undefined || !resultByMemId.has(sid)) return [];
+      return [{ ...resultByMemId.get(sid)!, rank: -f.score }];
+    });
 }
 
 /**

@@ -27,6 +27,7 @@
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "glob": "^11.0.0",
+    "gpt-tokenizer": "^2.0.0",
     "gray-matter": "^4.0.3",
     "sqlite-vec": "^0.1.9",
     "svelte": "^5.55.0",
