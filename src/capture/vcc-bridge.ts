@@ -58,14 +58,11 @@ function runCli(args: string[], opts?: CompactOptions): { ok: boolean; stdout?: 
   const timeout = opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const env = buildEnv();
 
-  const attempts: { cmd: string; args: string[] }[] = [];
-  const preferred = opts?.pythonBin ?? process.env.PYTHON_BIN;
-  if (preferred) {
-    attempts.push({ cmd: preferred, args: ['-m', 'vcc_compact.cli', ...args] });
-  } else {
-    attempts.push({ cmd: 'python', args: ['-m', 'vcc_compact.cli', ...args] });
-    attempts.push({ cmd: 'py', args: ['-3', '-m', 'vcc_compact.cli', ...args] });
-  }
+  const preferred = opts?.pythonBin ?? process.env.PYTHON_BIN ?? 'python';
+  const attempts: { cmd: string; args: string[] }[] = [
+    { cmd: preferred, args: ['-m', 'vcc_compact.cli', ...args] },
+    { cmd: 'py', args: ['-3', '-m', 'vcc_compact.cli', ...args] },
+  ];
 
   let lastError: string | undefined;
   for (const attempt of attempts) {

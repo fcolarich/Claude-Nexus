@@ -78,6 +78,30 @@ describe('vcc-bridge', () => {
       expect(spawnSyncMock).toHaveBeenCalledTimes(2);
     });
 
+    it('falls back to "py -3" on ENOENT when PYTHON_BIN is set to a bogus binary', () => {
+      process.env.PYTHON_BIN = 'nonexistent-python-bin';
+      let call = 0;
+      spawnSyncMock.mockImplementation((cmd: string, args: string[]) => {
+        call++;
+        if (call === 1) {
+          expect(cmd).toBe('nonexistent-python-bin');
+          const err = new Error('spawn nonexistent-python-bin ENOENT') as NodeJS.ErrnoException;
+          err.code = 'ENOENT';
+          return { status: null, stdout: '', stderr: '', error: err, signal: null };
+        }
+        expect(cmd).toBe('py');
+        expect(args[0]).toBe('-3');
+        const outIdx = args.indexOf('--out');
+        writeFileSync(args[outIdx + 1], 'ok via py -3 fallback', 'utf-8');
+        return ok();
+      });
+
+      const result = compactWindowLines(['{"a":1}']);
+      expect(result.ok).toBe(true);
+      expect(result.text).toBe('ok via py -3 fallback');
+      expect(spawnSyncMock).toHaveBeenCalledTimes(2);
+    });
+
     it('returns ok:false when the process times out (killed by signal)', () => {
       spawnSyncMock.mockReturnValue({ status: null, stdout: '', stderr: '', error: undefined, signal: 'SIGTERM' });
 
