@@ -1,0 +1,171 @@
+{
+  "feature": "Promotion/Demotion & Staleness Detection",
+  "branch": "feature/promotion-demotion-and-staleness-detection",
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Scaffold src/core/governance.ts (constants, types, governByHelpRate stub)",
+      "description": "Create src/core/governance.ts. Export tuning constants (MIN_EVALUATIONS=5, LOW_THRESHOLD=0.3, HIGH_THRESHOLD=0.8, CONFIDENCE_FLOOR=0.1, DEMOTE_FACTOR=0.85, REINFORCE_BUMP=0.05, DIVERGENCE_CONF=0.3, MAX_PAIRS_PER_RUN=20), the interfaces GovernResult { demoted; reinforced } and ContradictionResult { contradictionsFlagged; contradictionPairsChecked }, and the type HaikuFn = (systemPrompt: string, userPrompt: string) => Promise<string>. Add a synchronous governByHelpRate(db): GovernResult stub returning { demoted: 0, reinforced: 0 }. Do NOT add detectContradictions here — that function is gated behind the DDR. Tabs for indent.",
+      "files": ["src/core/governance.ts"],
+      "depends_on": [],
+      "estimated_tokens": 1800,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-002",
+      "title": "Author contradiction-detection DDR via add-ddr skill (HARD PRE-MERGE GATE)",
+      "description": "Invoke the add-ddr skill (per CLAUDE.md doc-maintenance protocol — do not hand-edit design.md; the skill creates the entry and rebuilds the index) to record the contradiction-detection design: heuristic 'related'-band pre-filter + bounded Haiku confirmation + surfacing-only (never auto-suppress/delete/hide/supersede). Source content from design.md item 7 and architecture.md KQ4 (DDR timing), KQ3 (accept repeat cost, no new schema; revisit trigger when MAX_PAIRS_PER_RUN saturates) and the diagnostics/decay.ts collision decision (contradicts link is durable, stale diagnostic is a re-derivable surfacing artifact). Also record the resolved bidirectional-write decision (two directional memory_links rows per pair). This is a hard gate per architecture KQ4: it MUST land before any code touches detectContradictions in governance.ts or its call site in consolidate.ts. The add-ddr skill assigns the NNN number and rebuilds _documents/design.md.",
+      "files": ["_documents/decisions/ddr-NNN-contradiction-detection.md", "_documents/design.md"],
+      "depends_on": [],
+      "estimated_tokens": 2800,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-003",
+      "title": "Unit tests for governByHelpRate (all branches)",
+      "description": "Write src/core/governance-helprate.test.ts using an in-memory better-sqlite3 DB seeded via database.ts schema init. Assert: use_count>=5 & helpRate<0.3 demotes (confidence*0.85, floored at 0.1), counts reset to 0, last_verified_at UNCHANGED; use_count>=5 & helpRate>0.8 reinforces (confidence+0.05, capped 1.0), last_verified_at refreshed, counts reset; between-thresholds dead-zone resets counts + updated_at only (no confidence/verify change); use_count<5 untouched entirely; use_count==5 is evaluated; floor/cap clamps are no-op-safe. Only approved, non-superseded rows are considered.",
+      "files": ["src/core/governance-helprate.test.ts", "src/core/governance.ts", "src/core/database.ts"],
+      "depends_on": ["task-001"],
+      "estimated_tokens": 3800,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-004",
+      "title": "Implement governByHelpRate (phase 4 — pure SQL)",
+      "description": "Implement governByHelpRate(db) in governance.ts to pass task-003. Select id, confidence, use_count, help_count FROM memories WHERE review_status='approved' AND superseded_by IS NULL AND use_count >= MIN_EVALUATIONS. Per row compute helpRate=help_count/use_count and branch: demote (confidence=MAX(FLOOR, confidence*0.85), last_verified_at UNTOUCHED), reinforce (confidence=MIN(1.0, confidence+0.05), last_verified_at=datetime('now')), or dead-zone (no confidence/verify change). All branches set use_count=0, help_count=0, updated_at=datetime('now'). Return { demoted, reinforced }. Constraint: reuse existing columns only — no schema change. Do NOT open decay.ts.",
+      "files": ["src/core/governance.ts", "src/core/database.ts"],
+      "depends_on": ["task-001", "task-003"],
+      "estimated_tokens": 3800,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "medium"
+    },
+    {
+      "id": "task-005",
+      "title": "Add detectContradictions signature + stub to governance.ts (GATED behind DDR)",
+      "description": "GATED: requires the contradiction DDR (task-002) to exist first. Add to governance.ts: import { callModel } from './llm.js'; export async function detectContradictions(db, haikuFn: HaikuFn = callModel): Promise<ContradictionResult> returning { contradictionsFlagged: 0, contradictionPairsChecked: 0 }. Signature/default only — no detection logic yet. This is the first touch of the contradiction-detection surface, so it must sit behind the DDR gate.",
+      "files": ["src/core/governance.ts", "src/core/llm.ts"],
+      "depends_on": ["task-001", "task-002"],
+      "estimated_tokens": 2200,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-006",
+      "title": "Unit tests for detectContradictions candidate selection + skip-on-failure",
+      "description": "Write in src/core/governance-contradictions.test.ts (in-memory DB, injected recording fake HaikuFn). Assert the shortlist contract: only 'related'-linked pairs that are approved, non-superseded, same scope, same project, pass the divergence pre-filter (ABS(conf_a-conf_b)>0.3 OR decay_class_a!=decay_class_b), and lack an existing 'contradicts' link in either direction are sent to haikuFn; ordering is related.created_at ASC; at most MAX_PAIRS_PER_RUN pairs per run; contradictionPairsChecked counts attempted pairs. Assert skip-silently: a fake HaikuFn that throws or returns unparseable text produces no writes and no crash. Seed >MAX_PAIRS_PER_RUN candidates to verify the cap.",
+      "files": ["src/core/governance-contradictions.test.ts", "src/core/governance.ts", "src/core/database.ts"],
+      "depends_on": ["task-005"],
+      "estimated_tokens": 4200,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-007",
+      "title": "Implement detectContradictions selection + Haiku loop + parse (GATED)",
+      "description": "GATED behind DDR. Implement the shortlist SQL (join memory_links link_type='related' to both endpoint memories; filters: approved, superseded_by IS NULL, same scope, same project, divergence pre-filter, NOT EXISTS a 'contradicts' link either direction; ORDER BY the related link's created_at ASC; LIMIT MAX_PAIRS_PER_RUN). For each pair build a yes/no system+user prompt and call haikuFn; parse a structured { conflict: boolean, reason: string }. Increment contradictionPairsChecked per attempted pair. On conflict=false / parse-failure / haikuFn throw: skip silently (no write). No writes for conflict=true yet (next task). Passes task-006.",
+      "files": ["src/core/governance.ts", "src/core/database.ts", "src/core/llm.ts"],
+      "depends_on": ["task-006"],
+      "estimated_tokens": 5000,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "high"
+    },
+    {
+      "id": "task-008",
+      "title": "Unit tests for confirmed-contradiction writes + idempotency",
+      "description": "Extend src/core/governance-contradictions.test.ts. With a fake HaikuFn returning conflict=true for a seeded related+divergent pair, assert: exactly TWO memory_links rows link_type='contradicts' (both directions, per architecture) and exactly ONE diagnostics row type='stale' with details JSON { reason:'contradiction', memory_ids:[a,b], haiku_reason }, atom_id NULL, message 'Contradiction candidate: <A> vs <B>'; contradictionsFlagged incremented by 1. Running detectContradictions twice produces no duplicate rows (INSERT OR IGNORE + existence-guarded diagnostic). A conflict=false pair produces zero writes.",
+      "files": ["src/core/governance-contradictions.test.ts", "src/core/governance.ts", "src/core/database.ts"],
+      "depends_on": ["task-007"],
+      "estimated_tokens": 3800,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-009",
+      "title": "Implement confirmed-contradiction writes (links + diagnostic) (GATED)",
+      "description": "GATED behind DDR. On conflict=true: INSERT OR IGNORE two memory_links rows (a->b and b->a, link_type='contradicts', confidence=1.0) using existing columns/CHECK value; then INSERT one diagnostics row (type='stale', atom_id NULL, message 'Contradiction candidate: <titleA> vs <titleB>', details JSON { reason:'contradiction', memory_ids:[idA,idB], haiku_reason }) only if an equivalent contradiction diagnostic does not already exist. Increment contradictionsFlagged. Surfacing-only — never delete/hide/supersede. No schema change. Passes task-008.",
+      "files": ["src/core/governance.ts", "src/core/database.ts"],
+      "depends_on": ["task-008"],
+      "estimated_tokens": 4000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "high"
+    },
+    {
+      "id": "task-010",
+      "title": "Unit tests for self-heal diagnostic re-derivation",
+      "description": "Extend src/core/governance-contradictions.test.ts. Seed a durable 'contradicts' memory_links pair with NO matching stale contradiction diagnostic (simulating decay.ts:flagStaleMemories having wiped it via DELETE FROM diagnostics WHERE type='stale'). Assert that running detectContradictions re-derives exactly one stale contradiction diagnostic for that link, is idempotent (second run adds none), and does not touch decay.ts. Do not import decay.ts — simulate the wipe with a raw DELETE.",
+      "files": ["src/core/governance-contradictions.test.ts", "src/core/governance.ts", "src/core/database.ts"],
+      "depends_on": ["task-009"],
+      "estimated_tokens": 3200,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-011",
+      "title": "Implement self-heal re-derivation of contradiction diagnostics (GATED)",
+      "description": "GATED behind DDR. Add the idempotent self-heal step that runs every detectContradictions call: for each 'contradicts' memory_links row lacking a matching type='stale' contradiction diagnostic, insert one (message + details reconstructed from the two linked memories). Treats the contradicts link as the durable record and the diagnostic as a re-derivable surfacing artifact (architecture diagnostics/decay collision decision). Must NOT modify decay.ts. Passes task-010.",
+      "files": ["src/core/governance.ts", "src/core/database.ts"],
+      "depends_on": ["task-010"],
+      "estimated_tokens": 3200,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "medium"
+    },
+    {
+      "id": "task-012",
+      "title": "Wire phase 4 (governByHelpRate) into consolidateMemories",
+      "description": "In src/core/consolidate.ts add fields demoted and reinforced to ConsolidateResult, call governByHelpRate(db) as a new phase AFTER the existing merge-near-dups phase, and aggregate its counts into the returned result. Import from './governance.js'. Do NOT wire detectContradictions here — that call site is gated behind the DDR and added in task-013. No schema change.",
+      "files": ["src/core/consolidate.ts", "src/core/governance.ts"],
+      "depends_on": ["task-004"],
+      "estimated_tokens": 3000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "medium"
+    },
+    {
+      "id": "task-013",
+      "title": "Wire phase 5 (detectContradictions) call site into consolidateMemories (GATED)",
+      "description": "GATED behind DDR (transitively via task-011) — this adds the detectContradictions CALL SITE, the second half of the hard gate. In consolidate.ts add fields contradictionsFlagged and contradictionPairsChecked to ConsolidateResult; add a third param haikuFn: HaikuFn = callModel (import from './llm.js') to consolidateMemories; call await detectContradictions(db, haikuFn) as the FINAL phase (order: backfill -> prune -> merge -> govern -> detect); aggregate its counts. Signature stays backward-compatible (optional param, additive fields).",
+      "files": ["src/core/consolidate.ts", "src/core/governance.ts", "src/core/llm.ts"],
+      "depends_on": ["task-011", "task-012"],
+      "estimated_tokens": 3500,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "high"
+    },
+    {
+      "id": "task-014",
+      "title": "Extend nexus_consolidate MCP tool report text",
+      "description": "In src/mcp/server.ts, update the nexus_consolidate tool handler's output string to report all five phases from the extended ConsolidateResult: 'Consolidation complete: N embedded, N merged, N pruned, N demoted, N reinforced, N contradiction pair(s) checked (N flagged).' Input schema ({}) unchanged; no new tool. Read only the nexus_consolidate handler section of server.ts plus consolidate.ts for the result shape.",
+      "files": ["src/mcp/server.ts", "src/core/consolidate.ts"],
+      "depends_on": ["task-013"],
+      "estimated_tokens": 3800,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-015",
+      "title": "End-to-end integration test for consolidateMemories (all five phases)",
+      "description": "Write src/core/consolidate.test.ts: one consolidateMemories run on an in-memory DB with a fake embedFn and fake haikuFn. Assert phase execution order (backfill -> prune -> merge -> govern -> detect), the aggregated ConsolidateResult (embedded, merged, pruned, demoted, reinforced, contradictionsFlagged, contradictionPairsChecked), self-heal recovers contradiction diagnostics after a simulated DELETE FROM diagnostics WHERE type='stale', and NO schema drift (no new tables, columns, or CHECK values vs the initialized schema). decay.ts is never imported or modified.",
+      "files": ["src/core/consolidate.test.ts", "src/core/consolidate.ts", "src/core/governance.ts", "src/core/database.ts"],
+      "depends_on": ["task-013"],
+      "estimated_tokens": 4800,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "low"
+    }
+  ]
+}

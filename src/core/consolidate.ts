@@ -17,16 +17,23 @@ import type { AtomScope } from './types.js';
 import { getNexusConfig } from './config.js';
 import { generateEmbedding } from './embeddings.js';
 import { embedUnindexedMemories, findSimilarMemory, normalize } from './memories.js';
+import { governByHelpRate, detectContradictions, type HaikuFn } from './governance.js';
+import { callModel } from './llm.js';
 
 export interface ConsolidateResult {
   embedded: number;   // memories given an embedding this run
   merged: number;     // near-duplicate pairs collapsed
   pruned: number;     // rejected memories deleted
+  demoted: number;    // low help-rate memories demoted
+  reinforced: number; // high help-rate memories reinforced
+  contradictionsFlagged: number;      // memory pairs confirmed as contradicting
+  contradictionPairsChecked: number;  // candidate pairs sent to the LLM
 }
 
 export async function consolidateMemories(
   db: Database.Database,
-  embedFn: (text: string) => Promise<Float32Array | null> = generateEmbedding
+  embedFn: (text: string) => Promise<Float32Array | null> = generateEmbedding,
+  haikuFn: HaikuFn = callModel
 ): Promise<ConsolidateResult> {
   const threshold = getNexusConfig().capture.dedup_cosine_threshold;
 
@@ -93,5 +100,11 @@ export async function consolidateMemories(
     merged++;
   }
 
-  return { embedded, merged, pruned };
+  // 4. Govern by help-rate: demote low performers, reinforce high performers.
+  const { demoted, reinforced } = governByHelpRate(db);
+
+  // 5. Detect contradictions among 'related' pairs (gated behind DDR-005).
+  const { contradictionsFlagged, contradictionPairsChecked } = await detectContradictions(db, haikuFn);
+
+  return { embedded, merged, pruned, demoted, reinforced, contradictionsFlagged, contradictionPairsChecked };
 }

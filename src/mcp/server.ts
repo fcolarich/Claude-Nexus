@@ -502,14 +502,14 @@ server.tool(
 
 server.tool(
   'nexus_consolidate',
-  'Run a memory cleanup sweep: backfill missing embeddings, prune rejected memories, and merge near-duplicates. Safe — decayed memories are never deleted, only superseded duplicates and rejected memories.',
+  'Run a memory cleanup sweep: backfill missing embeddings, prune rejected memories, merge near-duplicates, govern confidence by help-rate trend, and surface candidate contradictions. Safe — decayed memories are never deleted, only superseded duplicates and rejected memories.',
   {},
   async () => {
     const r = await consolidateMemories(db);
     return {
       content: [{
         type: 'text',
-        text: `Consolidation complete: ${r.embedded} embedded, ${r.merged} duplicate(s) merged, ${r.pruned} rejected pruned.`,
+        text: `Consolidation complete: ${r.embedded} embedded, ${r.merged} merged, ${r.pruned} pruned, ${r.demoted} demoted, ${r.reinforced} reinforced, ${r.contradictionPairsChecked} contradiction pair(s) checked (${r.contradictionsFlagged} flagged).`,
       }],
     };
   }
