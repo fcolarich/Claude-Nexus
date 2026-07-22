@@ -191,6 +191,24 @@ describe('schema migrations', () => {
     db.close();
   });
 
+  it('migration v10: vcc_shrunk_at column exists after initializeSchema', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    expect(columnExists(db, 'sessions', 'vcc_shrunk_at')).toBe(true);
+    expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+    db.close();
+  });
+
+  it('migration v10: running initializeSchema twice is idempotent (no throw, column queryable)', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    expect(() => initializeSchema(db)).not.toThrow();
+    expect(columnExists(db, 'sessions', 'vcc_shrunk_at')).toBe(true);
+    const row = db.prepare(`SELECT vcc_shrunk_at FROM sessions LIMIT 0`).all();
+    expect(row).toEqual([]);
+    db.close();
+  });
+
   it('migration v7 removes task support while preserving corpus-expansion columns', () => {
     const db = openDatabase(':memory:');
 

@@ -58,6 +58,7 @@ const MIGRATIONS: Migration[] = [
   { version: 7, name: 'remove-task-support', up: migrateRemoveTaskSupport },
   { version: 8, name: 'project-aliases', up: migrateProjectAliases },
   { version: 9, name: 'promotion-classification', up: migratePromotionClassification },
+  { version: 10, name: 'vcc-shrunk-at', up: migrateVccShrunkAt },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -511,6 +512,15 @@ function migrateMemories(db: Database.Database): void {
 
 function migrateReflectionCursor(db: Database.Database): void {
   try { db.exec(`ALTER TABLE sessions ADD COLUMN last_reflected_index INTEGER NOT NULL DEFAULT 0`); } catch {}
+}
+
+// ── Migration 10: vcc_shrunk_at ──────────────────────────────────────
+// ISO timestamp set when the raw session JSONL was last overwritten with
+// vcc_compact output (inline shrink in reflect() or the cold-session backfill
+// script). NULL = never shrunk — a safe backfill target.
+
+function migrateVccShrunkAt(db: Database.Database): void {
+  try { db.exec(`ALTER TABLE sessions ADD COLUMN vcc_shrunk_at TEXT`); } catch {}
 }
 
 // ── Migration 4: import legacy memory atoms ──────────────────────────
