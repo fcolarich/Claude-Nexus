@@ -22,6 +22,7 @@ Maintained via the `update-file-map` skill.
 | `src/core/reranker.ts` | Cross-encoder reranking client for the local-reranker HTTP daemon (jina-reranker-v2-base-multilingual); wired into recallByQuery's KNN floor (ADR-012) |
 | `src/core/config.ts` | Reads extraction_models.yaml; provides runtime config with sane defaults |
 | `src/core/project-root.ts` | Project identity resolution — `resolveGitProjectRoot()` (git-common-dir lookup, collapses worktrees onto main checkout) composed with `cwdToProjectSlug()` via `resolveProjectSlug()`; the one function every live-cwd call site uses (ADR-013) |
+| `src/core/governance.ts` | consolidateMemories() phases 4-5: `governByHelpRate` (confidence demote/reinforce by observed help-rate) and `detectContradictions` (heuristic pre-filter + bounded Haiku confirmation, surfacing-only via `diagnostics` rows, gated behind DDR-005) |
 | `src/capture/reflector.ts` | Background capture pipeline — reads new transcript lines, calls Haiku, dedup-merges memories |
 | `src/capture/extract.ts` | Haiku-based memory extraction from transcript windows |
 | `src/capture/export.ts` | Exports memories as markdown mirror files; prunes stale project export buckets with no live memories |
