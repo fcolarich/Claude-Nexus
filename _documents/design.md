@@ -10,3 +10,4 @@
 | [DDR-003](decisions/ddr-003-recall-ranking-effective-confidence-help-rate-with.md) | Recall ranking: effective confidence × help-rate with load_at_init bypass | 2025-01-01 | accepted |
 | [DDR-004](decisions/ddr-004-capture-quality-thresholds-observer-gate-signals-c.md) | Capture quality thresholds: observer gate signals, cosine dedup, and approval gate | 2025-01-01 | accepted |
 | [DDR-005](decisions/ddr-005-contradiction-detection-design-heuristic-pre-filte.md) | Contradiction-detection design: heuristic pre-filter + bounded Haiku confirmation, surfacing-only, bidirectional links | 2026-07-22 | accepted |
+| [DDR-006](decisions/ddr-006-automatic-memory-usefulness-feedback-via-retrospec.md) | Automatic memory-usefulness feedback via retrospective capture-runner pass | 2026-07-22 | accepted |
