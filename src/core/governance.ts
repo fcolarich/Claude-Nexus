@@ -31,9 +31,9 @@ export type HaikuFn = (systemPrompt: string, userPrompt: string) => Promise<stri
 
 export function governByHelpRate(db: Database.Database): GovernResult {
 	const rows = db.prepare(`
-		SELECT id, confidence, use_count, help_count FROM memories
+		SELECT id, title, confidence, use_count, help_count FROM memories
 		WHERE review_status = 'approved' AND superseded_by IS NULL AND use_count >= ?
-	`).all(MIN_EVALUATIONS) as { id: string; confidence: number; use_count: number; help_count: number }[];
+	`).all(MIN_EVALUATIONS) as { id: string; title: string; confidence: number; use_count: number; help_count: number }[];
 
 	const demoteStmt = db.prepare(`
 		UPDATE memories SET confidence = ?, use_count = 0, help_count = 0, updated_at = datetime('now')
@@ -48,6 +48,10 @@ export function governByHelpRate(db: Database.Database): GovernResult {
 		UPDATE memories SET use_count = 0, help_count = 0, updated_at = datetime('now')
 		WHERE id = ?
 	`);
+	const diagnosticStmt = db.prepare(`
+		INSERT INTO diagnostics (type, atom_id, message, details)
+		VALUES ('stale', NULL, ?, ?)
+	`);
 
 	let demoted = 0;
 	let reinforced = 0;
@@ -58,6 +62,20 @@ export function governByHelpRate(db: Database.Database): GovernResult {
 			if (helpRate < LOW_THRESHOLD) {
 				const confidence = Math.max(CONFIDENCE_FLOOR, row.confidence * DEMOTE_FACTOR);
 				demoteStmt.run(confidence, row.id);
+				// Surfacing artifact — same reused 'stale' diagnostics type the
+				// contradiction pass writes, so demotions show up in nexus_health
+				// without any change to that tool.
+				diagnosticStmt.run(
+					`Demoted for low help-rate: ${row.title}`,
+					JSON.stringify({
+						reason: 'low_help_rate',
+						memory_id: row.id,
+						old_confidence: row.confidence,
+						new_confidence: confidence,
+						use_count: row.use_count,
+						help_count: row.help_count,
+					}),
+				);
 				demoted++;
 			} else if (helpRate > HIGH_THRESHOLD) {
 				const confidence = Math.min(1.0, row.confidence + REINFORCE_BUMP);

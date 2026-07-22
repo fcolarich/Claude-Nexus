@@ -221,6 +221,40 @@ describe('governByHelpRate', () => {
 		db.close();
 	});
 
+	it('writes a diagnostics row (type=stale, reason=low_help_rate) for a demoted memory, with old/new confidence in details', () => {
+		const db = freshDb();
+		seedMemory(db, { id: 'demote-diag-1', confidence: 0.6, use_count: 10, help_count: 2, last_verified_at: OLD_TIMESTAMP });
+
+		governByHelpRate(db);
+
+		const rows = db.prepare(`SELECT * FROM diagnostics WHERE type = 'stale'`).all() as {
+			atom_id: string | null; message: string; details: string;
+		}[];
+		expect(rows.length).toBe(1);
+		expect(rows[0].atom_id).toBeNull();
+		expect(rows[0].message).toContain('title-demote-diag-1');
+		const details = JSON.parse(rows[0].details) as {
+			reason: string; memory_id: string; old_confidence: number; new_confidence: number;
+		};
+		expect(details.reason).toBe('low_help_rate');
+		expect(details.memory_id).toBe('demote-diag-1');
+		expect(details.old_confidence).toBeCloseTo(0.6, 5);
+		expect(details.new_confidence).toBeCloseTo(Math.max(0.1, 0.6 * 0.85), 5);
+		db.close();
+	});
+
+	it('does not write a diagnostics row for reinforced or dead-zone memories', () => {
+		const db = freshDb();
+		seedMemory(db, { id: 'reinforce-diag-1', confidence: 0.6, use_count: 10, help_count: 9, last_verified_at: OLD_TIMESTAMP });
+		seedMemory(db, { id: 'deadzone-diag-1', confidence: 0.6, use_count: 10, help_count: 5, last_verified_at: OLD_TIMESTAMP });
+
+		governByHelpRate(db);
+
+		const rows = db.prepare(`SELECT * FROM diagnostics WHERE type = 'stale'`).all();
+		expect(rows.length).toBe(0);
+		db.close();
+	});
+
 	it('returns { demoted, reinforced } counts matching the branch outcomes across a mixed seeded set', () => {
 		const db = freshDb();
 		seedMemory(db, { id: 'mix-demote', confidence: 0.6, use_count: 10, help_count: 1, last_verified_at: OLD_TIMESTAMP }); // rate 0.1 -> demote

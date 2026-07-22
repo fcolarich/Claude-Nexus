@@ -195,7 +195,9 @@ describe('consolidateMemories', () => {
 			`SELECT COUNT(*) AS c FROM memory_links WHERE link_type = 'contradicts'`
 		).get() as { c: number };
 		expect(contradicts.c).toBe(2);
-		expect(countDiagnostics(db, 'stale')).toBe(1);
+		// 'stale' is a reused diagnostics type: one row from the confirmed
+		// contradiction (phase 5) and one from the demotion (phase 4).
+		expect(countDiagnostics(db, 'stale')).toBe(2);
 
 		db.close();
 	});
