@@ -16,6 +16,7 @@ const TOOL_INPUT_CAP = 160;
 
 export interface TranscriptWindow {
   text: string;          // condensed, LLM-ready
+  rawLines: string[];    // raw JSONL lines sliced from fromIndex (uncondensed)
   totalLines: number;    // total lines in the file (the next cursor value)
   newLines: number;      // lines read in this window
   hasSignal: boolean;    // false => trivial window, skip extraction
@@ -88,7 +89,7 @@ const PREFERENCE_RE = /\b(I prefer|always |never |from now on|going forward|in f
  */
 export function readTranscriptWindow(jsonlPath: string, fromIndex: number): TranscriptWindow {
   if (!existsSync(jsonlPath)) {
-    return { text: '', totalLines: 0, newLines: 0, hasSignal: false, truncated: false };
+    return { text: '', rawLines: [], totalLines: 0, newLines: 0, hasSignal: false, truncated: false };
   }
 
   const lines = readFileSync(jsonlPath, 'utf-8').split('\n').filter(l => l.trim());
@@ -133,5 +134,5 @@ export function readTranscriptWindow(jsonlPath: string, fromIndex: number): Tran
   // Observer gate: extract when there is a real exchange or an explicit marker.
   const hasSignal = markerSignal || toolErrors > 0 || (userMessages >= 1 && exchanges >= 4);
 
-  return { text, totalLines, newLines: fresh.length, hasSignal, truncated };
+  return { text, rawLines: fresh, totalLines, newLines: fresh.length, hasSignal, truncated };
 }

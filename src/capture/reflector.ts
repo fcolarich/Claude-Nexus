@@ -20,6 +20,7 @@ import { linkMemory } from '../core/links.js';
 import { readTranscriptWindow } from './transcript.js';
 import { extractMemories, type Extractor } from './extract.js';
 import { readDecisionIndex } from './docspine.js';
+import { compactWindowLines, compactFileInPlace } from './vcc-bridge.js';
 
 export interface ReflectOptions {
   session_id: string;
@@ -31,6 +32,7 @@ export interface ReflectOptions {
 export interface ReflectDeps {
   extract?: Extractor;
   embed?: (text: string) => Promise<Float32Array | null>;
+  vcc?: { compactWindowLines: typeof compactWindowLines; compactFileInPlace: typeof compactFileInPlace };
 }
 
 export interface ReflectResult {
@@ -54,6 +56,7 @@ export async function reflect(
 ): Promise<ReflectResult> {
   const extract = deps.extract ?? extractMemories;
   const embed = deps.embed ?? generateEmbedding;
+  const vcc = deps.vcc ?? { compactWindowLines, compactFileInPlace };
   const cfg = getNexusConfig().capture;
 
   // Ensure a session row exists to hold the reflection cursor. The indexer
@@ -83,8 +86,18 @@ export async function reflect(
     return { session_id: opts.session_id, project: opts.project, newLines: window.newLines, extracted: 0, inserted: 0, merged: 0, skipped: true };
   }
 
+  // Pre-extraction compaction — feed the Haiku extractor compacted text when
+  // available; fail-open to the raw condensed window text on any error.
+  let extractionText = window.text;
+  const compacted = vcc.compactWindowLines(window.rawLines, { timeoutMs: 10_000 });
+  if (compacted.ok && compacted.text) {
+    extractionText = compacted.text;
+  } else if (!compacted.ok) {
+    console.error('[claude-nexus] vcc pre-extraction compaction failed, using raw window text:', compacted.error);
+  }
+
   const decisions = readDecisionIndex(opts.cwd);
-  const candidates = await extract(window.text, { project: opts.project, decisions });
+  const candidates = await extract(extractionText, { project: opts.project, decisions });
 
   let inserted = 0;
   let merged = 0;
@@ -133,6 +146,16 @@ export async function reflect(
   }
 
   advanceCursor(window.totalLines);
+
+  // Post-extraction inline shrink — overwrite the raw JSONL with compacted
+  // output now that this run has fully consumed it. Never fails reflect().
+  const shrink = vcc.compactFileInPlace(opts.transcript_path, { timeoutMs: 15_000 });
+  if (shrink.ok) {
+    db.prepare(`UPDATE sessions SET vcc_shrunk_at = ? WHERE session_id = ?`)
+      .run(new Date().toISOString(), opts.session_id);
+  } else {
+    console.error('[claude-nexus] vcc post-extraction shrink failed, vcc_shrunk_at left unset:', shrink.error);
+  }
 
   return {
     session_id: opts.session_id,
