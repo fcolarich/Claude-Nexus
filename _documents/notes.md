@@ -7,3 +7,4 @@
 | ID | Title | Date |
 |----|-------|------|
 | [NOTE-001](notes/note-001-low-help-rate-demotions-reuse-ddr-005-stale-diagno.md) | Low-help-rate demotions reuse DDR-005 stale-diagnostics surfacing pattern | 2026-07-22 |
+| [NOTE-002](notes/note-002-mcp-tool-surface-audit-2026-07-21.md) | MCP tool surface audit — 2026-07-21 | 2026-07-21 |
