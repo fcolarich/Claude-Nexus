@@ -1,5 +1,6 @@
 import { execFileSync } from 'child_process';
 import { dirname, resolve } from 'path';
+import type Database from 'better-sqlite3';
 
 /**
  * Derive the project slug from a cwd path, matching the current Claude Code
@@ -45,4 +46,30 @@ export function resolveGitProjectRoot(cwd: string): string {
 /** Compose git-root resolution with slugging — the one function every live-cwd call site should use. */
 export function resolveProjectSlug(cwd: string): string | null {
 	return cwdToProjectSlug(resolveGitProjectRoot(cwd));
+}
+
+/**
+ * Resolve a project slug from a working-directory path, with a fallback for
+ * projects whose stored rows predate the git-root slugging convention:
+ * 1. Git-root-resolved slug via resolveProjectSlug (collapses worktrees and
+ *    subdirectories onto the repo root, e.g. "C--Fran-Monster-Hotel").
+ * 2. Short-name fallback (last path segment lowercased, e.g. "monster-hotel"). Handles projects
+ *    whose rows were created with a short name rather than the full path slug.
+ * Each candidate is checked against atoms AND sessions/memories so every caller
+ * (nexus_backfill, nexus_search, distill, ...) resolves against real data.
+ */
+export function resolveProjectFromCwd(db: Database.Database, cwd: string): string {
+	const known = (slug: string) =>
+		!!db.prepare(`SELECT 1 FROM atoms WHERE project = ? LIMIT 1`).get(slug) ||
+		!!db.prepare(`SELECT 1 FROM sessions WHERE project = ? LIMIT 1`).get(slug) ||
+		!!db.prepare(`SELECT 1 FROM memories WHERE project = ? LIMIT 1`).get(slug);
+
+	const derived = resolveProjectSlug(cwd);
+	if (derived && known(derived)) return derived;
+
+	const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
+	const shortName = parts[parts.length - 1]?.toLowerCase().replace(/_/g, '-');
+	if (shortName && shortName !== derived?.toLowerCase() && known(shortName)) return shortName;
+
+	return derived ?? shortName ?? cwd;
 }

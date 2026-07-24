@@ -16,7 +16,7 @@ import { getNexusConfig } from './config.js';
 import { generateEmbedding } from './embeddings.js';
 import { callModel } from './llm.js';
 import { embedUnindexedMemories, insertMemory, embedMemory, normalize } from './memories.js';
-import { resolveProjectSlug } from './project-root.js';
+import { resolveProjectFromCwd } from './project-root.js';
 import type { Memory, MemoryType, DecayClass, AtomScope } from './types.js';
 
 const BAND_LOW = 0.70;        // below: unrelated. at/above dedup threshold: consolidate's job.
@@ -29,7 +29,7 @@ const SCOPES = new Set(['global', 'shared', 'project']);
 
 export interface DistillOptions {
   project?: string;   // project slug to scope to; literal "global" targets the global bucket
-  cwd?: string;        // derive project slug when project is omitted (same helper as nexus_backfill)
+  cwd?: string;        // derive project slug when project is omitted (resolveProjectFromCwd — same helper as nexus_backfill/nexus_search)
   limit?: number;      // max candidate memories pulled into the clustering pool (default 200, hard cap 500)
   dryRun?: boolean;    // count eligibility only; never call callFn or embedFn
 }
@@ -68,16 +68,17 @@ export type ResolvedScope = { kind: 'project'; slug: string } | { kind: 'global'
 
 /**
  * Maps DistillOptions -> ResolvedScope. `project` wins over `cwd`; literal
- * `project: "global"` targets the global bucket. `cwd` derives a slug via the
- * same helper nexus_backfill uses; an unresolvable cwd degrades to "all"
- * (never throws — a slug with no matching rows is just an empty-scope run).
+ * `project: "global"` targets the global bucket. `cwd` derives a slug via
+ * resolveProjectFromCwd — the same fallback-enhanced resolver nexus_backfill
+ * and nexus_search use, so a project stored only under a short-name slug
+ * still resolves instead of silently degrading to "all" (a clean-zero run).
  */
-export function resolveScope(opts: DistillOptions | undefined): ResolvedScope {
+export function resolveScope(db: Database.Database, opts: DistillOptions | undefined): ResolvedScope {
   if (opts?.project) {
     return opts.project === 'global' ? { kind: 'global' } : { kind: 'project', slug: opts.project };
   }
   if (opts?.cwd) {
-    const slug = resolveProjectSlug(opts.cwd);
+    const slug = resolveProjectFromCwd(db, opts.cwd);
     if (slug) return { kind: 'project', slug };
   }
   return { kind: 'all' };
@@ -198,7 +199,7 @@ export async function distillMemories(
   callFn: (system: string, user: string) => Promise<string> = callModel
 ): Promise<DistillResult> {
   const clampedLimit = normalizeLimit(opts?.limit);
-  const scope = resolveScope(opts);
+  const scope = resolveScope(db, opts);
 
   if (opts?.dryRun) {
     const countEligibleSnapshot = countEligible(db, scope);

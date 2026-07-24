@@ -402,25 +402,45 @@ describe('countEligible', () => {
 
 describe('resolveScope', () => {
   it('project set -> project scope with that slug', () => {
-    expect(resolveScope({ project: 'my-proj' })).toEqual({ kind: 'project', slug: 'my-proj' });
+    const db = freshDb();
+    expect(resolveScope(db, { project: 'my-proj' })).toEqual({ kind: 'project', slug: 'my-proj' });
+    db.close();
   });
 
   it('project: "global" -> global scope', () => {
-    expect(resolveScope({ project: 'global' })).toEqual({ kind: 'global' });
+    const db = freshDb();
+    expect(resolveScope(db, { project: 'global' })).toEqual({ kind: 'global' });
+    db.close();
   });
 
   it('project wins over cwd when both set', () => {
-    expect(resolveScope({ project: 'my-proj', cwd: '/some/unrelated/path' })).toEqual({ kind: 'project', slug: 'my-proj' });
+    const db = freshDb();
+    expect(resolveScope(db, { project: 'my-proj', cwd: '/some/unrelated/path' })).toEqual({ kind: 'project', slug: 'my-proj' });
+    db.close();
   });
 
-  it('only cwd set -> derives a project slug via resolveProjectSlug', () => {
-    const result = resolveScope({ cwd: '/home/user/my-project' });
+  it('only cwd set -> derives a project slug via resolveProjectFromCwd', () => {
+    const db = freshDb();
+    const result = resolveScope(db, { cwd: '/home/user/my-project' });
     expect(result.kind).toBe('project');
     expect((result as { kind: 'project'; slug: string }).slug.length).toBeGreaterThan(0);
+    db.close();
   });
 
   it('neither project nor cwd set -> all scope', () => {
-    expect(resolveScope(undefined)).toEqual({ kind: 'all' });
-    expect(resolveScope({})).toEqual({ kind: 'all' });
+    const db = freshDb();
+    expect(resolveScope(db, undefined)).toEqual({ kind: 'all' });
+    expect(resolveScope(db, {})).toEqual({ kind: 'all' });
+    db.close();
+  });
+
+  it('cwd resolves to a short-name slug when only that slug has memories stored (falls back like nexus_backfill/nexus_search)', () => {
+    const db = freshDb();
+    // Memories stored under the short-name slug only — no row under the full git-root-derived slug.
+    insertMemory(db, { ...base, title: 'ShortSlug', body: 'b', project: 'my-project' });
+
+    const result = resolveScope(db, { cwd: '/home/user/my-project' });
+    expect(result).toEqual({ kind: 'project', slug: 'my-project' });
+    db.close();
   });
 });

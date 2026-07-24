@@ -7,7 +7,7 @@ import { createHash } from 'crypto';
 import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { runFullIndex } from '../indexer/indexer.js';
-import { resolveProjectSlug } from '../core/project-root.js';
+import { resolveProjectFromCwd } from '../core/project-root.js';
 import { buildBm25Corpus, rrfMerge } from '../core/links.js';
 import type { RankedResult } from '../core/links.js';
 import { generateEmbedding } from '../core/embeddings.js';
@@ -52,29 +52,6 @@ const server = new McpServer({
   version: '0.1.0',
 });
 
-/**
- * Resolve a project slug from a working-directory path.
- * 1. Git-root-resolved slug via resolveProjectSlug (collapses worktrees and
- *    subdirectories onto the repo root, e.g. "C--Fran-Monster-Hotel").
- * 2. Short-name fallback (last path segment lowercased, e.g. "monster-hotel"). Handles projects
- *    whose tasks were created with a short name rather than the full path slug.
- * Each candidate is checked against atoms AND sessions so backfill resolution works too.
- */
-function resolveProjectFromCwd(cwd: string): string {
-  const known = (slug: string) =>
-    !!db.prepare(`SELECT 1 FROM atoms    WHERE project = ? LIMIT 1`).get(slug) ||
-    !!db.prepare(`SELECT 1 FROM sessions WHERE project = ? LIMIT 1`).get(slug);
-
-  const derived = resolveProjectSlug(cwd);
-  if (derived && known(derived)) return derived;
-
-  const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
-  const shortName = parts[parts.length - 1]?.toLowerCase().replace(/_/g, '-');
-  if (shortName && shortName !== derived?.toLowerCase() && known(shortName)) return shortName;
-
-  return derived ?? shortName ?? cwd;
-}
-
 // ── nexus_search ─────────────────────────────────────────────────────
 
 server.tool(
@@ -89,7 +66,7 @@ server.tool(
     limit:   z.coerce.number().optional().describe('Max results per store (default: 10)'),
   },
   async ({ query, project, cwd, type, scope, limit }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     const cap = limit ?? 10;
 
     const [atomResults, memResults] = await Promise.all([
@@ -139,7 +116,7 @@ server.tool(
     cwd:     z.string().optional().describe('Caller working directory — derives the project slug automatically. Use instead of project when scoping to the current project.'),
   },
   async ({ topics, project, cwd }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
 
     const memMerged = fetchMemoryContext(db, topics, { project: effectiveProject });
     const atomMerged = fetchContext(db, topics, { project: effectiveProject });
@@ -168,7 +145,7 @@ server.tool(
     max_tokens: z.coerce.number().optional().describe('Token budget for injected memory (default from extraction_models.yaml).'),
   },
   async ({ project, cwd, query, max_tokens }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : null);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : null);
     const result = recallMemories(db, { project: effectiveProject, query, maxTokens: max_tokens });
 
     if (result.items.length === 0) {
@@ -236,7 +213,7 @@ server.tool(
     cwd:     z.string().optional().describe('Caller working directory — derives the project slug automatically.'),
   },
   async ({ project, cwd }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
 
     if (!effectiveProject) {
       return { content: [{ type: 'text', text: 'Error: provide project or cwd.' }] };
@@ -349,7 +326,7 @@ server.tool(
     load_at_init: z.boolean().optional().default(false).describe('If true, always recalled at session start regardless of decay'),
   },
   async ({ title, content, scope, memory_type, atom_type, tags, project, cwd, confidence, load_at_init }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
 
     // ── Knowledge path (memories table) ───────────────────────────────
     const resolvedMemType: MemoryType =
@@ -405,7 +382,7 @@ server.tool(
     cwd:          z.string().optional().describe('Caller working directory — derives the default project slug automatically'),
   },
   async ({ memories, scope, memory_type, tags, confidence, load_at_init, project, cwd }) => {
-    const defaultProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const defaultProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
 
     const items = memories.map((m) => {
       const resolvedMemType: MemoryType = m.memory_type ?? memory_type ?? 'insight';
@@ -552,7 +529,7 @@ server.tool(
     dry_run: z.boolean().optional().describe('Report how many sessions would be processed, run nothing'),
   },
   async ({ project, cwd, limit, dry_run }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     const r = await backfillSessions(db, {
       project: effectiveProject,
       limit: Math.min(limit ?? 10, 30),
@@ -647,7 +624,7 @@ server.tool(
     const normalized = merged.map(r => ({ ...r, score: r.score / maxScore }));
 
     // Project filter
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
 
     const parts: string[] = ['# Cross-References\n'];
 
@@ -698,7 +675,7 @@ server.tool(
     target:  z.enum(['adr', 'ddr', 'best_practice', 'recipe', 'note']).optional().describe('Filter by promotion target type'),
   },
   async ({ project, cwd, target }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
 
     let sql = `SELECT id, title, body, confidence, source_session_id, promotion_target
                FROM memories
