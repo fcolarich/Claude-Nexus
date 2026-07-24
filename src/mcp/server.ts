@@ -519,16 +519,24 @@ server.tool(
 
 server.tool(
   'nexus_distill',
-  'Deep cleanup of existing memories: clusters related memories and rewrites each cluster into one tighter, non-redundant memory; tightens verbose ones. Use to clean up legacy or hand-written memories. Heavier than nexus_consolidate — it makes LLM rewrite calls.',
-  {},
-  async () => {
-    const r = await distillMemories(db);
-    return {
-      content: [{
-        type: 'text',
-        text: `Distill complete: ${r.clusters} cluster(s) → ${r.created} consolidated memories (${r.merged} folded in), ${r.sanitized} tightened, ${r.embedded} embedded.`,
-      }],
-    };
+  'Deep cleanup of existing memories: clusters related memories and rewrites each cluster into one tighter, non-redundant memory; tightens verbose ones. Use to clean up legacy or hand-written memories. Heavier than nexus_consolidate — it makes LLM rewrite calls. Bounded and scopable — processes a capped candidate pool for a project, the global bucket, or everything, with an optional dry run.',
+  {
+    project: z.string().optional().describe('Project slug to scope to. Prefer cwd to avoid guessing the slug. Literal "global" targets the global bucket.'),
+    cwd:     z.string().optional().describe('Caller working directory — derives the project slug automatically.'),
+    limit:   z.coerce.number().optional().describe('Max candidate memories to process this run (default 200, capped at 500)'),
+    dry_run: z.boolean().optional().describe('Report eligible-memory counts without running any LLM/embedding calls'),
+  },
+  async ({ project, cwd, limit, dry_run }) => {
+    const r = await distillMemories(db, { project, cwd, limit, dryRun: dry_run });
+    const remainingNote = r.eligibleRemaining > 0
+      ? ` ${r.eligibleRemaining} eligible memories remain under this scope — re-invoke to continue.`
+      : '';
+
+    const text = r.dryRun
+      ? `Dry run: ${r.processed} memor${r.processed === 1 ? 'y' : 'ies'} would be processed under scope '${r.scope}'.${remainingNote}`
+      : `Distill complete: ${r.clusters} cluster(s) → ${r.created} consolidated memories (${r.merged} folded in), ${r.sanitized} tightened, ${r.embedded} embedded. Scope: ${r.scope}, processed ${r.processed}.${remainingNote}`;
+
+    return { content: [{ type: 'text', text }] };
   }
 );
 

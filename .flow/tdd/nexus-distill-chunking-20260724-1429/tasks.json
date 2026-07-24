@@ -1,0 +1,116 @@
+{
+	"feature": "Bound nexus_distill for large memory sets",
+	"branch": "feature/nexus-distill-chunking",
+	"tasks": [
+		{
+			"id": "task-001",
+			"title": "Add DistillOptions + extend DistillResult and change distillMemories signature",
+			"description": "In src/core/distill.ts add the DistillOptions interface (project?, cwd?, limit?, dryRun?) and extend DistillResult with processed, eligibleRemaining, scope, dryRun (per impl-spec Interface contracts). Change the signature to distillMemories(db, opts?, embedFn?, callFn?) — opts inserted at position 2. Update the existing return object(s) with safe placeholders (processed:0, eligibleRemaining:0, scope:'all', dryRun:false) so it compiles with no behavior change. Fix every positional caller so embedFn/callFn stay aligned: the nexus_distill handler in src/mcp/server.ts and every distillMemories(...) call in src/core/distill.test.ts (pass undefined or {} for opts). Build and existing test suite must stay green.",
+			"files": ["src/core/distill.ts", "src/mcp/server.ts", "src/core/distill.test.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": [],
+			"estimated_tokens": 20000,
+			"complexity": "complex",
+			"constraints": [],
+			"risk": "medium"
+		},
+		{
+			"id": "task-002",
+			"title": "Add buildEligibleQuery + countEligible scope-filter helpers with unit tests",
+			"description": "In src/core/distill.ts add internal (non-exported) buildEligibleQuery(scope, limit) -> {sql, params} and countEligible(db, scope) -> number over the scope filter defined in impl-spec: project slug, 'global', and 'all' variants; buildEligibleQuery appends LIMIT :limit, countEligible never does. Global and project scopes are disjoint (a project run excludes scope='global'). Add unit tests in src/core/distill.test.ts asserting the exact sql/params per scope and that countEligible's SQL has no LIMIT.",
+			"files": ["src/core/distill.ts", "src/core/distill.test.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": ["task-001"],
+			"estimated_tokens": 9000,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		},
+		{
+			"id": "task-003",
+			"title": "Add resolveScope helper with unit tests",
+			"description": "In src/core/distill.ts add internal resolveScope(opts) -> ResolvedScope: if opts.project is set use it (literal 'global' -> global scope, else project slug); else if opts.cwd is set derive the slug using the same helper nexus_backfill uses (resolveProjectSlug from src/core/project-root.ts — confirm the exact export there); else scope = 'all'. Add unit tests in src/core/distill.test.ts covering all four branches (project slug, 'global', cwd-derived, none).",
+			"files": ["src/core/distill.ts", "src/core/distill.test.ts", "src/core/project-root.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": ["task-002"],
+			"estimated_tokens": 9000,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		},
+		{
+			"id": "task-004",
+			"title": "Scope + limit the clustering candidate pool and populate result accounting",
+			"description": "In src/core/distill.ts replace the unbounded SELECT that feeds the clustering loop with buildEligibleQuery(resolveScope(opts), clampedLimit). Apply the authoritative limit normalization here: limit ?? 200, clamped to [1,500], floor fractional. Set processed (pool size this run), scope (resolved label), and eligibleRemaining = countEligible(scope) - processed on the returned DistillResult, taking countEligible at the same snapshot as the pool. Add unit tests in src/core/distill.test.ts against a seeded in-memory DB with mocked embedFn/callFn: pool never exceeds limit regardless of total rows (SC-3); only project-matching rows are eligible under a project scope (SC-4); processed/scope/eligibleRemaining are correct; an empty/non-matching scope returns a clean zero result without throwing or hanging.",
+			"files": ["src/core/distill.ts", "src/core/distill.test.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": ["task-003"],
+			"estimated_tokens": 13000,
+			"complexity": "complex",
+			"constraints": [],
+			"risk": "medium"
+		},
+		{
+			"id": "task-005",
+			"title": "Reuse stored memories_vec vectors in the clustering loop (embedding-reuse fix)",
+			"description": "In src/core/distill.ts add internal loadStoredVector(db, memoryId) -> Float32Array | null reading the existing memories_vec table (rowid = memories.id, column embedding). In the clustering loop, use the stored vector when present and only fall back to embedFn(m.body) on a miss, eliminating the ~12k redundant Ollama calls. Add a unit test in src/core/distill.test.ts with an embedFn spy: seed memories that all already have stored vectors and assert embedFn is called zero times in the loop (SC-2); assert a memory lacking a vector still falls back to embedFn. Update any existing test that previously asserted embedFn was called for already-embedded memories.",
+			"files": ["src/core/distill.ts", "src/core/distill.test.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": ["task-004"],
+			"estimated_tokens": 11000,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "medium"
+		},
+		{
+			"id": "task-006",
+			"title": "Add dry_run short-circuit that makes no LLM or embedding calls",
+			"description": "In src/core/distill.ts add an early return when opts.dryRun is true, placed BEFORE embedUnindexedMemories so no embedFn call ever happens: resolve scope, compute countEligible, set processed = min(countEligible, clampedLimit), eligibleRemaining = countEligible - processed, and return a DistillResult with embedded/clusters/merged/created/sanitized = 0 and dryRun = true. Add a unit test in src/core/distill.test.ts with callFn and embedFn spies asserting both are called zero times and the counts are returned (SC-5).",
+			"files": ["src/core/distill.ts", "src/core/distill.test.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": ["task-005"],
+			"estimated_tokens": 10000,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		},
+		{
+			"id": "task-007",
+			"title": "Bound the sanitize-verbose-singletons pass to the scoped pool",
+			"description": "In src/core/distill.ts change the second 'sanitize verbose singletons' pass so it iterates the same scoped/limited candidate pool used by the clustering loop instead of a fresh full-table scan, so the whole run is bounded. Add a unit test in src/core/distill.test.ts asserting the sanitize pass only passes in-scope memories to callFn and leaves out-of-scope memories untouched.",
+			"files": ["src/core/distill.ts", "src/core/distill.test.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": ["task-006"],
+			"estimated_tokens": 10000,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		},
+		{
+			"id": "task-008",
+			"title": "Add nexus_distill MCP input schema and forward the new params",
+			"description": "In src/mcp/server.ts extend the nexus_distill tool input schema with project?, cwd?, limit?, dry_run? mirroring nexus_backfill. In the handler, normalize limit (default 200, clamp to 500), pass project/cwd/limit/dryRun through as DistillOptions to distillMemories(db, opts, embedFn, callFn). The tool must stay non-auto-allowed — do not add any allowlist entry, and dry_run must not change that. No test (thin forwarding controller; behavior covered by distill unit tests).",
+			"files": ["src/mcp/server.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": ["task-001"],
+			"estimated_tokens": 17000,
+			"complexity": "complex",
+			"constraints": [],
+			"risk": "high"
+		},
+		{
+			"id": "task-009",
+			"title": "Format nexus_distill text response with remaining-work guidance and update docstring",
+			"description": "In src/mcp/server.ts format the tool's text response with processed/embedded/clusters/merged/created/sanitized counts and the resolved scope, and append 'N eligible memories remain under this scope — re-invoke to continue' when eligibleRemaining > 0. Update the nexus_distill tool description to document project/cwd/limit/dry_run in the same style as the nexus_backfill docstring. No test (trivial string assembly; verified by inspection).",
+			"files": ["src/mcp/server.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": ["task-008", "task-004"],
+			"estimated_tokens": 16000,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "medium"
+		},
+		{
+			"id": "task-010",
+			"title": "Add backward-compat regression test for the unscoped default path",
+			"description": "In src/core/distill.test.ts add a regression test asserting that unscoped distillMemories(db) preserves today's clustering/merge/sanitize/supersede/link bookkeeping on a small (< 200) seeded set (SC-6), that the default scope resolves to 'all', and that the default limit is applied without changing small-set outcomes. Confirm the full existing distill.test.ts suite still passes unchanged apart from the embedding-reuse call-count adjustment from task-005.",
+			"files": ["src/core/distill.test.ts", ".flow/tdd/nexus-distill-chunking-20260724-1429/impl-spec.md"],
+			"depends_on": ["task-007"],
+			"estimated_tokens": 8000,
+			"complexity": "simple",
+			"constraints": [],
+			"risk": "low"
+		}
+	]
+}
