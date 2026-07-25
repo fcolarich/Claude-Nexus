@@ -30,6 +30,7 @@ Maintained via the `update-file-map` skill.
 | `src/capture/prompt-runner.ts` | UserPromptSubmit hook — embeds prompt, injects relevance-floored recall (top 3-5, per-session dedup) |
 | `extraction_models.yaml` | Runtime config: embedding model, extraction model, recall budget, capture thresholds |
 | `package.json` | Project manifest, scripts, dependencies |
+| `scripts/review-distill.mjs` | Read-only reviewer for `nexus_distill` output — shows each merged memory next to the originals it superseded, via `memories.superseded_by`. Run with `npm run review-distill -- <project-slug> [limit]`. |
 
 ## Key folders
 
@@ -44,3 +45,4 @@ Maintained via the `update-file-map` skill.
 | `src/indexer/` | Knowledge file scanner and parser — indexes agents, skills, plans, notes from ~/.claude/ |
 | `hooks/` | Claude Code hook scripts and hooks.json manifest |
 | `dist/` | Compiled JS output from tsc — what hooks and MCP server actually run |
+| `scripts/` | Standalone ops/dev scripts (startup registration, VCC backfill, distill review) run directly via node/python, outside the CLI/MCP surface |
