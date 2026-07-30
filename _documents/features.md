@@ -24,3 +24,8 @@
 | [FEAT-016](features/feature-016-confidence-threshold-review-queue-approval-gate.md) | Confidence-threshold review-queue approval gate | implemented | — |
 | [FEAT-017](features/feature-017-two-tier-sqlite-sourcemarkdown-mirror-architecture.md) | Two-tier SQLite-source/markdown-mirror architecture | implemented | — |
 | [FEAT-018](features/feature-018-kind-weighted-memory-persistence-via-llm-judged-de.md) | Kind-weighted memory persistence via LLM-judged decay_class | implemented | — |
+| [FEAT-019](features/feature-20260730150641-ad-adopt-phase-section-cue-prompt-tuning-for-vcc-comp.md) | Adopt phase-section-cue prompt tuning for vcc_compact extraction | planned | NOTE-20260730134513-3b |
+| [FEAT-020](features/feature-20260730150650-7f-raise-max-candidates-for-vcc-sourced-extraction-pa.md) | Raise MAX_CANDIDATES for vcc-sourced extraction path | planned | FEAT-20260730150641-ad |
+| [FEAT-021](features/feature-20260730150659-74-validate-cited-adrddr-id-before-fix-1-reference-up.md) | Validate cited ADR/DDR id before Fix-1 reference-upgrade supersede | planned | ADR-20260730134500-2c |
+| [FEAT-022](features/feature-20260730150709-cf-reconstruct-a-permanent-incremental-window-extract.md) | Reconstruct a permanent incremental-window extraction validation harness | planned | NOTE-20260730134513-3b, FEAT-20260730150641-ad |
+| [FEAT-023](features/feature-20260730150718-3e-window-only-extraction-prompt-variant-contingent-o.md) | Window-only extraction prompt variant (contingent on shared-addendum regression) | planned | NOTE-20260730134513-3b |
