@@ -18,9 +18,10 @@ import {
 } from '../core/memories.js';
 import { linkMemory } from '../core/links.js';
 import { readTranscriptWindow } from './transcript.js';
-import { extractMemories, type Extractor } from './extract.js';
+import { extractMemories, ADR_REF_RE, type Extractor, type MemoryCandidate } from './extract.js';
 import { readDecisionIndex } from './docspine.js';
 import { compactWindowLines, compactFileInPlace } from './vcc-bridge.js';
+import type { Memory } from '../core/types.js';
 
 export interface ReflectOptions {
   session_id: string;
@@ -42,7 +43,21 @@ export interface ReflectResult {
   extracted: number;
   inserted: number;
   merged: number;
+  upgraded: number;
   skipped: boolean;     // Observer gate skipped the LLM call
+}
+
+/**
+ * Fix 1 — ADR-reference demotion. A `reference` candidate carrying a real
+ * ADR/DDR id supersedes an earlier `decision` row it duplicates, regardless of
+ * that row's `promotion_target` (broadened per design Decision 2). Everything
+ * else falls through to the ordinary touch-and-continue dedup path.
+ */
+function isReferenceUpgrade(candidate: MemoryCandidate, matched: Memory): boolean {
+  return candidate.memory_type === 'reference'
+    && ADR_REF_RE.test(candidate.body)
+    && matched.memory_type === 'decision'
+    && matched.superseded_by == null;
 }
 
 /**
@@ -83,7 +98,7 @@ export async function reflect(
   // Observer gate — nothing worth an LLM call. Advance past these lines anyway.
   if (window.newLines === 0 || !window.hasSignal) {
     advanceCursor(window.totalLines);
-    return { session_id: opts.session_id, project: opts.project, newLines: window.newLines, extracted: 0, inserted: 0, merged: 0, skipped: true };
+    return { session_id: opts.session_id, project: opts.project, newLines: window.newLines, extracted: 0, inserted: 0, merged: 0, upgraded: 0, skipped: true };
   }
 
   // Pre-extraction compaction — feed the Haiku extractor compacted text when
@@ -101,6 +116,7 @@ export async function reflect(
 
   let inserted = 0;
   let merged = 0;
+  let upgraded = 0;
 
   for (const c of candidates) {
     const memProject = c.scope === 'project' ? opts.project : null;
@@ -110,6 +126,46 @@ export async function reflect(
     if (vec) {
       const sim = findSimilarMemory(db, normalize(vec), { scope: c.scope, project: memProject, excludeSuperseded: true });
       if (sim && sim.similarity >= cfg.dedup_cosine_threshold) {
+        if (isReferenceUpgrade(c, sim.memory)) {
+          // Fix 1 — supersede-insert. The matched decision row is content-drifted:
+          // insert the reference pointer as its own content-addressed row, then
+          // mark the old decision row superseded. Both writes share one txn so a
+          // throw leaves the pre-existing touch-only state, never a half-state.
+          const review_status = c.confidence >= cfg.auto_approve_confidence ? 'approved' : 'pending';
+          let res: { id: string; inserted: boolean } | undefined;
+          db.transaction(() => {
+            res = insertMemory(db, {
+              title: c.title,
+              body: c.body,
+              memory_type: c.memory_type,
+              scope: c.scope,
+              project: memProject,
+              confidence: c.confidence,
+              decay_class: c.decay_class,
+              review_status,
+              source_session_id: opts.session_id,
+              discovered_from: null,
+              tags: c.tags,
+              promotion_target: c.promotion_target,
+            });
+            db.prepare(`UPDATE memories SET superseded_by = ?, updated_at = datetime('now') WHERE id = ?`)
+              .run(res.id, sim.memory.id);
+          })();
+
+          if (res!.inserted) {
+            const embedded = await embedMemory(db, res!.id, embed);
+            if (embedded) {
+              await linkMemory(db, res!.id, embed);
+            }
+          } else {
+            // The reference row already existed from an earlier window — still
+            // supersede the decision row above; just reconfirm the reference.
+            touchMemory(db, res!.id);
+          }
+          upgraded++;
+          continue;
+        }
+
         touchMemory(db, sim.memory.id);
         merged++;
         continue;
@@ -164,6 +220,7 @@ export async function reflect(
     extracted: candidates.length,
     inserted,
     merged,
+    upgraded,
     skipped: false,
   };
 }

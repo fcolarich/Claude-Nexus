@@ -3,6 +3,7 @@ id: NOTE-002
 title: MCP tool surface audit — 2026-07-21
 date: 2026-07-21
 tags: ["mcp", "audit", "tool-surface", "adr-011"]
+status: open
 ---
 
 ## MCP Tool Surface Audit — 2026-07-21

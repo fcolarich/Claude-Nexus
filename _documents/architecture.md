@@ -19,3 +19,4 @@
 | [ADR-012](decisions/adr-012-wire-local-reranker-cross-encoder-into-recallbyque.md) | Wire local-reranker cross-encoder into recallByQuery's prompt-driven recall | 2026-07-03 | accepted |
 | [ADR-013](decisions/adr-013-git-repository-root-resolution-replaces-raw-cwd-st.md) | Git-repository-root resolution replaces raw-cwd string slugging for project identity | 2026-07-05 | accepted |
 | [ADR-014](decisions/adr-014-stop-piggybacking-memory-export-on-claude-codes-na.md) | Stop piggybacking memory export on Claude Code's native auto-memory directory | 2026-07-05 | accepted |
+| [ADR-015](decisions/adr-20260730134500-2c-supersede-insert-reference-upgrade-exception-in-re.md) | Supersede-insert reference-upgrade exception in reflect() dedup | 2026-07-30 | accepted |
