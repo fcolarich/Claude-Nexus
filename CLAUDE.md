@@ -32,6 +32,7 @@ All docs live under `_documents/`. Index files (`architecture.md`, `design.md`, 
 | [`_documents/references.md`](_documents/references.md) | **Generated** references index. Source entries in `_documents/references/ref-*.md`. | Never edit — use `add-reference` skill. | `add-reference` |
 | [`_documents/notes.md`](_documents/notes.md) | **Generated** notes index. Source entries in `_documents/notes/note-*.md`. | Never edit — use `add-note` skill. | `add-note` |
 | [`_documents/file-map.md`](_documents/file-map.md) | Summary of important files/folders. | Files/folders are added, renamed, or repurposed. | `update-file-map` |
+| [`_documents/features.md`](_documents/features.md) | **Generated** planned-feature index. Source entries in `_documents/features/feature-*.md`. | Never edit — use `add-feature`/`update-feature` skill. | `add-feature` / `update-feature` |
 | [`README.md`](README.md) | Human-facing summary + usage | The project summary or user-facing behaviour changes | `update-claude-readme` |
 
 ## Doc-Maintenance Protocol
@@ -44,6 +45,7 @@ These docs only stay useful if kept current. After any non-trivial change:
 4. **Project summary changed?** → `update-claude-readme` (keeps CLAUDE.md ↔ README.md in sync).
 5. **Research / external sources?** → `add-reference`. Creates `_documents/references/ref-NNN-slug.md`, rebuilds index.
 6. **Loose note?** → `add-note`. Creates `_documents/notes/note-NNN-slug.md`, rebuilds index. Notes ARE mutable — edit the source file directly to update.
+7. **Planned-but-not-yet-built feature?** → `add-feature`. Creates `_documents/features/feature-NNN-slug.md`, rebuilds index. To change status/links on an existing entry, use `update-feature` instead of creating a new one.
 
 Or run `/update-project-docs` after a change and let the doc-sync agent route it to the right skills.
 
@@ -62,7 +64,7 @@ Or run `/update-project-docs` after a change and let the doc-sync agent route it
 
 | File | Role |
 |------|------|
-| `src/mcp/server.ts` | MCP server — 18 tools exposed over stdio transport |
+| `src/mcp/server.ts` | MCP server — 20 tools exposed over stdio transport |
 | `src/web/server.ts` | Express REST API server, port 3210; serves built dashboard from dist-frontend/ |
 | `src/cli/index.ts` | CLI entry point — index, search, context, list, health, stats, sessions, watch, backfill, prune-narration, migrate-projects |
 | `hooks/hooks.json` | Claude Code hook manifest — wires UserPromptSubmit (recall) and Stop/PreCompact/SessionEnd (capture) |

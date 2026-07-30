@@ -73,7 +73,7 @@ const PREFERENCE_RE = /\b(I prefer|always |never |from now on|going forward|in f
  */
 export function readTranscriptWindow(jsonlPath, fromIndex) {
     if (!existsSync(jsonlPath)) {
-        return { text: '', totalLines: 0, newLines: 0, hasSignal: false, truncated: false };
+        return { text: '', rawLines: [], totalLines: 0, newLines: 0, hasSignal: false, truncated: false };
     }
     const lines = readFileSync(jsonlPath, 'utf-8').split('\n').filter(l => l.trim());
     const totalLines = lines.length;
@@ -118,6 +118,6 @@ export function readTranscriptWindow(jsonlPath, fromIndex) {
     }
     // Observer gate: extract when there is a real exchange or an explicit marker.
     const hasSignal = markerSignal || toolErrors > 0 || (userMessages >= 1 && exchanges >= 4);
-    return { text, totalLines, newLines: fresh.length, hasSignal, truncated };
+    return { text, rawLines: fresh, totalLines, newLines: fresh.length, hasSignal, truncated };
 }
 //# sourceMappingURL=transcript.js.map

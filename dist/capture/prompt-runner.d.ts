@@ -9,5 +9,12 @@
  *
  * Usage: node dist/capture/prompt-runner.js   (payload on stdin)
  */
-export {};
+/**
+ * Loads the per-session recall-state file as a Map<memoryId, evaluated>.
+ * Transparently migrates the legacy flat string[] format (pre-feedback-judge)
+ * to {id, evaluated:false} entries. Missing/corrupt files return an empty map
+ * — best-effort, matches the rest of this hook's failure handling.
+ */
+export declare function loadInjected(sessionId: string, stateDir?: string): Map<string, boolean>;
+export declare function saveInjected(sessionId: string, ids: Map<string, boolean>, stateDir?: string): void;
 //# sourceMappingURL=prompt-runner.d.ts.map

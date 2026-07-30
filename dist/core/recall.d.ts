@@ -20,6 +20,8 @@ export interface RecallResult {
     tokenEstimate: number;
     total: number;
 }
+/** Exported only for tests — do not call from production code. */
+export declare const estTokensForTest: (s: string) => number;
 /**
  * Recall memories for a project. With no query, returns the project's most
  * relevant memories for session-start injection. With a query, restricts to
@@ -31,17 +33,14 @@ export declare function recallMemories(db: Database.Database, opts: {
     maxTokens?: number;
 }): RecallResult;
 /**
- * Prompt-driven recall: rank memories by vector cosine similarity to a query,
- * keep only those above a relevance floor, exclude a caller-supplied id set
- * (per-session dedup), and return the top `limit`. Falls back to FTS5 only when
- * no embedding is available or the corpus has no vectors — never bypasses the
- * floor on an embedded corpus.
+ * Prompt-driven recall: fuses FTS5 keyword results and vector KNN results via
+ * Reciprocal Rank Fusion, drops excluded ids, applies the minSimilarity cosine
+ * floor to vector-originated candidates only (FTS5-matched ids bypass the floor
+ * so fusion is not undone — see spec § "Floor vs FTS5"), optionally reranks the
+ * bounded fused set with a cross-encoder, and returns the top `limit` memories.
  *
- * When the local cross-encoder reranker is available, KNN candidates are
- * reranked against the query and floored on rerank score instead of cosine
- * similarity — a cross-encoder catches conceptually-relevant matches cosine
- * misses, and drops near-duplicates cosine over-ranks. If the reranker is
- * disabled or unreachable, this falls back to the cosine-floor path unchanged.
+ * Pool sizes: FTS5 limit*3, vector limit*6. Rerank input bounded to ~limit*3.
+ * If the reranker throws or is disabled, falls back to RRF-fused order.
  */
 export declare function recallByQuery(db: Database.Database, opts: {
     project?: string | null;

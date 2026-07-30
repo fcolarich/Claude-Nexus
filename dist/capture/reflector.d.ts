@@ -11,6 +11,7 @@
  */
 import Database from 'better-sqlite3';
 import { type Extractor } from './extract.js';
+import { compactWindowLines, compactFileInPlace } from './vcc-bridge.js';
 export interface ReflectOptions {
     session_id: string;
     transcript_path: string;
@@ -20,6 +21,10 @@ export interface ReflectOptions {
 export interface ReflectDeps {
     extract?: Extractor;
     embed?: (text: string) => Promise<Float32Array | null>;
+    vcc?: {
+        compactWindowLines: typeof compactWindowLines;
+        compactFileInPlace: typeof compactFileInPlace;
+    };
 }
 export interface ReflectResult {
     session_id: string;

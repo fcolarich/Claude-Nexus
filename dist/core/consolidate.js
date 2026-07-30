@@ -14,7 +14,31 @@
 import { getNexusConfig } from './config.js';
 import { generateEmbedding } from './embeddings.js';
 import { embedUnindexedMemories, findSimilarMemory, normalize } from './memories.js';
-export async function consolidateMemories(db, embedFn = generateEmbedding) {
+import { governByHelpRate, detectContradictions } from './governance.js';
+import { callModel } from './llm.js';
+/**
+ * Q4 REWRITE NO-GO — LLM body-compaction/rewrite evaluated and declined.
+ *
+ * Rationale:
+ *   1. Volume: embed + prune-rejected + merge-by-supersede (steps below) is
+ *      sufficient at current per-bucket memory volume. A full-corpus LLM
+ *      rewrite pass would add latency and API cost with no measurable quality
+ *      gain at this scale.
+ *
+ *   2. Index bloat: downstream MEMORY.md bloat is addressed by the per-bucket
+ *      item cap in export.ts (capture.memory_md_max_items), not by rewriting
+ *      bodies. Rewriting bodies to shrink the export is the wrong layer.
+ *
+ *   3. Provenance: no schema column exists to record that a body was
+ *      LLM-rewritten (e.g. a rewrite_source / rewrite_version field). Without
+ *      provenance, a rewritten body is indistinguishable from an extraction
+ *      artefact — this breaks audit and rollback. Adding the schema is
+ *      deferred; revisit when volume forces the issue.
+ *
+ * Decision: do NOT add LLM rewrite logic here. The three reasons above must
+ * each be addressed before this decision can be reversed.
+ */
+export async function consolidateMemories(db, embedFn = generateEmbedding, haikuFn = callModel) {
     const threshold = getNexusConfig().capture.dedup_cosine_threshold;
     // 1. Backfill embeddings.
     const { embedded } = await embedUnindexedMemories(db, embedFn);
@@ -68,6 +92,10 @@ export async function consolidateMemories(db, embedFn = generateEmbedding) {
         gone.add(loserId);
         merged++;
     }
-    return { embedded, merged, pruned };
+    // 4. Govern by help-rate: demote low performers, reinforce high performers.
+    const { demoted, reinforced } = governByHelpRate(db);
+    // 5. Detect contradictions among 'related' pairs (gated behind DDR-005).
+    const { contradictionsFlagged, contradictionPairsChecked } = await detectContradictions(db, haikuFn);
+    return { embedded, merged, pruned, demoted, reinforced, contradictionsFlagged, contradictionPairsChecked };
 }
 //# sourceMappingURL=consolidate.js.map

@@ -203,15 +203,21 @@ export async function reflect(
 
   advanceCursor(window.totalLines);
 
-  // Post-extraction inline shrink — overwrite the raw JSONL with compacted
-  // output now that this run has fully consumed it. Never fails reflect().
-  const shrink = vcc.compactFileInPlace(opts.transcript_path, { timeoutMs: 15_000 });
-  if (shrink.ok) {
-    db.prepare(`UPDATE sessions SET vcc_shrunk_at = ? WHERE session_id = ?`)
-      .run(new Date().toISOString(), opts.session_id);
-  } else {
-    console.error('[claude-nexus] vcc post-extraction shrink failed, vcc_shrunk_at left unset:', shrink.error);
-  }
+  // Post-extraction inline shrink — DISABLED 2026-07-24. compactFileInPlace()
+  // was overwriting live raw JSONL transcripts in place with vcc_compact's
+  // rendered summary, and a review found real information loss in that
+  // rendering (opaque Bash/PowerShell citations, small-but-critical tool
+  // results dropped when not restated in prose). Destroying the only copy of
+  // a raw transcript with a known-lossy, irreversible in-place rewrite is not
+  // acceptable until vcc_compact's rendering quality is fixed. Do not
+  // re-enable by just uncommenting — re-verify the fix first.
+  // const shrink = vcc.compactFileInPlace(opts.transcript_path, { timeoutMs: 15_000 });
+  // if (shrink.ok) {
+  //   db.prepare(`UPDATE sessions SET vcc_shrunk_at = ? WHERE session_id = ?`)
+  //     .run(new Date().toISOString(), opts.session_id);
+  // } else {
+  //   console.error('[claude-nexus] vcc post-extraction shrink failed, vcc_shrunk_at left unset:', shrink.error);
+  // }
 
   return {
     session_id: opts.session_id,

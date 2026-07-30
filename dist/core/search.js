@@ -1,4 +1,5 @@
 import { generateEmbedding } from './embeddings.js';
+import { rrfFuse } from './rrf.js';
 /**
  * Sanitize a query for FTS5 MATCH. Wraps each token in double quotes
  * to prevent special characters from crashing the query parser.
@@ -199,13 +200,7 @@ export function searchMemories(db, query, options) {
  */
 export async function hybridSearchMemories(db, query, options) {
     const limit = options?.limit ?? 20;
-    const RRF_K = 60;
     const ftsResults = searchMemories(db, query, { ...options, limit });
-    const ftsRank = new Map();
-    for (let i = 0; i < ftsResults.length; i++) {
-        ftsRank.set(ftsResults[i].memory.id, i);
-    }
-    let vecRank = new Map();
     let vecMemIds = [];
     const queryVec = await generateEmbedding(query);
     if (queryVec !== null) {
@@ -224,7 +219,6 @@ export async function hybridSearchMemories(db, query, options) {
             WHERE rowid = ? AND review_status = 'approved' AND superseded_by IS NULL
           `).get(vecRows[i].rowid);
                     if (memRow) {
-                        vecRank.set(memRow.id, i);
                         vecMemIds.push(memRow.id);
                     }
                 }
@@ -234,18 +228,26 @@ export async function hybridSearchMemories(db, query, options) {
             }
         }
     }
-    if (vecRank.size === 0)
+    if (vecMemIds.length === 0)
         return ftsResults;
-    const allIds = new Set([
-        ...ftsResults.map(r => r.memory.id),
-        ...vecMemIds,
-    ]);
-    const rrfScores = new Map();
-    for (const id of allIds) {
-        const ftsPosScore = ftsRank.has(id) ? 1 / (RRF_K + ftsRank.get(id)) : 0;
-        const vecPosScore = vecRank.has(id) ? 1 / (RRF_K + vecRank.get(id)) : 0;
-        rrfScores.set(id, ftsPosScore + vecPosScore);
+    // Map string memory IDs → integers for rrfFuse, then map back.
+    const strToInt = new Map();
+    let nextIdx = 0;
+    for (const r of ftsResults) {
+        if (!strToInt.has(r.memory.id))
+            strToInt.set(r.memory.id, nextIdx++);
     }
+    for (const id of vecMemIds) {
+        if (!strToInt.has(id))
+            strToInt.set(id, nextIdx++);
+    }
+    const intToStr = new Map();
+    for (const [sid, idx] of strToInt)
+        intToStr.set(idx, sid);
+    const ftsNumIds = ftsResults.map(r => strToInt.get(r.memory.id));
+    const vecNumIds = vecMemIds.map(id => strToInt.get(id));
+    const fused = rrfFuse([ftsNumIds, vecNumIds]);
+    // Hydrate results: FTS rows already have snippets; vec-only rows fetched on demand.
     const resultByMemId = new Map();
     for (const r of ftsResults)
         resultByMemId.set(r.memory.id, r);
@@ -263,14 +265,14 @@ export async function hybridSearchMemories(db, query, options) {
             }
         }
     }
-    const sorted = Array.from(allIds)
-        .filter(id => resultByMemId.has(id))
-        .sort((a, b) => (rrfScores.get(b) ?? 0) - (rrfScores.get(a) ?? 0))
-        .slice(0, limit);
-    return sorted.map(id => ({
-        ...resultByMemId.get(id),
-        rank: -(rrfScores.get(id) ?? 0),
-    }));
+    return fused
+        .slice(0, limit)
+        .flatMap(f => {
+        const sid = intToStr.get(f.id);
+        if (sid === undefined || !resultByMemId.has(sid))
+            return [];
+        return [{ ...resultByMemId.get(sid), rank: -f.score }];
+    });
 }
 /**
  * Multi-topic smart fetch over the memories table.

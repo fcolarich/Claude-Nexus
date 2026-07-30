@@ -70,5 +70,80 @@ describe('exportAll', () => {
         expect(existsSync(join(dir, 'still-active-sessions', 'memory'))).toBe(false);
         db.close();
     });
+    it('caps MEMORY.md index at memory_md_max_items (200) and appends a pointer line on overflow', () => {
+        const db = freshDb();
+        const total = 205;
+        // Insert 205 approved stable memories with unique confidence values 1..205.
+        // decay_class stable => effectiveConfidence = confidence, so rank order is deterministic.
+        for (let i = 1; i <= total; i++) {
+            insertMemory(db, {
+                ...base,
+                title: `Cap Mem ${i}`,
+                body: `cap body unique ${i}`,
+                memory_type: 'convention',
+                review_status: 'approved',
+                confidence: i, // i=1 is lowest rank, i=205 is highest
+            });
+        }
+        const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+        exportAll(db, dir);
+        const index = readFileSync(join(dir, 'proj', 'memory', 'MEMORY.md'), 'utf-8');
+        const entryLines = index.split('\n').filter((l) => l.startsWith('- ['));
+        expect(entryLines).toHaveLength(200);
+        // Bottom 5 (confidence 1..5) must be cut. Bracket-anchor the title so
+        // "Cap Mem 1" doesn't false-match as a substring of "Cap Mem 100"..."Cap Mem 199".
+        for (let i = 1; i <= 5; i++) {
+            expect(index).not.toContain(`[Cap Mem ${i}]`);
+        }
+        // Top entries (confidence 6..205) must be retained
+        expect(index).toContain('[Cap Mem 6]');
+        expect(index).toContain('[Cap Mem 205]');
+        // Exactly one pointer line with correct remaining count
+        const pointerLines = index.split('\n').filter((l) => l.startsWith('> …'));
+        expect(pointerLines).toHaveLength(1);
+        expect(pointerLines[0]).toBe('> … 5 more memories — use nexus_search to retrieve them.');
+        db.close();
+    });
+    it('writes no pointer line when entry count is under the cap', () => {
+        const db = freshDb();
+        for (let i = 1; i <= 10; i++) {
+            insertMemory(db, {
+                ...base,
+                title: `Under Mem ${i}`,
+                body: `under body unique ${i}`,
+                memory_type: 'convention',
+                review_status: 'approved',
+                confidence: i * 0.05,
+            });
+        }
+        const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+        exportAll(db, dir);
+        const index = readFileSync(join(dir, 'proj', 'memory', 'MEMORY.md'), 'utf-8');
+        const entryLines = index.split('\n').filter((l) => l.startsWith('- ['));
+        expect(entryLines).toHaveLength(10);
+        expect(index).not.toContain('more memories');
+        db.close();
+    });
+    it('writes no pointer line when entry count is exactly at the cap (strict >)', () => {
+        const db = freshDb();
+        const cap = 200;
+        for (let i = 1; i <= cap; i++) {
+            insertMemory(db, {
+                ...base,
+                title: `Exact Mem ${i}`,
+                body: `exact body unique ${i}`,
+                memory_type: 'convention',
+                review_status: 'approved',
+                confidence: i * 0.004,
+            });
+        }
+        const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+        exportAll(db, dir);
+        const index = readFileSync(join(dir, 'proj', 'memory', 'MEMORY.md'), 'utf-8');
+        const entryLines = index.split('\n').filter((l) => l.startsWith('- ['));
+        expect(entryLines).toHaveLength(cap);
+        expect(index).not.toContain('more memories');
+        db.close();
+    });
 });
 //# sourceMappingURL=export.test.js.map

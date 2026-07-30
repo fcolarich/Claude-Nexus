@@ -51,9 +51,10 @@ const DEFAULTS = {
         auto_approve_confidence: 0.85,
         dedup_cosine_threshold: 0.86,
         export_dir: join(homedir(), '.claude', 'memories', 'exports'),
+        memory_md_max_items: 200,
     },
     reranker: {
-        enabled: false,
+        enabled: true,
         endpoint: 'http://127.0.0.1:8931/rerank',
         script_path: 'C:/Fran/Cloned Repos/local-reranker-mcp/server.py',
         threshold: 0.2,

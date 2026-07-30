@@ -43,6 +43,13 @@ export declare function parseCandidates(raw: string): MemoryCandidate[];
  * - Drops completion / progress narration.
  * - Converts an ADR/DDR-citing `decision` into a thin `reference` pointer so the
  *   ADR stays canonical and the memory only aids retrieval (no content drift).
+ *
+ * Q4 NO-GO — per-candidate pre-LLM signal scoring: evaluated and declined.
+ * The reflector observer gate (whole-extraction gate) already rejects low-signal
+ * transcript windows before the LLM is called. This post-hoc COMPLETION_RE filter
+ * then strips the residual narration that slips through. Together they cover the
+ * practical case. Scoring each candidate individually before the LLM call would
+ * add complexity for negligible gain — do not add it here.
  */
 export declare function refineCandidates(cands: MemoryCandidate[]): MemoryCandidate[];
 /** Default extractor — used by the Reflector unless a fake is injected. */

@@ -1,0 +1,613 @@
+[
+  {
+    "id": "779501546d58b8fe",
+    "project": "C--Fran-uber-db",
+    "title": "Embedding provider migration: architecture, staging, and default preservation",
+    "body": "Transport contracts must be preserved: null-degrade on embedding failure (never throw, retry-once-then-null), prefixMode and formatEmbedInput asymmetric-prefix wiring, and default provider remains 'ollama'. Provider-specific request/response shapes are allowed. ensureModelReady (Ollama) and ensureLlamaSwapReady (llama-swap) are separate readiness implementations; resolve whether llama-swap path delegates to existing ensureLlamaSwapReady. Code-side embedding migration (config, client logic) can be designed independently from operational prerequisites (model file availability). Once model file exists in llama-swap directory and config.yaml updated, provider switch becomes opt-in config change. This staging separates implementation readiness from operational deployment. Default MUST stay 'ollama' when adding 'llama-swap' support—ensures existing configs zero-change behavior unless explicitly opted in, preventing silent provider switches in production.",
+    "created_at": "2026-07-28 02:43:15",
+    "folded": 3,
+    "lostIdentifiers": [
+      "GGUF"
+    ],
+    "identifierLossRate": 0.5,
+    "minCosine": 0.846,
+    "underRepresentedSource": null,
+    "reason": [
+      "identifier-loss"
+    ],
+    "originals": [
+      {
+        "id": "fc640888707991a8",
+        "title": "Embedding provider defaults to 'ollama'",
+        "body": "When expanding provider support to include 'llama-swap', default MUST remain 'ollama'. Ensures existing configs exhibit zero behavior change unless explicitly opted in. Prevents silent provider switches affecting deployed systems."
+      },
+      {
+        "id": "459d60c51151b64c",
+        "title": "Stage transport code before operational prerequisites",
+        "body": "Code-side embedding migration (config, client logic) can be designed/built independently of operational prerequisites (embeddinggemma GGUF model file availability). Once model file exists in llama-swap's model directory and config.yaml updated, provider switch becomes opt-in config change. Separates implementation readiness from operational deployment."
+      },
+      {
+        "id": "b2a813a6207bab6f",
+        "title": "Transport migration design constraints",
+        "body": "Preserve contracts intact: (1) null-degrade on embedding failure (never throw, retry-once-then-null), (2) prefixMode and formatEmbedInput asymmetric-prefix wiring, (3) default provider stays 'ollama'. Provider-specific request/response shapes allowed; ensureModelReady (Ollama) and ensureLlamaSwapReady (llama-swap) are separate readiness implementations—decide whether llama-swap path delegates to existing ensureLlamaSwapReady."
+      }
+    ]
+  },
+  {
+    "id": "0e6dbd5ef0065973",
+    "project": "C--Fran-LLM-Workflow-Optimization",
+    "title": "Execute agent stalls after reviewer verdicts due to unavailable AskUserQuestion tool",
+    "body": "Execute agent stalls after collecting reviewer verdicts, stopping idle instead of auto-dispatching the next task wave; requires manual resumption nudges (5+ occurrences per session). Previously diagnosed as an orchestration logic bug, but root cause is actually the agent encountering an AskUserQuestion checkpoint instruction it cannot execute. When the agent hits this checkpoint, it either errors silently or stops, blocking forward progress. The underlying issue is tool unavailability—the AskUserQuestion tool is not accessible to the agent in that context. This is not a flaw in execution flow logic but a blocking dependency on an unavailable tool.",
+    "created_at": "2026-07-28 02:46:11",
+    "folded": 2,
+    "lostIdentifiers": [
+      "PASS"
+    ],
+    "identifierLossRate": 0.5,
+    "minCosine": 0.863,
+    "underRepresentedSource": null,
+    "reason": [
+      "identifier-loss"
+    ],
+    "originals": [
+      {
+        "id": "752c9c071964a05d",
+        "title": "Execute agent stalls after reviewer verdicts",
+        "body": "Execute agent stops idle after collecting reviewer verdicts instead of auto-dispatching next task wave; requires manual nudges to resume. Recurring orchestration logic bug observed 5+ times per session."
+      },
+      {
+        "id": "1966df2d358bb1d0",
+        "title": "Agent stalls likely caused by hitting unusable tool",
+        "body": "Stalls previously attributed to idle-after-PASS background-completion pattern are more likely caused by agent encountering AskUserQuestion checkpoint instruction it cannot execute, resulting in confusion or silent skipping. Root cause is unavailable tool, not execution flow."
+      }
+    ]
+  },
+  {
+    "id": "798c5d18fa27d7a5",
+    "project": "C--Fran-Automatic-Encyclopedias",
+    "title": "Newport's High-Quality Work formula: scope, mechanism, and extrapolation limits",
+    "body": "Newport's formula `High-Quality Work = Time × Intensity of Focus` (Deep Work) measures output quality, not learning retention, speed, or knowledge durability over time; avoid fabricating unsourced quantitative comparisons like '1 hour intensive > 3 hours distracted.' Myelin formation and skill mastery via focused attention explain how deliberate practice strengthens mental capacity, but this mechanism applies only to avoiding distraction during single-task work, not to curriculum design or domain sequencing. Attention residue (Deep Work Chapter 6)—cognitive load from unresolved messages—justifies batching and isolation; batching effectiveness stems from minimizing attention residue, not neural myelination. Task-switching weakens attention (Chapter 7). Faithfully separate skill mastery (focused attention), knowledge retention (spaced repetition), and learning efficiency; describe mechanisms and observed effects rather than inventing conditional claims about durability.",
+    "created_at": "2026-07-28 02:58:55",
+    "folded": 2,
+    "lostIdentifiers": [
+      "0.95"
+    ],
+    "identifierLossRate": 0.5,
+    "minCosine": 0.883,
+    "underRepresentedSource": null,
+    "reason": [
+      "identifier-loss"
+    ],
+    "originals": [
+      {
+        "id": "487868d5c338ffbb",
+        "title": "Deep Work: Skill Mastery, Attention Management, and Boundaries",
+        "body": "Deep Work emphasizes skill mastery via focused attention and myelin formation, differentiating it from knowledge retention or distributed practice. Skill mastery strengthens mental capacity through focused attention, contrasting with spaced repetition systems. Attention residue (Deep Work Chapter 6) describes cognitive load from unresolved messages, justifying isolation and batching to minimize this load—distinct from task-switching weakening attention (Deep Work Chapter 7). Deep Work’s deliberate practice, attention residue, and batching optimize cognitive output through structured attention management. The intensity formula is High-Quality Work = Time Spent × Intensity of Focus; batching effectiveness stems from attention residue minimization, not neural myelination. Myelin development (Deep Work Chapter 6) relates to avoiding distraction during focused work on a single task, excluding application to curriculum design or domain sequencing. Faithfulness grade: 0.95. Depth: 4."
+      },
+      {
+        "id": "3584b2c111f90995",
+        "title": "Time × Intensity formula and comparative claims",
+        "body": "Newport’s productivity formula `High-Quality Work = Time × Intensity` measures output quality, not learning retention or speed; it does *not* quantify durability of knowledge over time. The myelin/circuit mechanism explains focus's role in learning but shouldn't be extrapolated beyond that scope without source support. Avoid fabricating quantitative comparisons—such as '1 hour intensive > 3 hours distracted'—that are absent from the original sources, as these mechanisms describe processes, not trade-off ratios.  Focus on describing mechanisms and observed effects rather than inventing specific numerical or conditional claims about learning efficiency or retention durability."
+      }
+    ]
+  },
+  {
+    "id": "a1ad3721c83bcd76",
+    "project": "C--Fran-Automatic-Encyclopedias",
+    "title": "Hybrid embedding + LLM routing: embeddings as pre-filter, not replacement",
+    "body": "Semantic embeddings cannot replace LLM-based encyclopedia routing due to inherent category overlap (personal-development, psychology, career all cover self-improvement); recall@10 is 97% but precision@5 is only 0.4, a structural limitation not tunable. An embedding-only approach would triple extraction fan-out, breaking cost reduction goals. The system uses a two-stage architecture: mxbai embeddings narrow 21 encyclopedias to ~10 candidates (97% recall) via local cosine similarity with zero LLM cost, then a cheaper LLM router selects from these 10, reducing input size and routing call cost without quality loss. This cleanly separates routing (local, near-free) from extraction (requires generation and model selection), enabling different optimization targets per stage.",
+    "created_at": "2026-07-28 02:53:44",
+    "folded": 2,
+    "lostIdentifiers": [
+      "RAG"
+    ],
+    "identifierLossRate": 0.333,
+    "minCosine": 0.754,
+    "underRepresentedSource": null,
+    "reason": [
+      "identifier-loss"
+    ],
+    "originals": [
+      {
+        "id": "992dfb053cef4e07",
+        "title": "RAG splits routing from extraction cleanly",
+        "body": "Routing (which encyclopedias apply to this chapter?) can be solved locally via embedding + cosine similarity with zero LLM cost. Extraction (structured entry generation) requires model calls. These are separable with different optimization targets — routing can be near-free via local embeddings; only extraction needs generation and model selection."
+      },
+      {
+        "id": "39e921f8e7bdc70c",
+        "title": "LLM Routing vs. Embedding Router Performance",
+        "body": "Semantic similarity embeddings cannot precisely replace the LLM-based encyclopedia routing system due to inherent category overlap (personal-development / psychology / career all cover self-improvement); recall@10 is 97%, but precision@5 is only 0.4.  Forcing an embedding-only router would triple extraction fan-out, contradicting cost reduction goals; this limitation is structural and not a tuning issue. Embeddings function effectively as a recall-safe pre-filter, narrowing 21 encyclopedias to approximately 10 candidates with 97% recall. A cheaper LLM router then selects from these 10 candidates, reducing routing input size and call cost without impacting quality. The mxbai embedding router serves only as this pre-filter, not a full replacement for the LLM router.  The decision is to retain the LLM router while optionally using embeddings to shrink its input."
+      }
+    ]
+  },
+  {
+    "id": "bbd74defa0b34691",
+    "project": "C--Fran-Voodoo-Magic",
+    "title": "URP Volume Stack Optimization & Asset-Immutable Configuration",
+    "body": "URP blends all active Volumes into a single interpolated stack, so total GPU cost equals one volume with blended final bloom values (iterations × intensity × resolution), making three volumes equivalent to one; CPU overhead for parameter blending is negligible. The scene uses unlit SpriteRenderers with no scene lights and a panning camera, where mobile GPU cost is dominated by bloom on full-res HDR: SceneProfile (15/3-iter), DramaAmbient (42/6-iter), DramaEventPunch (55/8-iter re-roll every 0.7s), managed by PostFxDramaController.cs with DramaAmbient for vignettes/bloom and EventPunchVolume for flares/dirt. Optimize bloom performance via: (1) maxIterations ≤4 + intensities ~10–15 total + downscale:1 + disable highQualityFiltering (largest single gain), (2) drop MSAA to 1, (3) bake additive glow quads to static sprites with capped maxParticles, (4) disable HDR once LDR; avoid tuning intensity as it carries near-free composite multiply cost. EventPunchVolume's weight was stranded at peak due to pooled DOTween sequence; UpdateEventPunch method now recomputes weight every frame via DOVirtual.EasedValue, enabling consolidation from three volumes to one/two by folding SceneProfile's base bloom into DramaAmbient (weight 1). Maintain asset immutability by mutating only runtime instances like `volume.profile` (not sharedProfile), validated via `git status` on `.asset` files after instantiate/play/exit to confirm zero disk mutations; Volume.weight animation must remain runtime-only to prevent asset corruption. Configure only SceneProfile (enable Bloom, Tonemapping Neutral, subtle Vignette, no Motion Blur) while keeping DefaultVolumeProfile at URP template defaults (19 post-processing components); use Unity Inspector exclusively for serialized assets, avoid manual YAML edits of `.unity` scene files. Add `Unity.RenderPipelines.Universal.Runtime` to `.asmdef` for Bloom and `Unity.RenderPipelines.Core.Runtime` for Volume types; variant collections must preserve URP and built-in pipeline shaders (Bloom, FXAA, SSAO, Lit, UI/Default as critical fallbacks). SceneBackground prefab (~30 SpriteRenderers + quad mesh) uses optimal sprite batching via shared materials and is excluded from static batching audits; animated effects on dedicated effects sub-Canvas (separate from main UI Canvas per DDR-001) prevent tween updates from invalidating static batches, and ambient breathe effect reclaims CPU when post-FX panel hidden.",
+    "created_at": "2026-07-28 02:53:29",
+    "folded": 3,
+    "lostIdentifiers": [
+      "size-8/7",
+      "SetPass",
+      "0.6",
+      "UnityEngine.Rendering.Volume",
+      "ADR-043",
+      "UnityEngine",
+      "ADR",
+      "043"
+    ],
+    "identifierLossRate": 0.186,
+    "minCosine": 0.827,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "c5f68b6eb1ab5035",
+        "title": "URP Volume GPU Cost & Bloom Optimization",
+        "body": "URP blends active Volumes into a single interpolated stack, resulting in the GPU cost being determined by the final blended bloom values (iterations × intensity × resolution), effectively making three volumes equivalent to one. The per-volume CPU cost for parameter blending is negligible; therefore, optimize bloom performance primarily by tuning maxIterations (mip passes), downscale (resolution), and highQualityFiltering (tap count) rather than intensity, as intensity has a near-free composite multiply cost."
+      },
+      {
+        "id": "57ddf066879a84d2",
+        "title": "Scene GPU Architecture: Sprite Batching, Overdraw Reduction, and Drama Volume Post-FX",
+        "body": "The scene uses unlit SpriteRenderers with no scene lights and a panning camera; GPU optimization prioritizes overdraw reduction from stacked semi-transparent shadow sprites (alpha 0.6) via layer consolidation. SceneBackground prefab (~30 SpriteRenderers + quad mesh) uses optimal sprite batching via shared materials and is excluded from static batching audits; animated effects reside on dedicated effects sub-Canvas separate from the main UI Canvas to prevent tween updates from invalidating static batches (DDR-001). Mobile GPU cost is dominated by bloom on full-res HDR backing: SceneProfile intensity 15/3-iter, DramaAmbient 42/6-iter, DramaEventPunch 55/8-iter (re-roll every 0.7s); PostFxDramaController.cs manages layered Volume profiles—DramaAmbient for vignettes/bloom, EventPunchVolume for flares/dirt—via DOTween controller. Bloom optimization priority is (1) cap maxIterations ≤4, reduce intensities to ~10–15 total, force downscale:1, disable highQualityFiltering (largest gain), (2) drop MSAA to 1, (3) bake size-8/7 additive glow quads to static sprites with capped maxParticles, (4) disable HDR once LDR. EventPunchVolume's weight was stranded at peak due to pooled DOTween sequence, resolved via UpdateEventPunch method using DOVirtual.EasedValue to recompute weight every frame; consolidation opportunity reduces volumes from three to one/two by folding SceneProfile's base bloom into DramaAmbient (weight 1). Volume.weight animation is runtime-only to prevent asset corruption; ambient breathe effect runs every frame with gate enabled to reclaim CPU when post-FX panel not visible; profile overdraw + SetPass on Adreno/Mali."
+      },
+      {
+        "id": "96bdd5a4f0142f0c",
+        "title": "URP Volume Configuration & Asset Immutability: SceneProfile-Only with Assembly/Shader Requirements",
+        "body": "Maintain asset immutability by mutating only runtime instances like `volume.profile`, not sharedProfile assets on disk; validate via `git status` on `.asset` files after instantiate/play/exit to confirm zero VolumeProfile mutations, enabling safe dynamic parameter tweaking. Configure only SceneProfile (enable Bloom, keep Tonemapping at Neutral, add subtle Vignette, leave Motion Blur off) while keeping DefaultVolumeProfile at URP template defaults, which contains 19 post-processing components at neutral values and may harbor orphaned YAML blocks invisible in the Inspector with no rendering effect. Use Unity Inspector exclusively for serialized assets (Volume profiles, Renderer settings); avoid manual YAML edits of `.unity` scene files as they trigger reimport and risk corruption of other component properties. Add `Unity.RenderPipelines.Universal.Runtime` to `.asmdef` for Bloom components and `Unity.RenderPipelines.Core.Runtime` for UnityEngine.Rendering.Volume types. Variant collections must preserve URP and built-in pipeline shaders (Bloom, FXAA, SSAO, Lit, UI/Default as critical fallback) even if outside folder-specific audit scopes. ADR-043's premise was incorrect; DefaultVolumeProfile is a standard URP template requiring no cleanup."
+      }
+    ]
+  },
+  {
+    "id": "2c26519cfce1be9f",
+    "project": "C--Fran-Voodoo-Magic",
+    "title": "Unity Addressables Configuration, Bundling, Deployment, and Theming",
+    "body": "BundleMode enum: 0=PackTogether, 1=PackSeparately, 2=PackTogetherByLabel; per-label bundling requires mode 2; ADR-072 incorrectly used mode 1 (ADR-074 fixed); verify bundle counts during builds. Theme groups require PackTogetherByLabel (mode 2) for atomic SpriteAtlasManager binding; place in Assets/Domains/*/Events/ with labels, use skin_<season> addresses (e.g., skin_winter), match themeLabel in events.json to ThemeSkin's Addressables label. Rebuilding generates new hashes; undeployed builds cause bundle-not-found when local/remote catalogs mismatch; builds are additive to ServerData/[BuildTarget] requiring manual cleanup before R2 redeploy. Bundles are platform-specific requiring full build/upload per platform; runtime uses binary catalogs (.bin) as authoritative source, not JSON. Custom labels in AddressableAssetSettings.asset's m_LabelTable (m_LabelNames) prevent stripping; rebuild via Build → New Build → Default Build Script after bundling changes to auto-pack dependencies. Use Addressables for remote/level-gated/batch content and TextAsset for static assets; mobile networks lack m_Timeout/m_RetryCount; AddressablesAssetService binds JSON via labels for dynamic theming.",
+    "created_at": "2026-07-28 02:56:49",
+    "folded": 2,
+    "lostIdentifiers": [
+      "skin_summer",
+      "LoadAssetAsync",
+      "StreamingAssets",
+      "CDN"
+    ],
+    "identifierLossRate": 0.138,
+    "minCosine": 0.889,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "f2a016596c7011f9",
+        "title": "Unity Addressables BundleMode Values and Historical Error",
+        "body": "Unity's `Addressables` system uses the `BundleMode` enum where 0 represents `PackTogether`, 1 is `PackSeparately`, and 2 signifies `PackTogetherByLabel`; per-label bundling functionality requires `BundleMode` to be set to 2. ADR-072 incorrectly assigned a value of 1 (intended as 'Pack Together By Label') to the `m_BundleMode` property, which is actually `PackSeparately`, leading to incorrect bundle generation; this error was rectified by ADR-074. Always confirm addressable bundle counts during builds to ensure accurate configuration and avoid unexpected behavior related to `BundleMode`."
+      },
+      {
+        "id": "18c0dfb0663bfde2",
+        "title": "Addressables Bundle Management, CDN Deployment, and Theming",
+        "body": "Rebuilding Addressables generates new bundle hashes; if not deployed to CDN, local builds mismatch remote catalogs causing bundle-not-found errors. Builds are additive, creating new-hash bundles in ServerData/[BuildTarget] without deleting older versions; manual cleanup of ServerData is required, then redeploy to R2; verify by rebuilding and checking ServerData/[BuildTarget] for expected bundle counts based on bundling mode. Bundles are platform-specific, requiring full build/upload cycle per platform; runtime loads binary catalogs (.bin) as source of truth, superseding legacy JSON catalogs. Custom labels must be registered in AddressableAssetSettings.asset's m_LabelTable (m_LabelNames list) to prevent Unity stripping. Theme asset groups use PackTogetherByLabel (m_BundleMode 1) for atomic SpriteAtlasManager binding—PackSeparately breaks atomicity; theme prefabs are Addressable with skin_<season> addresses (e.g., skin_winter, skin_summer) retrieved via LoadAssetAsync. Themed assets belong in Assets/Domains/*/Events/ with labels (not StreamingAssets); AddressablesAssetService binds JSON via labels, so themeLabel in events.json must exactly match the Addressables label on ThemeSkin asset; rebuild via Build → New Build → Default Build Script after bundling changes to auto-pack prefab dependencies; use Addressables for remote/level-gated/batch-downloaded content and TextAsset for static assets; all themes bundle together in PackTogether mode; mobile networks have no m_Timeout/m_RetryCount support."
+      }
+    ]
+  },
+  {
+    "id": "ca2da672173caef9",
+    "project": "C--Fran-Automatic-Encyclopedias",
+    "title": "Multi-turn Extraction Architecture: Fatigue Ceiling at 5–6 Turns + Sequential Caching with H2 Optimal Grouping",
+    "body": "Multi-turn extraction exhibits fundamental architectural limitations: faithfulness degrades from A0's 0.954 to ~0.72–0.90 when context expands (e.g., turn 5 accumulated context fabricates 2/3 entries at 0.72), and an 8-turn run shows context fatigue at ~48K tokens (turn 8 yields 0 topics vs A0's 3), indicating a practical ceiling of 5–6 encyclopedias per conversation rather than 8+. Root cause is context accumulation and attention-split priming over-extraction; prompt tuning cannot overcome the 0.913 faithfulness floor, representing a hard architectural constraint separate from the ~18% baseline fabrication on single encyclopedias (which stems from extraction-prompt overreach on thin content). Optimization strategy: use sequential turns within a single conversation per chapter (NOT sub-agents), with H2 grouping (2 encyclopedias per call), achieving 73 extracted topics (recall 0.63, 94% of A0's 78) while reducing calls 24→12 (~29% cost reduction) and input tokens 496K→86K (~5.6×). Large chapters (3.5K–12K tokens, H2-large) are critical for faithfulness (0.962) and low fabrication (0.045); chapter size must not be reduced to optimize grouping, as smaller chapters fragment concepts and increase overhead. Safe group size is floor((25000 - chapter_tokens) / 1500), where 1500 is per-encyclopedia instruction overhead and 25000 is soft-degradation ceiling; for typical chapters this yields 8–14 encyclopedias per call, but H3+ groupings degrade severely (H3: 56 topics, recall 0.43) and are unsuitable. Sequential architecture avoids sub-agent limitation where child agents lack parent cache access due to independent system prompts; use: turn 1 creates chapter, turns 2–N access via free cache_read, dispose conversation between chapters, avoid compaction within conversations. Sequential turns save ~50% rate-limit tokens versus A0 single-call approaches that recreate chapter per encyclopedia. Verify final extraction quality via Opus faithfulness scoring; separate improvement thread should focus on prompt tuning to tighten faithfulness independent of architecture changes.",
+    "created_at": "2026-07-28 03:00:40",
+    "folded": 3,
+    "lostIdentifiers": [
+      "0.93",
+      "0.87",
+      "0.98"
+    ],
+    "identifierLossRate": 0.136,
+    "minCosine": 0.857,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "e3491e3d92f33fd7",
+        "title": "Multi-turn extraction shows context fatigue in tail turns",
+        "body": "An 8-turn multi-turn run showed turn 8 producing 0 topics where A0 found 3, suggesting context fatigue as the conversation grows to ~48K tokens. Quality validation is pending (Opus judge in progress), but this is a yellow flag. May indicate a practical turn-count ceiling (5–6 encyclopedias per conversation) rather than 8+."
+      },
+      {
+        "id": "65fa8b831a7fbcf7",
+        "title": "Multi-Turn Extraction Fabrication is Architectural, Not Prompt-Fixable",
+        "body": "Multi-turn extraction consistently fails to achieve acceptable faithfulness (below 0.93) despite testing baseline, hardened, and calibrated prompts, with scores ranging from ~0.87 to ~0.98; prompt tuning cannot overcome this limitation due to context accumulation priming over-extraction.  Specifically, turn 5 (learning), using a well-fitting encyclopedia within the same chapter, demonstrated A0 achieving 0.95 faithfulness compared to multi-turn's 0.72 (fabricating 2/3 entries). A0 achieves 0.954 faithfulness at 32 topics through structural isolation – each call only processes [chapter] + [one encyclopedia]. Expanding context, such as in multi-turn extraction where prior extractions accumulate or attention is split via grouping, degrades faithfulness to 0.87–0.90 irrespective of prompt tuning.  The baseline A0 (single encyclopedia) exhibits an overall fabrication rate of ~18%, which worsens on smaller chapters; this fabrication stems from extraction-prompt overreach on thin content and is separate from the architectural issues causing multi-turn failures. The 0.913 faithfulness floor represents a hard limit beyond which prompt tuning cannot improve results, indicating an architectural constraint. A separate improvement thread should focus on prompt tuning to tighten faithfulness independently of architecture changes."
+      },
+      {
+        "id": "541d7a9f18a2720a",
+        "title": "Encyclopedia Batching and Chapter-Cached Sequential Extraction Strategy",
+        "body": "Large chapters (H2-large, 3.5K–12K tokens) are optimal for extraction, achieving high faithfulness (0.962) and low fabrication (0.045); chapter size must not be reduced to optimize grouping, as smaller chapters fragment concepts and increase batch overhead. The primary optimization lever is group size (encyclopedias per call), not chapter size; H2 grouping (2 encyclopedias per call) is optimal, achieving 73 extracted topics with recall 0.63 (94% of A0's 78 topics), reducing calls from 24 to 12 and cutting costs ~29%. Safe group size is computed via floor((25000 - chapter_tokens) / 1500), where 1500 is per-encyclopedia instruction-block size and 25000 is soft-degradation ceiling; for typical chapters (3.5K–12K tokens) this yields 8–14 encyclopedias per call. Larger groupings reduce input tokens (A0: 496K → H8: 86K, ~5.6× reduction) but significantly decrease extracted topics: H3 yields 56 topics (recall 0.43), and H3+ groupings degrade further, making them unsuitable. Use sequential turns within a single conversation per chapter instead of spawning sub-agents; this maintains A0 baseline quality while minimizing costs, because sub-agents lack parent cache access due to independent system prompts. Sequential architecture: turn 1 creates the chapter, turns 2-N access via free cache_read, dispose conversation between chapters, and avoid compaction within conversations. Sequential turns save approximately 50% rate-limit tokens versus A0 single-call approaches that recreate the chapter per encyclopedia. Verify final extraction quality with Opus faithfulness scoring; large-chapter extraction without chunking sustains baseline quality."
+      }
+    ]
+  },
+  {
+    "id": "3a0ee9457172246a",
+    "project": "C--Voodoo-Paper2",
+    "title": "ServiceLocator patterns and null safety in Paper2",
+    "body": "ServiceController.Get<T>() returns null (not throwing) when a service is unregistered, creating teardown-order NullReferences if the service-holder GameObject tears down first—always null-guard with `?.` operator. In hot paths (Update, etc.), use CachedService<T>, never ServiceController.Get<T>(). CachedService.IsValid checks only the local cache field, not the registry; for potentially absent services use TryGet() + null check instead. ServiceController.IsRegistered<T>() is acceptable only in init paths (Awake/Start/OnServiceInitialize), not hot paths. Store CachedService<T>.TryGet() results in a local variable once, then null-check and use—never re-invoke the lookup. New IService classes must be registered in the lifecycle-appropriate *ServicesInstaller; prefer ServiceLocator + composition over singletons, reserving IService for significant systems, not utilities.",
+    "created_at": "2026-07-28 02:40:55",
+    "folded": 3,
+    "lostIdentifiers": [
+      "StadiumView",
+      "GameplayController"
+    ],
+    "identifierLossRate": 0.125,
+    "minCosine": 0.845,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "76af21162931672f",
+        "title": "ServiceController.Get<T>() returns null when unregistered",
+        "body": "During teardown, ServiceController.Get<T>() returns default (null) if the service isn't currently registered, rather than throwing. This allows null references in callbacks fired during destruction if the service-holder GameObject tears down first. Null-guard all service calls that might execute during teardown (using `?.` operator)."
+      },
+      {
+        "id": "7d94d270ec6268ee",
+        "title": "ServiceLocator usage rules (ServiceController / CachedService)",
+        "body": "In Paper2: use CachedService<T> in hot paths — never call ServiceController.Get<T>() in Update or other frequently-called methods. CachedService.IsValid only checks the local cache field, NOT the registry — if a service may legitimately be absent, use TryGet() + null check instead of trusting IsValid. ServiceController.IsRegistered<T>() is fine in init paths (Awake/Start/OnServiceInitialize) but not hot paths. New IService classes must be registered in the lifecycle-appropriate *ServicesInstaller. Avoid singletons — use ServiceLocator + composition; reserve IService for significant systems, not small utilities. Note: ServiceController.Get<T>() returns null (not a throw, unless not app-quitting where it also logs) when a service isn't registered — this is a real source of teardown-order NREs across the codebase, not just StadiumView."
+      },
+      {
+        "id": "4081690eee748b36",
+        "title": "Local-variable-then-check for service lookups",
+        "body": "Service lookups via `CachedService<T>.TryGet()` should be stored once in a local variable, then null-checked and used—never re-invoke the lookup for the check and use separately. Avoids repeated evaluation; established pattern throughout GameplayController and codebase."
+      }
+    ]
+  },
+  {
+    "id": "d328f921268f1e7a",
+    "project": "C--Fran-Voodoo-Magic",
+    "title": "CardFlipPresenter UI Animation & IEventView Architecture",
+    "body": "IEventView (MVC passive-view, ADR-020) exposes SlotRoot (RectTransform home position) and SetVisible(bool) which toggles CanvasGroup (hidden: α=0 blocks raycasts; visible: α=1 enables raycasts); EventController._eventView is private, so store (IEventView, EventController) tuples for pending slots. CardFlipPresenter.CaptureSource(RectTransform, Canvas, homeSlot) captures source rectangles on view side (e.g., LockedCardView.CardTransform); manually wired via MainInstaller to EventPopupView._flip and EventHudView._flip; single scene instance orchestrates all animations. CardFlipPresenter requires centre-anchored UI (anchorMin=anchorMax=0.5), fixed size, center pivot (0.5, 0.5), world position/scale/rotation; multiple Animation components (CardIdleMotion, CardFlipPresenter, Tremble) must occupy separate GameObjects to prevent transform conflicts. Root cause of sizing bugs: GetWorldCorners/RectToCanvas fail on animated/rotated transforms—CardFlipPresenter rotates to −90° (near-zero width) and popup rotates 180° around Y-axis, mixing world-space (metres) with screen-space overlay (pixels). Animation reverses timeline: panel edge-on, swap back to carrier, carrier shrinks home, HUD card alpha restores; robust against parent-relative changes. Card reveals and locked-card unlocks reuse CardFlipPresenter flight math (world-space coordinates, reparenting before dwell, destroy post-reveal); pre-lift target position references base peek position plus EmergeDeltaX to prevent overshoot from approach shifts. Page-turn unlocks suppress page-hint FX (burst, popup, flight, landing) atomically and use cardTiltZDegrees (default 8°) via localEulerAngles.z; flight tween zeros Z to avoid conflicts with straightening. Locked cards slide from book's right edge maintaining layer visibility until fully emerged; EdgeBottomRight.x coordinate-frame bug (bookPanel-local space) fixed via InverseTransformPoint to convert book edge center to container space with adjusted Y in localPosition.",
+    "created_at": "2026-07-28 02:46:30",
+    "folded": 2,
+    "lostIdentifiers": [
+      "captures source rectangles on view side, reusable (e.g.,",
+      "). Manual Inspector wiring via",
+      "links",
+      "orchestrates animations.",
+      "private; store"
+    ],
+    "identifierLossRate": 0.119,
+    "minCosine": 0.855,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "e300c420bcd64d06",
+        "title": "IEventView and CardFlipPresenter Interaction",
+        "body": "`IEventView` has `SlotRoot` (RectTransform for home position) and `SetVisible(bool)` (toggles CanvasGroup: hidden α=0/blocks raycasts, visible α=1/enables raycasts). MVC passive-view; card-flip transitions in view (ADR-020) isolate from domain logic. `CardFlipPresenter.CaptureSource(RectTransform, Canvas, homeSlot)` captures source rectangles on view side, reusable (e.g., `LockedCardView.CardTransform`). Manual Inspector wiring via `MainInstaller` links `EventPopupView._flip`, `EventHudView._flip`; single scene `CardFlipPresenter` orchestrates animations. `EventController._eventView` private; store `(IEventView, EventController)` tuples for pending slots to avoid direct controller access."
+      },
+      {
+        "id": "03a94e143f8d868f",
+        "title": "CardFlipPresenter UI Animation Pattern & Locked Card Reveals",
+        "body": "Measuring UI panel size via GetWorldCorners/RectToCanvas fails when transforms are animated or rotated—CardFlipPresenter rotates to −90° without reset (near-zero width); popup transitions rotate 180° around Y-axis to edge-on swap; root cause is mixing world-space (metres) with screen-space overlay (pixels). CardFlipPresenter requires centre-anchored UI objects (anchorMin=anchorMax=0.5), fixed size, center pivot (0.5, 0.5), and operates via world position/scale/rotation; multiple Animation components (CardIdleMotion, CardFlipPresenter, Tremble) must each reside on separate GameObjects to avoid transform conflicts. The animation pattern reverses timeline: panel moves to edge-on position, swaps back to carrier, carrier shrinks home, original HUD card alpha restores; this design is robust against parent-relative changes. Card reveals and locked-card unlocks reuse CardFlipPresenter flight math with world-space coordinates, reparenting before dwell and destroying the card after reveal; pre-lift target position calculation references base peek position plus EmergeDeltaX to prevent overshoot from approach animation shifts. Page-turn unlocks suppress page-hint FX throughout entire sequence (burst animation, popup appearance, card flight, landing) for atomic unlock feedback, and use cardTiltZDegrees (default 8°) via localEulerAngles.z for Z-axis tilt; flight tween zeros Z during unlock to prevent conflicts with straightening animations. Locked cards slide out from book's right edge maintaining layer visibility until fully emerged; coordinate frame conversion bug using EdgeBottomRight.x (bookPanel-local space) was corrected via InverseTransformPoint to convert book edge center to container space with adjusted Y offset in localPosition."
+      }
+    ]
+  },
+  {
+    "id": "616999b4e437493d",
+    "project": "C--Fran-uber-db",
+    "title": "GPU VRAM saturation from concurrent model loading across independent tools",
+    "body": "Multiple concurrent Claude Code sessions cause GPU VRAM saturation when independent tools including Ollama (llama-server.exe), llama-swap, and a prefix-generation tool maintain separate models simultaneously on shared RTX 4090 16GB GPU without cross-tool keep_alive coordination. Observed: 7 distinct models including uber-db's embeddinggemma:300m, claude-nexus's mxbai-embed-large, and llama-swap's phi-4-mini consuming 100% GPU utilization and 95% VRAM, degrading throughput to 2.27 tokens/sec and triggering cascading timeouts despite 120s timeouts and models appearing loaded. Root cause: each tool's independent keep_alive TTL lacks VRAM budget awareness across tools, allowing simultaneous model residence. This architecture-level GPU oversubscription—not code duplication or tool bugs—manifests when concurrent sessions maintain different models from different tools.",
+    "created_at": "2026-07-28 02:35:17",
+    "folded": 3,
+    "lostIdentifiers": [
+      "LLM"
+    ],
+    "identifierLossRate": 0.1,
+    "minCosine": 0.808,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "26a377a7b76f3eae",
+        "title": "Multiple Ollama processes starve GPU resources",
+        "body": "Concurrent `ollama/llama-server.exe` processes spawned per Claude Code session compete for GPU VRAM, causing severe slowdown and timeouts. Observed: RTX 4090 16GB, 7 processes → 100% GPU util, 95% VRAM consumed; prompt processing fell to 2.27 tokens/sec. Manifests as cascading timeouts on legitimate LLM requests despite model appearing 'loaded'. Root cause is GPU oversubscription (infrastructure), not code bugs."
+      },
+      {
+        "id": "d2d214424ae1643c",
+        "title": "GPU saturation from multi-tool shared Ollama daemon",
+        "body": "The 7 concurrent Ollama processes observed earlier were 7 distinct models simultaneously resident (uber-db's embeddinggemma:300m, claude-nexus's mxbai-embed-large, llama-swap's phi-4-mini, etc.), not duplicate instances. Saturation stems from multiple concurrent sessions maintaining different tool models simultaneously, not uber-db spawning duplicates."
+      },
+      {
+        "id": "fa9dc114c518d3a9",
+        "title": "GPU oversubscription from concurrent independent LLMs",
+        "body": "Incident: Multiple independent tools (Ollama, llama-swap, separate prefix-generation tool) load/unload models on shared 16GB GPU based on independent keep_alive TTLs. Concurrent Claude Code sessions cause simultaneous model residence (~95% VRAM), degrading throughput (2.27 tokens/sec observed), timing out requests even with 120s timeout. Per-tool keep_alive lacks cross-tool VRAM budget coordination."
+      }
+    ]
+  },
+  {
+    "id": "57bb24bfda4333a7",
+    "project": "C--Fran-LLM-Workflow-Optimization",
+    "title": "AskUserQuestion unavailable in Agent subagents; fix via JSON verdict relay pattern",
+    "body": "Seven agents cannot call AskUserQuestion despite it being in their specs: design-brainstormer, flow-debug-investigator:intake, flow-research-detective:*-agent, flow-initialize-project:intake/finalize/scaffold, flow-shared:document-critic, flow-shared:smart-implementer, flow-unity-lean-feature:lean-planner. Root cause: Claude Code runtime strips AskUserQuestion from all Agent-tool subagents because the SDK does not expose this tool to spawned agents; cannot be fixed in code and requires architectural pattern change. Checkpoints in flow-spec-test-driven-development/execute.md were designed to use AskUserQuestion for decision gates (run/skip/abort, stale-state, out-of-scope, per-task/level, Gemini blockers) but are non-functional because subagents cannot invoke AskUserQuestion. False claim at execute.md:95 stating implementer has AskUserQuestion available must be deleted, not reworded. Decided fix: Agent returns JSON verdict to parent orchestrator; parent (main session) calls AskUserQuestion interactively, collects answer, and resumes agent via SendMessage with response. Pattern aligns with ADR-021 split: interactive design and user gates remain in main session, execution logic isolates to subagent. Checkpoint logic and gate types unchanged; only communication layer and tool routing change.",
+    "created_at": "2026-07-28 02:37:42",
+    "folded": 3,
+    "lostIdentifiers": [
+      "needs-decision.md"
+    ],
+    "identifierLossRate": 0.091,
+    "minCosine": 0.789,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "b777856f6f5dacf6",
+        "title": "AskUserQuestion defect spans 7 agents",
+        "body": "Fleet-level issue: 7 agents list AskUserQuestion in specs but cannot call it (design-brainstormer, flow-debug-investigator:intake, flow-research-detective:*-agent, flow-initialize-project:intake/finalize/scaffold, flow-shared:document-critic, flow-shared:smart-implementer, flow-unity-lean-feature:lean-planner). Scope question: fix isolated to execute.md or systematic fleet redesign?"
+      },
+      {
+        "id": "2cf978cb930bbcef",
+        "title": "AskUserQuestion stripped from Agent subagents",
+        "body": "Claude Code runtime removes AskUserQuestion from all Agent-tool subagents — root cause is SDK does not expose tool to spawned agents. Cannot be fixed in code; requires architectural pattern change. Use contract-based async approach instead (see needs-decision.md pattern)."
+      },
+      {
+        "id": "584a26846934a1c8",
+        "title": "execute.md checkpoint designs non-functional; fix via JSON+SendMessage relay to parent AskUserQuestion",
+        "body": "Checkpoint designs in flow-spec-test-driven-development/execute.md are structurally non-functional—they rely on AskUserQuestion calls for decision gates (run/skip/abort, stale-state, out-of-scope gate, per-task, per-level, Gemini blockers). Subagents, including execute.md (a smart-implementer child agent), cannot invoke AskUserQuestion. Execute.md:95 contains a false claim that the implementer has AskUserQuestion available; this instruction must be deleted, not reworded. Decided fix: replace AskUserQuestion checkpoints with a JSON verdict returned by the agent to the parent orchestrator (main session). Parent orchestrator calls AskUserQuestion interactively, collects the answer, and resumes the agent via SendMessage with the response. This pattern aligns with ADR-021 split: interactive design and user gates remain in main session, execution logic isolates to subagent. Checkpoint logic and gate types unchanged; only the communication layer and tool routing change."
+      }
+    ]
+  },
+  {
+    "id": "e49cf98b63706f67",
+    "project": "C--Fran-Voodoo-Magic",
+    "title": "Addressables Architecture: Local Localization, Remote Skins, Configuration, and R2 Deployment",
+    "body": "Addressables asset delivery splits Local (Localization bundles, boot-critical ~2KB per language, shipped with client in Library/…/aa/[Platform]/, excluded from R2) from Remote (Skins bundles, swappable LiveOps ~575KB, hosted at https://voodoo-cdn.francolarich.com/[BuildTarget]/). StreamingAssets/ and AddressableAssetsData/ must remain at Assets/ root (not under RR.VoodooMagic/); moving breaks Application.streamingAssetsPath's fixed location and LocalEventSource dependency. Configuration uses AppConfig_Local (empty baseUrl) for local testing and AppConfig_Remote (baseUrl: https://voodoo-api.francolarich.com) for server-authoritative mode, controlled by Boot scene's BootLoader.appConfig field; AppConfig_Remote enables /levelup and /time endpoints. For offline events, Addressables groups like 'Default Local Group' require Build & Load Paths set to Local; Skins event asset group currently uses Local but will migrate to Remote for CDN. Application.streamingAssetsPath returns URL (http:// or jar:file://) on WebGL/Android and filesystem path on desktop/editor; code must check for :// before prepending file:// for cross-platform access. WebGL serves StreamingAssets over HTTP; System.IO.File.ReadAllText fails there, requiring UnityWebRequest with URI scheme normalization (file:// for desktop, HTTP for WebGL/Android). Build workflow: set active build target via File → Build Profiles or Build Settings, switch Unity platform for each target (StandaloneWindows64, StandaloneOSX, Android, iOS), then run Addressables → Groups → Build → New Build to generate aa/<platform>/ and ServerData/[BuildTarget]/ artifacts. Upload to R2 via worker/upload-r2.ps1 with -BuildTarget parameter; verify by curling https://voodoo-cdn.francolarich.com/[BuildTarget]/catalog.json; enable 'Build Remote Catalog' in Addressables → Settings (AddressableAssetSettings.asset: m_BuildRemoteCatalog = 1), then configure Local.LoadPath={Addressables.RuntimePath}/[BuildTarget], Remote.LoadPath=https://voodoo-cdn.francolarich.com/[BuildTarget], and for Voodoo Magic set Local.BuildPath=[Addressables.BuildPath]/[BuildTarget] and Remote.BuildPath=ServerData/[BuildTarget]. m_RemoteCatalogBuildPath and m_RemoteCatalogLoadPath must reference distinct profile variable IDs (not Remote.BuildPath/LoadPath) to avoid conflicts; verify CDN hostname resolution before remote catalog loads; beware stale JSON catalogs (e.g., catalog_0.1.0.json) with outdated hashes (e.g., 15fd… vs 85ce…) on R2, which cause reactivation hazards if 'Enable JSON Catalog' is re-enabled.",
+    "created_at": "2026-07-28 02:48:13",
+    "folded": 3,
+    "lostIdentifiers": [
+      "AssetBundle",
+      "AssetBundles",
+      "Remote.BuildPath/RemoteLoadPath",
+      "RemoteLoadPath"
+    ],
+    "identifierLossRate": 0.083,
+    "minCosine": 0.821,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "2906edde39be4d61",
+        "title": "Unity Asset Streaming and Addressables Configuration",
+        "body": "StreamingAssets/ and AddressableAssetsData/ must reside at Assets/. Moving them under RR.VoodooMagic/ breaks functionality due to Application.streamingAssetsPath's fixed location and LocalEventSource dependency. For fully offline events, Addressables groups like 'Default Local Group' require Build & Load Paths set to Local. Application.streamingAssetsPath returns a URL (http://... or jar:file://...) on WebGL and Android; it’s a filesystem path on desktop/editor. Code accessing StreamingAssets must verify if Application.streamingAssetsPath contains :// before prepending file:// for cross-platform access. The Skins event asset group uses Local build paths (BuildPath=Local.BuildPath, LoadPath=Local.LoadPath) and will require migration to Remote paths for LiveOps CDN integration. WebGL builds serve StreamingAssets over HTTP; System.IO.File.ReadAllText fails, requiring UnityWebRequest with URI scheme normalization (file:// for desktop, HTTP for WebGL/Android). Addressables groups enable R2 functionality without remote dependencies."
+      },
+      {
+        "id": "b592e1caf3d6a829",
+        "title": "AssetBundle & Configuration Strategy",
+        "body": "Skins AssetBundles are built for Remote delivery (ServerData/StandaloneWindows64, hosted at https://voodoo-cdn.francolarich.com/StandaloneWindows64), while Localization bundles remain Local and ship directly with the client; they reside in Library/…/aa/[Platform]/ and are excluded from R2 uploads. Localization is boot-critical (~2KB per language) to ensure cold-start UI rendering and offline functionality, whereas Skins are swappable LiveOps content (~575KB) that can tolerate graceful failure. Application configuration uses AppConfig_Local (empty baseUrl) for local testing and AppConfig_Remote (baseUrl: https://voodoo-api.francolarich.com) for server-authoritative operation, controlled by the Boot scene's BootLoader.appConfig field. Setting BootLoader.appConfig to AppConfig_Remote enables server-authoritative progression paths and access to /levelup and /time endpoints."
+      },
+      {
+        "id": "c18799fca4fc0bb0",
+        "title": "Addressables Build Workflow: Platform-Specific Build, Configuration, and Deployment to R2",
+        "body": "Before building Addressables, set Editor's active build target via File → Build Profiles or Build Settings; skipping this step creates empty platform folders. For each target platform (StandaloneWindows64, StandaloneOSX, Android, iOS), switch Unity's active platform, then run Addressables → Groups → Build → New Build, which creates platform-specific aa/<platform>/ directories and ServerData/[BuildTarget]/ artifacts. Upload built assets to R2 using worker/upload-r2.ps1 with the -BuildTarget parameter, then verify deployment by curl-ing https://voodoo-cdn.francolarich.com/[BuildTarget]/catalog.json. Configure remote catalog loading by enabling 'Build Remote Catalog' in Addressables → Settings (AddressableAssetSettings.asset: m_BuildRemoteCatalog = 1), then set Local.LoadPath={Addressables.RuntimePath}/[BuildTarget] and Remote.LoadPath=https://voodoo-cdn.francolarich.com/[BuildTarget]; for Voodoo Magic profiles additionally set Local.BuildPath=[Addressables.BuildPath]/[BuildTarget] and Remote.BuildPath=ServerData/[BuildTarget]. m_RemoteCatalogBuildPath and m_RemoteCatalogLoadPath must reference profile variable IDs distinct from Remote.BuildPath/RemoteLoadPath to avoid conflicts. Verify CDN hostname resolution before remote catalog loads; beware of stale JSON catalogs (e.g., catalog_0.1.0.json) with outdated bundle hashes (e.g., 15fd… vs current 85ce…) left on R2, which can cause reactivation hazards if 'Enable JSON Catalog' is re-enabled, triggering requests for missing or outdated bundles."
+      }
+    ]
+  },
+  {
+    "id": "119dd8eed244274e",
+    "project": "C--Fran-IntoTheEndlessSea",
+    "title": "DOTS Best Practices: Sunsetted vs. Authoritative Structure",
+    "body": "The old workflow consulting Documents/DOTS-best-practices.md for design/implementation/review is sunsetted; the authoritative reference is now Documents/DOTS/INDEX.md (tracking recommendations across eight sub-documents: 01-memory.md through 08-entity-interactions.md, with 25+ Unity documentation links). Consult INDEX.md before writing ECS code. Before proceeding from TDD design to architect phase with DOTS/ECS content, review INDEX.md to prevent violations like unmanaged SO refs in singletons or system ordering problems. Key patterns: job-emits-descriptors using native containers (NativeHashMap, NativeHashSet) for Burst; [BurstCompile] essential (prevents ~25x slowdown: 7.68ms→0.3ms); NativeArray lacks LINQ, use direct indexing; DOTS Plus (Packages/com.projectdawn.dotsplus) for MonoBehaviour/ECS interop via World readiness guards, EntityQuery lifecycle, ToComponentDataArray; CompoundColliderRebuildSystem optimized 75ms→20-25ms; selective SOA for SIMD-heavy paths, AOS elsewhere. Sunsetted files: Documents/DOTS-best-practices.md and Documents/DOTS-performance-reference.md. New workflow: code changes generate entries in project-specific application notes (Documents/_documents/DOTS/ sub-files) and cross-project Knowledge Base files (Knowledge/performance.md as BP-performance-NNN). Application Status table in INDEX.md links pattern discovery to sub-files for index integrity; append additions to preserve historical context.",
+    "created_at": "2026-07-28 02:59:31",
+    "folded": 2,
+    "lostIdentifiers": [
+      "NN-topic.md",
+      "_sources.md",
+      "VFX"
+    ],
+    "identifierLossRate": 0.081,
+    "minCosine": 0.818,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "54a39c7b80deffa7",
+        "title": "DOTS Best Practices & Documentation Workflow",
+        "body": "The authoritative DOTS best practices reference is at `Documents/DOTS/INDEX.md`, tracking recommendations across eight sub-documents (memory, jobs, Burst, architecture, profiling, VFX, blobs, entity interactions) with 25+ Unity documentation links. Key patterns include job-emits-descriptors using native containers (NativeHashMap, NativeHashSet) for Burst computation; a CompoundColliderRebuildSystem optimization improved from 75ms to 20-25ms. [BurstCompile] is essential, avoiding up to 25x slowdown (~7.68ms vs ~0.3ms), and native containers are mandatory for Jobs/Burst; NativeArray lacks LINQ support, necessitating direct indexing. DOTS documentation resides in `Documents/DOTS/` with a three-tier structure: `INDEX.md`, topic sub-documents named `NN-topic.md`, and `_sources.md`. Entries in the Application Status table within INDEX.md link pattern discovery to its sub-file (e.g., `01-memory.md` through `08-entity-interactions.md`) for index integrity, which agents initially load for context. Conventions dictate consulting INDEX before ECS coding, adopting DOTS Plus (`Packages/com.projectdawn.dotsplus`) for MonoBehaviour/ECS interop via World readiness guards, EntityQuery lifecycle management, and ToComponentDataArray polling, and applying selective SOA layout to SIMD-heavy paths while using AOS elsewhere. Code changes generate entries in project-specific application notes within `Documents/_documents/DOTS/` sub-files (e.g., `03-burst-simd.md`) and cross-project Knowledge Base files (e.g., `Knowledge/performance.md` as BP-performance-NNN).  `Documents/DOTS-best-practices.md` and `Documents/DOTS-performance-reference.md` are sunsetted."
+      },
+      {
+        "id": "268558ccdae975a4",
+        "title": "DOTS Best Practices Consultation & Maintenance",
+        "body": "The DOTS-best-practices.md file (Documents/DOTS-best-practices.md) should be consulted during design to prevent architectural mistakes, implementation for code correctness, and review to identify violations; this expands on the previous scope of 'before writing'.  Before proceeding from the TDD design phase to the architect phase when DOTS/ECS content is produced, consult Documents/DOTS-best-practices.md to avoid violating project conventions and catch issues like unmanaged SO refs in singletons or system ordering problems. When adding new DOTS patterns or gotchas to DOTS-best-practices.md, append to existing sections instead of rewriting to preserve historical context and design rationale.  Each addition must include an entry in the Application Status table to track implementation status."
+      }
+    ]
+  },
+  {
+    "id": "33cf6c06d0b11de6",
+    "project": "C--Fran-IntoTheEndlessSea",
+    "title": "POCO serialization with ES3: asset refs via strings, deep copies via JSON",
+    "body": "PlayerProgressData is a serializable POCO persisted via ES3 without requiring dedicated ScriptableObject files; the Prerequisites field safely persists integer, string, and path-string data. Author-time graph edges represent the appropriate departure point from the path-string/id-registry pattern for SO references. For deep copies of [Serializable] POCOs (e.g., PlayerLoadoutData), use JsonUtility.ToJson + FromJson instead of reflection—cheaper and prevents managed heap fragmentation; employ TakeSnapshot() on open, RestoreSnapshot() on cancel. When using ES3 or similar third-party serialization, store asset references in POCOs as string paths or GUIDs rather than direct SO references, enabling clean save/load round-trips with runtime resolution back to SOs and avoiding serialization fragility.",
+    "created_at": "2026-07-28 03:00:06",
+    "folded": 3,
+    "lostIdentifiers": [
+      "PlayerLoadoutManager"
+    ],
+    "identifierLossRate": 0.077,
+    "minCosine": 0.803,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "072a87c848816c3b",
+        "title": "Asset paths in POCO for third-party serialization",
+        "body": "When using ES3 or similar third-party serialization tools, store asset references in POCO classes as `string` paths or GUIDs instead of direct SO references. This enables clean save/load round-trips; deserialized objects then resolve paths back to SOs at runtime. Avoids serialization fragility."
+      },
+      {
+        "id": "97c0c5b950c3a546",
+        "title": "Deep-copy serializable POCOs via JSON round-trip",
+        "body": "For snapshot/restore patterns on [Serializable] POCOs (e.g., PlayerLoadoutData), use JsonUtility.ToJson + FromJson to create deep copies. This is cheaper than reflection and avoids managed heap fragmentation. Use in cancel flows: TakeSnapshot() on open, RestoreSnapshot() on cancel."
+      },
+      {
+        "id": "7a2bf69324da24e3",
+        "title": "PlayerProgressData Persistence and SO References",
+        "body": "PlayerProgressData is a serializable POCO persisted via ES3, automatically saved and loaded without requiring a dedicated ScriptableObject (SO) file; previous documentation incorrectly indicated an SO was necessary. The Prerequisites field in PlayerLoadoutManager POCOs safely persists integer, string, and path-string data using ES3 serialization, avoiding raw SO references. Author-time graph edges represent the appropriate departure point from the path-string/id-registry pattern for SO references."
+      }
+    ]
+  },
+  {
+    "id": "77fdebbf813e3705",
+    "project": "C--Fran-LLM-Workflow-Optimization",
+    "title": "OTel tool logging: lightweight details vs. heavy full-I/O content",
+    "body": "OTEL_LOG_TOOL_DETAILS=1 captures lightweight data: tool input (command/paths/args), command name (slash-command/skill), subagent type. OTEL_LOG_TOOL_CONTENT=1 adds tool.output event with full I/O bodies (≤60KB/span), configured in ~/.claude/settings.json, driving significant storage bloat on ClickHouse (162MB observed in spans.jsonl). OTEL_LOG_TOOL_CONTENT should default off or enable only for debug sessions, aligning with ADR-061's on-demand vs always-on principle and reducing steady-state noise. OTel export lacks session.name attribute, requiring name-resolution scripts (e.g., Langfuse) to read ~/.claude/projects transcripts and extract opening prompt text; no 'title' field stored in OTel sessions due to structural limitation.",
+    "created_at": "2026-07-28 03:06:22",
+    "folded": 2,
+    "lostIdentifiers": [
+      "OpenTelemetry"
+    ],
+    "identifierLossRate": 0.067,
+    "minCosine": 0.868,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "ddcf63debeedd5ed",
+        "title": "OTel Tool Logging Configuration & Limitations",
+        "body": "The `OTEL_LOG_TOOL_DETAILS=1` flag captures tool input (command/paths/args), command name (slash-command/skill), and subagent type; enabling `OTEL_LOG_TOOL_CONTENT=1` adds a `tool.output` event with full input/output bodies, limited to ≤60KB, and is configured in `~/.claude/settings.json`.  Using `OTEL_LOG_TOOL_CONTENT=1` results in significant storage growth on ClickHouse due to writing full file contents and command outputs; consider using only `OTEL_LOG_TOOL_DETAILS=1` for a lighter alternative if storage becomes an issue. The OpenTelemetry export lacks a `session.name` attribute, requiring name-resolution scripts (including Langfuse) to read local `~/.claude/projects` transcripts and extract the opening prompt text. There is no stored 'title' field within OTel sessions due to a structural limitation that cannot be configured."
+      },
+      {
+        "id": "ee5674027320e8ea",
+        "title": "Tool content logging should be debug-scoped",
+        "body": "OTEL_LOG_TOOL_CONTENT=1 captures full I/O bodies (up to 60KB/span), driving storage bloat (162MB observed in spans.jsonl). Content is rarely queried in practice. Should default off or enable only for debug sessions, aligning with ADR-061's on-demand vs always-on principle. Reduces noise in steady-state deployments."
+      }
+    ]
+  },
+  {
+    "id": "b1147b57c5df99a1",
+    "project": "C--Fran-IntoTheEndlessSea",
+    "title": "DD2D_AlphaMaskComponent: Data Migration Done, Struct Conversion and Writer Wiring Remain",
+    "body": "DD2D_AlphaMaskComponent data migration to IComponentData is complete; misconceptions claiming 'P7 not done' refer to remaining struct conversion tasks (13 across 11 source files + 1 test documented in docs/plans/2026-06-19-dd2d-alpha-mask-unmanaged-struct.md). Current blocker: SpriteRenderingSystem.PhaseA and AlphaInitializationSystem don't call AddComponentObject, leaving readers dependent on the static GLOBAL_ALPHA_MASKS dict in DD2D_GlobalDataManager. Completion requires wiring both writers, removing reader fallbacks, migrating cleanup (RemoveGlobalAlphaMasks(id) disposes via masks.Dispose()), deleting the static dict API, and rewriting tests. Key API changes: GetComponentObject→GetComponentData, NativeArray<uint4>→UnsafeList<uint4>, GetUnsafePtr()→.Ptr in critical files DD2D_ECSComponents.cs, DD2D_PaintCommandBufferSystem.cs (remove fence at line 200, update comment at line 197), and DD2D_AlphaInitializationSystem.cs. Component uses unmanaged blittable UnsafeList<uint4> for job safety, accessed via ComponentLookup<DD2D_AlphaMaskComponent> with ReadOnly/ReadWrite markers and EntityManager.GetComponentObject<DD2D_AlphaMaskComponent>(entity), resolving the CompleteAllJobs() dependency via ECS singleton (P7).",
+    "created_at": "2026-07-28 03:02:30",
+    "folded": 2,
+    "lostIdentifiers": [
+      "The static dictionary in",
+      "013"
+    ],
+    "identifierLossRate": 0.049,
+    "minCosine": 0.922,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "c01f40a4d7b18843",
+        "title": "DD2D Alpha Mask Migration Complete",
+        "body": "Task-013 created DD2D_AlphaMaskComponent infrastructure; SpriteRenderingSystem.PhaseA and AlphaInitializationSystem writers failed to call AddComponentObject, causing readers to use the static GLOBAL_ALPHA_MASKS dict. Completion requires wiring both writers, removing reader fallbacks, migrating cleanup, deleting the static dict API, and rewriting tests. `RemoveGlobalAlphaMasks(id)` disposes NativeArray via `masks.Dispose()`. GlobalAlphaMasks were stored in a static dictionary within `DD2D_GlobalDataManager`, preventing job dependency tracking and requiring `CompleteAllJobs()` in `PaintCommandBufferSystem` (resolution planned via ECS singleton P7). DD2D_AlphaMaskComponent uses an unmanaged blittable struct (`UnsafeList<uint4>`) for ECS job safety, eliminating the fence at line 200 of `DD2D_PaintCommandBufferSystem`, and is accessed via `ComponentLookup<DD2D_AlphaMaskComponent>` with ReadOnly/ReadWrite markers using `EntityManager.GetComponentObject<DD2D_AlphaMaskComponent>(entity)`. The static dictionary in `DD2D_GlobalDataManager` is obsolete, requiring an update to the comment at line 197 of `PaintCommandBufferSystem`; alpha masks are exclusively owned by each `DD2D_AlphaMaskComponent` on an entity."
+      },
+      {
+        "id": "304e8df5eb059af6",
+        "title": "DD2D_AlphaMaskComponent Struct Conversion and Data Migration",
+        "body": "The DD2D_AlphaMaskComponent, initially split into data migration and struct conversion phases (P7), has completed the data migration to an IComponentData class; the remaining struct conversion to enable ECS safety tracking is not yet complete. The struct conversion plan details 13 mechanical tasks across 11 source files and one test file update, including replacing GetComponentObject→GetComponentData and NativeArray<uint4>→UnsafeList<uint4>, and GetUnsafePtr()→.Ptr. Critical files for the conversion include DD2D_ECSComponents.cs (component redefinition), DD2D_PaintCommandBufferSystem.cs (main consumer), and DD2D_AlphaInitializationSystem.cs (producer). The plan is documented in docs/plans/2026-06-19-dd2d-alpha-mask-unmanaged-struct.md, outlining the necessary changes across these files. Many mistakenly assume 'P7 not done' indicates incomplete data migration; clarification confirms the component exists as an IComponentData class."
+      }
+    ]
+  },
+  {
+    "id": "3082f5e23d6d5b23",
+    "project": "C--Fran-Automatic-Encyclopedias",
+    "title": "Agent Wave Batching Pattern & Analyze-enc Workflow",
+    "body": "For large numbers of similar agent tasks, batch into waves of approximately 20 agents per wave, spawning all concurrently in a single assistant message; each wave phase acts as a barrier requiring completion before the next phase begins. Analyze-enc agents operate within this pattern, writing analyzed batch results to pipeline/<enc>/analyzed-batches/<slug>/topics-NNN.json (initially misdirected to book-batches/ requiring correction); re-analysis necessitates deleting the entire pipeline/*/analyzed-batches/<book>/ directory because agents cannot overwrite existing files when written=false. Each analyze-enc agent reads the haiku_extraction_prompt from pipeline/<enc_slug>/config.json and receives prompts templated with BOOK_SLUG, BOOK_TITLE, BOOK_CODE, BATCH_INDEX, ENC_SLUG, CHAPTER_PATH, OUTPUT_PATH, PROJECT_ROOT, and FLOW_VERSION; output is written only if extracted topics are non-empty. Offset-based reads of analyze-items.json determine the next batch between waves, enabling deterministic resumption; analyze-enc leaf agents are reliable when spawned directly from top level, bypassing blocked orchestrators that lack Agent in their subagent tool allowlist. Following analyze-enc completion, the post-analyze sequence involves: verify-analyze per book with retry on missing_expected → write pipeline-result.json per book → consolidate per (book, enc) pair → merge serial by book_slug alphabetically with review-decision.json → finalize per unique enc → write batch-final-report.json → deactivate flow with --clear. Avoid narrative text in Agent tool calls; nested flow orchestrators require Agent added to subagent tools list in flow.yaml, or leaf agents must be spawned directly from top level to avoid orchestrator blockage.",
+    "created_at": "2026-07-28 02:51:43",
+    "folded": 2,
+    "lostIdentifiers": [
+      "Agent({"
+    ],
+    "identifierLossRate": 0.043,
+    "minCosine": 0.831,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "0a9be9db12d3ad10",
+        "title": "Analyze-enc Agent Operation and Workflow",
+        "body": "Analyze-enc agents write analyzed batch results to pipeline/<enc>/analyzed-batches/<slug>/topics-NNN.json, initially misdirected to book-batches/ requiring correction; re-analysis necessitates deleting the entire pipeline/*/analyzed-batches/<book>/ directory because the agent cannot overwrite existing files when written=false. Agents receive prompts templated with BOOK_SLUG, BOOK_TITLE, BOOK_CODE, BATCH_INDEX, ENC_SLUG, CHAPTER_PATH, OUTPUT_PATH, PROJECT_ROOT, and FLOW_VERSION placeholders, using the haiku_extraction_prompt read from pipeline/<enc_slug>/config.json to process chapter text; output is written to OUTPUT_PATH only if extracted topics are non-empty. Waves spawn approximately 20 analyze-enc agents concurrently, each processing one (encyclopedia, chapter_batch) pair independently, and agents read the haiku_extraction_prompt from pipeline/<enc_slug>/config.json during execution; offset-based reads of analyze-items.json determine the next batch between waves. Analyze-enc leaf agents are reliable when spawned directly from the top level, bypassing blocked orchestrators, as demonstrated by 26 parallel agents successfully extracting 46 game-design topics. The analyze phase spawns agents in waves of ~20 items to manage concurrency with respect to agent limits, completing each wave before starting the next. Nested flow orchestrators are blocked if their subagent tool allowlist lacks Agent; adding Agent to the analyze subagent's tools list in flow.yaml or spawning leaf agents directly from the top level resolves this issue. Following completion of all analyze-enc items, the post-analyze phase sequence involves: (1) verify-analyze per book with retry on missing_expected; (2) write pipeline-result.json per book; (3) consolidate per touched (book, enc) pair; (4) merge serial by book_slug alphabetically with review-decision.json per book; (5) finalize per unique enc; (6) write batch-final-report.json; and (7) deactivate the flow with --clear."
+      },
+      {
+        "id": "7b3d7a7c91bfb2a6",
+        "title": "Wave-based Agent Processing Pattern & Discipline",
+        "body": "For large numbers of similar agent tasks, batch them into waves of approximately 20 agents per wave to balance throughput and resource utilization for streaming workflows; spawn all agents within a wave concurrently in a single assistant message using `Agent({...})` calls. The harness queues any excess agent calls beyond the ~20 limit per wave. Each phase acts as a barrier, requiring completion of all agents across all waves before proceeding to the next phase. This pattern avoids narrative text for Agent tool calls and ensures proper queuing."
+      }
+    ]
+  },
+  {
+    "id": "351ff8933077da20",
+    "project": null,
+    "title": "Claude Code Telemetry: OpenTelemetry Integration and Session Tracking",
+    "body": "Claude Code exports metrics, logs, and beta traces via native OpenTelemetry on gRPC port 4317 (default) and HTTP port 4318; enable tracing with OTEL_SDK_DISABLED_TRACES=false and configure the endpoint via OTEL_EXPORTER_OTLP_ENDPOINT (e.g., http://localhost:4318) and OTEL_EXPORTER_OTLP_PROTOCOL. Metrics are enabled by default via CLAUDE_CODE_ENABLE_TELEMETRY=1 (no token cost), filterable with OTEL_METRICS_INCLUDE; per-request data includes model name, input/output/cache tokens, USD cost, and stop_reason, sent by post-flow-export.py to localhost:4318. Sessions are identified by session.id (UUID) exported in telemetry; semantic session titles are LLM-generated summaries visible in the application but not stored in session-metadata.db or ~/.claude/cache, and human-readable prompt text is not included without detailed-beta tracing. The opening prompt from on-disk transcripts serves as a practical lookup handle via whose-session.ps1. Telemetry environment variables (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS) are read at Claude Code startup and are static—sessions started before configuration lack telemetry, so Claude Code must be restarted after env var setup. Infrastructure cost is minimal: a self-hosted OTLP collector (Docker container, can be free).",
+    "created_at": "2026-07-28 02:54:02",
+    "folded": 2,
+    "lostIdentifiers": [
+      "first_user_message"
+    ],
+    "identifierLossRate": 0.043,
+    "minCosine": 0.889,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "ae8672be1c02e84a",
+        "title": "Claude Code Session Identification and Telemetry",
+        "body": "Claude Code exports session.id (a UUID) in telemetry; human-readable session names or prompt text are not included without detailed-beta tracing. The opening prompt from on-disk transcripts serves as a practical handle for human lookup, utilized by whose-session.ps1 and opening-prompt inspection. Claude Code generates semantic session titles like 'Flow status Tracking with Kanban boards' (LLM-generated summaries, not truncations of first_user_message); these are visible in the application but not stored in session-metadata.db or ~/.claude/cache. Telemetry environment variables (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS) are read at Claude Code's startup and are static; sessions started before configuration lack telemetry. Restart Claude Code after configuring these environment variables to ensure observability."
+      },
+      {
+        "id": "e9c2777fe7031224",
+        "title": "Claude Code OpenTelemetry Integration",
+        "body": "Claude Code includes native OpenTelemetry support for metrics, logs, and beta traces; enable tracing with `OTEL_SDK_DISABLED_TRACES=false`. Metrics are enabled by default via `CLAUDE_CODE_ENABLE_TELEMETRY=1` without incurring token costs or additional calls. Claude Code exports OTLP data on gRPC port 4317 (default) and HTTP port 4318, configurable with `OTEL_EXPORTER_OTLP_ENDPOINT` (e.g., `http://localhost:4318`) and `OTEL_EXPORTER_OTLP_PROTOCOL`. Per-request attribution includes model name, input/output/cache tokens, cost in USD, and `stop_reason`. The existing `post-flow-export.py` script is designed to send data to localhost:4318.  The only infrastructure cost is a self-hosted OTel collector (Docker container can be free). Metrics include via `OTEL_METRICS_INCLUDE`."
+      }
+    ]
+  },
+  {
+    "id": "48ddaea6fac51ece",
+    "project": "C--Fran-LLM-Workflow-Optimization",
+    "title": "Langfuse Score Attachment and Hook Guarding Convention",
+    "body": "Session IDs from Claude Code (session.id) are used as Langfuse trace IDs when calling `Langfuse.create_score()` via `/api/public/scores` with a 3-second timeout; trace ID retrieval uses GET `/api/public/traces?sessionId={session_id}&limit=1` and observation queries use GET `/api/public/observations?traceId={id}&limit=100`. Scoring utilities like `langfuse_scorer.py` (function `post_score(session_id, name, value, data_type, comment)`) must not raise exceptions or block hook execution, silently failing on I/O errors or missing traces; authentication uses `LANGFUSE_OTEL_AUTH` or `observability/.env`. Flow hooks (`bash-safety_triggered`, `tool_out_of_allowlist`, `rumination_detected`, `schema_valid`, `cache_hit_ratio`) for VALIDATORS agents (reviewer, feature-reviewer, complexity-classifier) are wrapped in try/except blocks with 3s timeout for fire-and-forget behavior. Hook guarding classifies pure-safety hooks (bash-safety, webfetch, self-loop) as always unguarded; flow-scoped validators (stop-schema-validate, stop-rumination-check) use `is_hook_active()` guards relying on `flow-state-write.py`, returning False when flow state is unset to disable guards; global hooks are in `flow-shared/hooks/hooks.json` per ADR-029. Generic advisories (compression, retrieval) remain unguarded; observe-mode hooks post only on violations (value=1) with absence of score indicating clean execution. Verification occurs via the Langfuse UI (authoritative for field paths) with initial runs logging raw observation JSON to stderr for path verification before cache calculation.",
+    "created_at": "2026-07-28 03:04:18",
+    "folded": 2,
+    "lostIdentifiers": [
+      "OTLP"
+    ],
+    "identifierLossRate": 0.033,
+    "minCosine": 0.882,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "b4df99dfbcaa838d",
+        "title": "Langfuse Score Attachment Convention",
+        "body": "Session IDs from Claude Code (session.id) are directly used as Langfuse trace IDs when calling `Langfuse.create_score()` to link scores with existing OTLP traces; scoring utilities like `langfuse_scorer.py` must not raise exceptions or block hook execution, and should silently fail on I/O errors. To retrieve a trace ID, use the GET endpoint `/api/public/traces?sessionId={session_id}&limit=1`; scores are posted to `/api/public/scores` with a 3-second timeout; if a trace is missing, the score posting should silently fail. Observation queries utilize the GET endpoint `/api/public/observations?traceId={id}&limit=100`."
+      },
+      {
+        "id": "e6d8ffedc88f584d",
+        "title": "Langfuse Hook Scoring and Guarding Conventions",
+        "body": "Flow hooks (`bash-safety_triggered`, `tool_out_of_allowlist`, `rumination_detected`, `schema_valid` for VALIDATORS agents: reviewer, feature-reviewer, complexity-classifier, `cache_hit_ratio`) use `langfuse_scorer.py`'s `post_score(session_id, name, value, data_type, comment)` to post signals to Langfuse; authentication uses `LANGFUSE_OTEL_AUTH` or `observability/.env`. Hooks are wrapped in try/except blocks with a 3s timeout for fire-and-forget behavior. Observe-mode hooks post only on violations (value=1); absence of a score indicates clean execution. Hook guarding categorizes pure-safety hooks (bash-safety, webfetch, self-loop) as always running unguarded; flow-scoped validators (stop-schema-validate, stop-rumination-check) use `is_hook_active()` guards relying on `flow-state-write.py` for active state; global hooks are in `flow-shared/hooks/hooks.json` per ADR-029. `is_hook_active()` returns False when the flow state is unset, disabling guards. Generic advisories (compression, retrieval) remain unguarded. Scoring guards post contextually to prevent noise; for example, `schema_valid` posts only on error. Verification occurs manually via the Langfuse UI, which remains authoritative for field paths; initial runs log raw observation JSON to stderr for path verification before cache calculation."
+      }
+    ]
+  },
+  {
+    "id": "2519fcf85463cefd",
+    "project": "C--Fran-Voodoo-Magic",
+    "title": "Voodoo Magic Event Archetypes, MVC Architecture, and Lifecycle Design",
+    "body": "Card events (minLevel 5) are persistent STARS and TOWER Tarot archetypes; Banner events are transient ZODIAC and a fourth Tarot archetype—all four required. EventPresentation enum flag selects archetype type (defaults Card if missing/unknown during EventDefinition parsing); EventHudView.CreateView routes via PopupController by presentation value: IEventView for cards, IPopupView for banners. MVC architecture uses pure C# Models, EventController/PopupController for business logic, dumb Views implementing IEventView/IPopupView; state machine Loading→Active→Finished is time-gated by endUtc only with no startUtc field (ADR-009). Events use fire-and-forget notifications (LevelChanged, EventUnlocked); direct injection handles stateful interactions like CardFlipPresenter's CaptureSource→PlayOpen→PlayClose handshake; EventController publishes EventUnlocked independently while PopupController, UnlockSequencer, and HudController react without coupling. EventCardContent binds both archetypes with no-op setters for null TMP slots; IEventCardContent interface lets layouts wire fields with alternate implementations, avoiding code duplication across banner pairs. Stateful logic resides in Controllers; Milestones appear for non-expired events; events appear in level menu only when Active; expired/completed events labeled \"Finished\" (DDR-001, DDR-003, DDR-009) not \"Expired\"—Views inherit controller logic via interface implementation.",
+    "created_at": "2026-07-28 02:47:03",
+    "folded": 2,
+    "lostIdentifiers": [
+      "MonoBehaviour"
+    ],
+    "identifierLossRate": 0.032,
+    "minCosine": 0.881,
+    "underRepresentedSource": null,
+    "reason": [],
+    "originals": [
+      {
+        "id": "85ce36f31376c28b",
+        "title": "Voodoo Magic Event Archetypes and Implementation",
+        "body": "Two display archetypes: Card (persistent, minLevel 5) = STARS; Banner (transient) = ZODIAC. Four Tarot events required: STARS, TOWER (Cards); ZODIAC, fourth event (Banners). EventPresentation enum flag selects type; defaults to Card if missing/unknown during EventDefinition parsing. EventHudView.CreateView routes via PopupController by presentation value: IEventView for cards, IPopupView for banners. State logic in controllers (interface-only dependencies); banner pairs inherit without duplication. EventCardContent binds both archetypes with no-op setters for null TMP slots. Layouts wire fields via IEventCardContent interface, enabling alternate implementations for banner-specific behavior."
+      },
+      {
+        "id": "506b90790c7064e1",
+        "title": "Event Lifecycle, UI Architecture & Naming Conventions",
+        "body": "Voodoo Magic's event system follows a simplified lifecycle with only Active (created and not expired) and Expired states, time-gated by endUtc only with no startUtc field (ADR-009). The MVC architecture uses pure C# Model classes, Controller classes (EventController, PopupController) managing business logic via a Loading→Active→Finished state machine, and dumb MonoBehaviour Views implementing IEventView or IPopupView interfaces for decoupling. Events are reserved for fire-and-forget notifications (LevelChanged, EventUnlocked), while direct injection handles stateful interactions like CardFlipPresenter's CaptureSource→PlayOpen→PlayClose handshake. EventController publishes EventUnlocked events independently reacted to by PopupController, UnlockSequencer, and HudController for state transitions, avoiding direct coupling. Milestones appear as level achievements for non-expired events; events appear in the level menu only when Active. All stateful logic (lifecycle, counters, expiry, burn/dismiss, localization) resides in Controllers; new Views inherit controller logic by implementing the appropriate interface. Expired or completed events display the label \"Finished\" (DDR-001, DDR-003, DDR-009), not \"Expired\" or variants—use this terminology throughout code, UI, and documentation."
+      }
+    ]
+  }
+]

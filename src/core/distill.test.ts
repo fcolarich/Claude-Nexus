@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDatabase, initializeSchema } from './database.js';
 import { insertMemory, embedMemory, type MemoryInput } from './memories.js';
-import { distillMemories, buildEligibleQuery, countEligible, resolveScope, type ResolvedScope } from './distill.js';
+import { distillMemories, buildEligibleQuery, countEligible, cursorClause, coverageShortfall, resolveScope, type ResolvedScope } from './distill.js';
 
 function freshDb() {
   const db = openDatabase(':memory:');
@@ -23,8 +23,12 @@ const vecC = unit([2, 1]);
 const fakeEmbed = (text: string): Promise<Float32Array | null> =>
   Promise.resolve(text.includes('ALPHA') ? vecA : text.includes('BETA') ? vecB : vecC);
 
+// Body carries ALPHA so the merge embeds to vecA — cosine 1.0 to an ALPHA source
+// and 0.78 to a BETA one, both clearing MERGE_COVERAGE_FLOOR. A markerless body
+// would embed to vecC, orthogonal to its own sources, and the coverage gate would
+// (rightly) reject it as a merge that abandoned everything it folded in.
 const fakeMerge = async () => JSON.stringify({
-  title: 'Merged rule', body: 'consolidated body', memory_type: 'convention',
+  title: 'Merged rule', body: 'ALPHA consolidated body', memory_type: 'convention',
   scope: 'project', decay_class: 'stable', tags: ['x'],
 });
 
@@ -149,6 +153,373 @@ describe('distillMemories — scoped/limited pool + accounting', () => {
     const r = await distillMemories(db, { limit: 0.5 }, fakeEmbed, fakeMerge);
     expect(r.processed).toBe(1);
     expect(r.eligibleRemaining).toBe(1);
+    db.close();
+  });
+});
+
+describe('distillMemories — sweep cursor across successive runs', () => {
+  // All bodies carry the GAMMA marker -> identical vectors -> similarity 1.0,
+  // above the related band. Nothing clusters, so these tests isolate the cursor.
+  const markedIds = (db: ReturnType<typeof freshDb>) =>
+    (db.prepare(`SELECT id FROM memories WHERE distilled_at IS NOT NULL ORDER BY id`).all() as { id: string }[]).map(r => r.id);
+
+  it('two successive runs with a limit smaller than the eligible pool examine disjoint candidate sets', async () => {
+    const db = freshDb();
+    // > SANITIZE_OVER_CHARS (800) so every candidate reaches the sanitize call,
+    // giving an independent record of what each run actually looked at.
+    for (let i = 0; i < 6; i++) {
+      insertMemory(db, { ...base, title: `C${i}`, body: `GAMMA c${i} `.repeat(100), project: 'proj-cursor' });
+    }
+
+    let seen: string[] = [];
+    const spyCall = async (_system: string, user: string) => {
+      seen.push(user);
+      return JSON.stringify({ title: 'Tight', body: 'tightened' });
+    };
+    const titlesSeen = () => new Set(seen.flatMap(u => u.match(/\bC\d\b/g) ?? []));
+
+    seen = [];
+    const r1 = await distillMemories(db, { project: 'proj-cursor', limit: 3 }, fakeEmbed, spyCall);
+    const first = titlesSeen();
+    const markedAfterFirst = markedIds(db);
+
+    seen = [];
+    const r2 = await distillMemories(db, { project: 'proj-cursor', limit: 3 }, fakeEmbed, spyCall);
+    const second = titlesSeen();
+
+    expect(r1.processed).toBe(3);
+    expect(r2.processed).toBe(3);
+    expect(first.size).toBe(3);
+    expect(second.size).toBe(3);
+    expect([...first].filter(t => second.has(t))).toEqual([]);  // disjoint
+    expect(new Set([...first, ...second]).size).toBe(6);        // together they cover the whole pool
+
+    // The cursor itself, not just the LLM traffic: run 2 marked 3 rows that run 1 had not.
+    expect(markedAfterFirst).toHaveLength(3);
+    expect(markedIds(db)).toHaveLength(6);
+    db.close();
+  });
+
+  it('eligibleRemaining decreases monotonically to 0 across a full sweep', async () => {
+    const db = freshDb();
+    for (let i = 0; i < 7; i++) {
+      insertMemory(db, { ...base, title: `S${i}`, body: `GAMMA sweep ${i}`, project: 'proj-sweep' });
+    }
+
+    const remaining: number[] = [];
+    let totalProcessed = 0;
+    for (let guard = 0; guard < 20; guard++) {
+      const r = await distillMemories(db, { project: 'proj-sweep', limit: 2 }, fakeEmbed, fakeMerge);
+      totalProcessed += r.processed;
+      remaining.push(r.eligibleRemaining);
+      if (r.eligibleRemaining === 0) break;
+    }
+
+    expect(remaining).toEqual([5, 3, 1, 0]);
+    for (let i = 1; i < remaining.length; i++) expect(remaining[i]).toBeLessThan(remaining[i - 1]);
+    expect(totalProcessed).toBe(7);  // every memory examined exactly once
+    db.close();
+  });
+
+  it('a fully swept scope stays at 0 on re-invocation, and `since` re-opens it', async () => {
+    const db = freshDb();
+    for (let i = 0; i < 3; i++) {
+      insertMemory(db, { ...base, title: `R${i}`, body: `GAMMA reopen ${i}`, project: 'proj-reopen' });
+    }
+
+    const swept = await distillMemories(db, { project: 'proj-reopen' }, fakeEmbed, fakeMerge);
+    expect(swept.processed).toBe(3);
+    expect(swept.eligibleRemaining).toBe(0);
+
+    let callCalls = 0;
+    const countingCall = async () => { callCalls++; return fakeMerge(); };
+    const noop = await distillMemories(db, { project: 'proj-reopen' }, fakeEmbed, countingCall);
+    expect(noop.processed).toBe(0);
+    expect(noop.eligibleRemaining).toBe(0);
+    expect(callCalls).toBe(0);  // no LLM spend once the scope is swept
+
+    // Backdate the cursor, then sweep again with a cutoff after it. The re-stamp
+    // uses "now", which is not < the cutoff, so the new sweep still terminates.
+    db.prepare(`UPDATE memories SET distilled_at = '2019-01-01 00:00:00' WHERE project = 'proj-reopen'`).run();
+    const reopened = await distillMemories(db, { project: 'proj-reopen', since: '2020-01-01 00:00:00' }, fakeEmbed, fakeMerge);
+    expect(reopened.processed).toBe(3);
+    expect(reopened.eligibleRemaining).toBe(0);
+    db.close();
+  });
+
+  it('the cursor advances even for candidates that produce no cluster (clusters == 0 is not a stop signal)', async () => {
+    const db = freshDb();
+    for (let i = 0; i < 4; i++) {
+      insertMemory(db, { ...base, title: `N${i}`, body: `GAMMA nocluster ${i}`, project: 'proj-nocluster' });
+    }
+
+    const r1 = await distillMemories(db, { project: 'proj-nocluster', limit: 2 }, fakeEmbed, fakeMerge);
+    expect(r1.clusters).toBe(0);
+    expect(r1.eligibleRemaining).toBe(2);  // work remains despite a zero-cluster run
+
+    const r2 = await distillMemories(db, { project: 'proj-nocluster', limit: 2 }, fakeEmbed, fakeMerge);
+    expect(r2.processed).toBe(2);
+    expect(r2.eligibleRemaining).toBe(0);
+    db.close();
+  });
+
+  it('dryRun projects the post-run remainder without advancing the cursor', async () => {
+    const db = freshDb();
+    for (let i = 0; i < 5; i++) {
+      insertMemory(db, { ...base, title: `P${i}`, body: `GAMMA preview ${i}`, project: 'proj-preview' });
+    }
+
+    const preview = await distillMemories(db, { project: 'proj-preview', limit: 2, dryRun: true }, fakeEmbed, fakeMerge);
+    expect(preview.processed).toBe(2);
+    expect(preview.eligibleRemaining).toBe(3);
+    expect(markedIds(db)).toEqual([]);  // nothing consumed
+
+    const real = await distillMemories(db, { project: 'proj-preview', limit: 2 }, fakeEmbed, fakeMerge);
+    expect(real.processed).toBe(2);
+    expect(real.eligibleRemaining).toBe(3);  // the dry run's projection held
+    db.close();
+  });
+});
+
+describe('countEligible — cursor awareness', () => {
+  it('excludes rows already marked distilled, and re-includes them under a `since` cutoff', () => {
+    const db = freshDb();
+    insertMemory(db, { ...base, title: 'E1', body: 'a', project: 'proj-a' });
+    const done = insertMemory(db, { ...base, title: 'E2', body: 'b', project: 'proj-a' });
+    db.prepare(`UPDATE memories SET distilled_at = '2019-01-01 00:00:00' WHERE id = ?`).run(done.id);
+
+    expect(countEligible(db, { kind: 'project', slug: 'proj-a' })).toBe(1);
+    expect(countEligible(db, { kind: 'project', slug: 'proj-a' }, '2020-01-01 00:00:00')).toBe(2);
+    db.close();
+  });
+});
+
+describe('distillMemories — merge coverage gate', () => {
+  // ALPHA/BETA cluster (cosine 0.78, inside the related band). What varies per
+  // test is the vector the MERGE lands on, keyed off its body text.
+  const seedCluster = (db: ReturnType<typeof freshDb>) => {
+    insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+  };
+
+  it('rejects a merge that drifts away from one of its sources, leaving both originals live', async () => {
+    const db = freshDb();
+    seedCluster(db);
+
+    // Merge body carries no ALPHA/BETA marker -> vecC, orthogonal to both sources.
+    const driftingMerge = async () => JSON.stringify({
+      title: 'Drifted', body: 'GAMMA unrelated consolidation', memory_type: 'convention',
+      scope: 'project', decay_class: 'stable', tags: [],
+    });
+
+    const r = await distillMemories(db, undefined, fakeEmbed, driftingMerge);
+
+    expect(r.clusters).toBe(1);
+    expect(r.rejected).toBe(1);
+    expect(r.created).toBe(0);
+    expect(r.merged).toBe(0);
+
+    // Both originals still live and unsuperseded — nothing was destroyed.
+    const live = db.prepare(
+      `SELECT title FROM memories WHERE superseded_by IS NULL ORDER BY title`
+    ).all() as { title: string }[];
+    expect(live.map(l => l.title)).toEqual(['One', 'Two']);
+
+    // The rejected merge left no row behind.
+    const drifted = db.prepare(`SELECT id FROM memories WHERE title = 'Drifted'`).get();
+    expect(drifted).toBeUndefined();
+    db.close();
+  });
+
+  it('accepts a merge that stays close to its sources', async () => {
+    const db = freshDb();
+    seedCluster(db);
+
+    // Merge body carries ALPHA -> vecA: cosine 1.0 to 'One', 0.78 to 'Two',
+    // both at/above the 0.72 floor.
+    const faithfulMerge = async () => JSON.stringify({
+      title: 'Merged rule', body: 'ALPHA consolidated body', memory_type: 'convention',
+      scope: 'project', decay_class: 'stable', tags: [],
+    });
+
+    const r = await distillMemories(db, undefined, fakeEmbed, faithfulMerge);
+    expect(r.rejected).toBe(0);
+    expect(r.created).toBe(1);
+    expect(r.merged).toBe(2);
+    db.close();
+  });
+
+  it('a rejected merge does not consume its sources — a later run can retry them', async () => {
+    const db = freshDb();
+    seedCluster(db);
+
+    const driftingMerge = async () => JSON.stringify({
+      title: 'Drifted', body: 'GAMMA unrelated consolidation', memory_type: 'convention',
+      scope: 'project', decay_class: 'stable', tags: [],
+    });
+    await distillMemories(db, undefined, fakeEmbed, driftingMerge);
+
+    const rows = db.prepare(
+      `SELECT title, distilled_at, superseded_by FROM memories ORDER BY title`
+    ).all() as { title: string; distilled_at: string | null; superseded_by: string | null }[];
+    expect(rows).toHaveLength(2);
+
+    // The guarantee that matters: neither original was consumed.
+    for (const row of rows) expect(row.superseded_by).toBeNull();
+
+    // 'One' (confidence 0.9) led the cluster, so it is stamped — the work was
+    // genuinely done and the verdict was "these should not merge". Re-examining
+    // it would just buy the same rejection again on every future sweep.
+    expect(rows.find(r => r.title === 'One')!.distilled_at).not.toBeNull();
+    // 'Two' was only pulled in as a member, so it stays eligible and may lead a
+    // different cluster later.
+    expect(rows.find(r => r.title === 'Two')!.distilled_at).toBeNull();
+    db.close();
+  });
+});
+
+describe('distillMemories — backend failure does not burn the cursor', () => {
+  // Each pair gets its OWN vector direction (dimensions 2i / 2i+1) at cosine 0.78
+  // to its partner and orthogonal to every other pair. The shared vecA/vecB
+  // fixture cannot be used here: with many memories collapsed onto two
+  // directions, relatedMemories' KNN (LIMIT 12) truncates before reaching the
+  // same-project partner and most pairs never cluster at all.
+  const pairEmbed = (text: string): Promise<Float32Array | null> => {
+    const i = Number(text.match(/phrasing (\d+)/)?.[1] ?? 0);
+    const v = new Float32Array(1024);
+    if (text.includes('ALPHA')) v[i * 2] = 1;
+    else { v[i * 2] = 0.78; v[i * 2 + 1] = Math.sqrt(1 - 0.78 * 0.78); }
+    return Promise.resolve(v);
+  };
+
+  const seedPairs = (db: ReturnType<typeof freshDb>, n: number) => {
+    for (let i = 0; i < n; i++) {
+      insertMemory(db, { ...base, project: `p${i}`, title: `A${i}`, body: `ALPHA phrasing ${i}`, confidence: 0.9 });
+      insertMemory(db, { ...base, project: `p${i}`, title: `B${i}`, body: `BETA phrasing ${i}`, confidence: 0.7 });
+    }
+  };
+
+  it('a dead backend aborts the run and leaves every candidate re-examinable', async () => {
+    const db = freshDb();
+    seedPairs(db, 8);
+
+    let calls = 0;
+    const deadBackend = async () => { calls++; return ''; };  // what callModel returns on failure
+
+    const r = await distillMemories(db, undefined, pairEmbed, deadBackend);
+
+    expect(r.backendFailed).toBe(true);
+    expect(r.created).toBe(0);
+    expect(r.merged).toBe(0);
+    // Gave up after the abort threshold instead of grinding through all 8 clusters.
+    expect(calls).toBeLessThanOrEqual(5);
+
+    // The cursor did NOT advance: nothing was genuinely examined.
+    const stamped = db.prepare(
+      `SELECT COUNT(*) c FROM memories WHERE distilled_at IS NOT NULL`
+    ).get() as { c: number };
+    expect(stamped.c).toBe(0);
+
+    // And the work is still queued rather than silently skipped.
+    expect(r.eligibleRemaining).toBe(16);
+    db.close();
+  });
+
+  it('an isolated bad response un-stamps only that cluster and the run continues', async () => {
+    const db = freshDb();
+    seedPairs(db, 4);
+
+    let calls = 0;
+    // First cluster returns junk, the rest merge fine — a transient hiccup, not an outage.
+    // Bodies must differ per call: insertMemory derives the id from memory_type +
+    // body, so identical merge text would collapse all three onto one row.
+    const flaky = async () => {
+      calls++;
+      return calls === 1 ? 'not json at all' : JSON.stringify({
+        title: `Merged ${calls}`, body: `ALPHA consolidated ${calls}`, memory_type: 'convention',
+        scope: 'project', decay_class: 'stable', tags: [],
+      });
+    };
+
+    const r = await distillMemories(db, undefined, pairEmbed, flaky);
+
+    // One bad response is not an outage: the run kept going.
+    expect(r.backendFailed).toBe(false);
+    expect(calls).toBe(4);                      // all 4 clusters still attempted
+    expect(r.created + r.rejected).toBe(3);     // the 3 after the bad one were processed
+
+    // The failed cluster's members were handed back — still live, still eligible.
+    const failedPair = db.prepare(
+      `SELECT distilled_at, superseded_by FROM memories WHERE title IN ('A0','B0')`
+    ).all() as { distilled_at: string | null; superseded_by: string | null }[];
+    expect(failedPair).toHaveLength(2);
+    for (const row of failedPair) {
+      expect(row.distilled_at).toBeNull();
+      expect(row.superseded_by).toBeNull();
+    }
+    db.close();
+  });
+
+  it('a dead EMBEDDING backend also aborts without consuming candidates', async () => {
+    const db = freshDb();
+    seedPairs(db, 8);
+
+    // Vectors never land in memories_vec, so the clustering loop's loadStoredVector
+    // misses and its embedFn fallback fails too — the shape of an Ollama outage.
+    const deadEmbed = async (): Promise<Float32Array | null> => null;
+    let merges = 0;
+    const countingMerge = async () => { merges++; return fakeMerge(); };
+
+    const r = await distillMemories(db, undefined, deadEmbed, countingMerge);
+
+    expect(r.backendFailed).toBe(true);
+    expect(merges).toBe(0);  // never got far enough to attempt a merge
+    const stamped = db.prepare(`SELECT COUNT(*) c FROM memories WHERE distilled_at IS NOT NULL`).get() as { c: number };
+    expect(stamped.c).toBe(0);
+    expect(r.eligibleRemaining).toBe(16);
+    db.close();
+  });
+
+  it('backend failure skips the sanitize pass rather than retrying doomed calls', async () => {
+    const db = freshDb();
+    seedPairs(db, 8);
+    // An oversized singleton that would normally be sanitized.
+    insertMemory(db, { ...base, project: 'solo', title: 'Verbose', body: 'GAMMA '.repeat(200) });
+
+    let calls = 0;
+    const deadBackend = async () => { calls++; return ''; };
+    await distillMemories(db, undefined, pairEmbed, deadBackend);
+
+    // Only the merge attempts up to the abort threshold — no sanitize calls after.
+    expect(calls).toBeLessThanOrEqual(5);
+    db.close();
+  });
+});
+
+describe('coverageShortfall', () => {
+  it('returns null when vectors are unreadable, so the gate fails open', () => {
+    const db = freshDb();
+    const { id } = insertMemory(db, { ...base, title: 'NoVec', body: 'ALPHA unindexed' });
+    const source = { ...base, id: 'missing-source', title: 'S', body: 'BETA' } as unknown as Parameters<typeof coverageShortfall>[2][number];
+
+    // Neither memory has a row in memories_vec — must not block the merge.
+    expect(coverageShortfall(db, id, [source])).toBeNull();
+    db.close();
+  });
+
+  it('names the worst source when several fall below the floor', async () => {
+    const db = freshDb();
+    const merge = insertMemory(db, { ...base, title: 'M', body: 'GAMMA merged' });
+    const a = insertMemory(db, { ...base, title: 'A', body: 'ALPHA source' });
+    const b = insertMemory(db, { ...base, title: 'B', body: 'BETA source' });
+    for (const { id } of [merge, a, b]) await embedMemory(db, id, fakeEmbed);
+
+    const sources = db.prepare(`SELECT * FROM memories WHERE title IN ('A','B')`).all() as never;
+    const worst = coverageShortfall(db, merge.id, sources);
+    expect(worst).not.toBeNull();
+    // vecC is orthogonal to both vecA and vecB, so both are below the floor.
+    expect(['A', 'B'].length).toBe(2);
+    expect(worst!.similarity).toBeLessThan(0.72);
     db.close();
   });
 });
@@ -319,11 +690,11 @@ describe('distillMemories — backward-compat regression (10, SC-6)', () => {
 });
 
 describe('buildEligibleQuery', () => {
-  it('project scope filters by project column and appends LIMIT :limit', () => {
+  it('project scope filters by project column, applies the cursor, and appends LIMIT :limit', () => {
     const scope: ResolvedScope = { kind: 'project', slug: 'my-proj' };
     const { sql, params } = buildEligibleQuery(scope, 200);
     expect(sql).toBe(
-      `SELECT * FROM memories WHERE project = :slug AND scope != 'global' AND superseded_by IS NULL AND review_status != 'rejected' ORDER BY confidence DESC, created_at ASC LIMIT :limit`
+      `SELECT * FROM memories WHERE project = :slug AND scope != 'global' AND superseded_by IS NULL AND review_status != 'rejected' AND distilled_at IS NULL ORDER BY confidence DESC, created_at ASC LIMIT :limit`
     );
     expect(sql).toContain(`scope != 'global'`);
     expect(params).toEqual({ slug: 'my-proj', limit: 200 });
@@ -333,7 +704,7 @@ describe('buildEligibleQuery', () => {
     const scope: ResolvedScope = { kind: 'global' };
     const { sql, params } = buildEligibleQuery(scope, 50);
     expect(sql).toBe(
-      `SELECT * FROM memories WHERE scope = 'global' AND superseded_by IS NULL AND review_status != 'rejected' ORDER BY confidence DESC, created_at ASC LIMIT :limit`
+      `SELECT * FROM memories WHERE scope = 'global' AND superseded_by IS NULL AND review_status != 'rejected' AND distilled_at IS NULL ORDER BY confidence DESC, created_at ASC LIMIT :limit`
     );
     expect(params).toEqual({ limit: 50 });
   });
@@ -342,9 +713,25 @@ describe('buildEligibleQuery', () => {
     const scope: ResolvedScope = { kind: 'all' };
     const { sql, params } = buildEligibleQuery(scope, 500);
     expect(sql).toBe(
-      `SELECT * FROM memories WHERE superseded_by IS NULL AND review_status != 'rejected' ORDER BY confidence DESC, created_at ASC LIMIT :limit`
+      `SELECT * FROM memories WHERE superseded_by IS NULL AND review_status != 'rejected' AND distilled_at IS NULL ORDER BY confidence DESC, created_at ASC LIMIT :limit`
     );
     expect(params).toEqual({ limit: 500 });
+  });
+
+  it('since widens the cursor to also re-open previously distilled rows, and binds :since', () => {
+    const { sql, params } = buildEligibleQuery({ kind: 'all' }, 100, '2026-07-26 00:00:00');
+    expect(sql).toContain(`AND (distilled_at IS NULL OR distilled_at < :since)`);
+    expect(params).toEqual({ limit: 100, since: '2026-07-26 00:00:00' });
+  });
+});
+
+describe('cursorClause', () => {
+  it('without since, only never-examined rows are candidates', () => {
+    expect(cursorClause(undefined)).toBe(`distilled_at IS NULL`);
+  });
+
+  it('with since, rows examined before the cutoff are candidates again', () => {
+    expect(cursorClause('2026-01-01 00:00:00')).toBe(`(distilled_at IS NULL OR distilled_at < :since)`);
   });
 });
 

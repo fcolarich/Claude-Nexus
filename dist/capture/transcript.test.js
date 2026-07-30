@@ -70,6 +70,26 @@ describe('readTranscriptWindow', () => {
         const w = readTranscriptWindow(join(tmpdir(), 'does-not-exist-xyz.jsonl'), 0);
         expect(w.totalLines).toBe(0);
         expect(w.hasSignal).toBe(false);
+        expect(w.rawLines).toEqual([]);
+    });
+    it('exposes rawLines matching the raw JSONL lines sliced from fromIndex', () => {
+        const entries = [
+            userMsg('one'), asstMsg([{ type: 'text', text: 'a' }]),
+            userMsg('two'), asstMsg([{ type: 'text', text: 'b' }]),
+            userMsg('three'),
+        ];
+        const raw = entries.map((e) => JSON.stringify(e));
+        const p = makeTranscript(entries);
+        const wFull = readTranscriptWindow(p, 0);
+        expect(wFull.rawLines).toEqual(raw);
+        expect(wFull.rawLines.length).toBe(wFull.newLines);
+        const wSliced = readTranscriptWindow(p, 3);
+        expect(wSliced.rawLines).toEqual(raw.slice(3));
+        expect(wSliced.rawLines.length).toBe(wSliced.newLines);
+        // Existing fields unchanged by the additive field.
+        expect(wFull.text).toContain('User: one');
+        expect(wFull.totalLines).toBe(5);
+        expect(wFull.truncated).toBe(false);
     });
 });
 //# sourceMappingURL=transcript.test.js.map

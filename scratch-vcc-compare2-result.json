@@ -1,0 +1,48 @@
+{
+  "vcc_60k_tail_chars": 60000,
+  "vcc_60k_tail_candidates": [
+    {
+      "title": "Legacy-atom parser alias drift causes silent data loss",
+      "body": "is_legacy and parse_freeform used separate header-match sets; divergent casing (lowercase vs. title-case) silently emptied 26 of 54 atoms' content. Fixed by unifying to single _HEADING_FIELD_ALIASES map. Lesson: parsing state machines checking the same artifact must share exactly one canonicalization rule, or silent corruption results.",
+      "memory_type": "failure",
+      "scope": "project",
+      "decay_class": "architecture",
+      "confidence": 1,
+      "tags": [
+        "parser",
+        "data-loss",
+        "aliases"
+      ],
+      "promotion_target": "best_practice"
+    },
+    {
+      "title": "UPDATE paths in SQLite writers need write_txn concurrency protection",
+      "body": "add_atom and add_cluster both had unprotected UPDATE-path races: read existing record, merge sources, UPDATE WHERE id=?. Two concurrent writers to same name could silently lose one writer's data—same race the INSERT-path write_txn fix addressed. Both needed wrapping in write_txn(BEGIN IMMEDIATE). Pattern: when fixing INSERT concurrency, audit UPDATE of same record class; race repeats.",
+      "memory_type": "failure",
+      "scope": "project",
+      "decay_class": "architecture",
+      "confidence": 1,
+      "tags": [
+        "concurrency",
+        "sqlite",
+        "write_txn",
+        "race"
+      ],
+      "promotion_target": "best_practice"
+    },
+    {
+      "title": "Execute agent requires direct user confirmation, not relay",
+      "body": "Agent correctly refused coordinator-relayed approval ('user approved via intermediary'). Requires explicit confirmation in same turn. Agent orchestrators cannot delegate approval authority through intermediaries—each layer needs direct confirmation from the actual decision maker.",
+      "memory_type": "tool_quirk",
+      "scope": "global",
+      "decay_class": "stable",
+      "confidence": 1,
+      "tags": [
+        "agent",
+        "authorization",
+        "confirmation"
+      ],
+      "promotion_target": "none"
+    }
+  ]
+}

@@ -1,0 +1,185 @@
+{
+  "raw_chars": 20066,
+  "raw_truncated": false,
+  "vcc_chars": 16875,
+  "raw_candidates": [
+    {
+      "title": "Cluster frontmatter regression via stale plugin cache",
+      "body": "32 cluster files regressed to broken YAML despite NOTE-012 fix. Root: Local Marketplace Subproject plugin was cached with stale add_cluster.py (missing json.dumps() quoting). Lesson: file-generation templates in cached dependencies can drift undetected; immediate file validation after write catches this.",
+      "memory_type": "failure",
+      "scope": "project",
+      "decay_class": "architecture",
+      "confidence": 0.85,
+      "tags": [
+        "yaml",
+        "plugin-cache",
+        "regression",
+        "template-drift"
+      ],
+      "promotion_target": "none"
+    },
+    {
+      "title": "Repair file corruption by re-rendering from DB",
+      "body": "For files with a DB source-of-truth (atoms.db), repair corruption by re-rendering entire file from DB row via canonical write function, not hand-editing. Preserves all fields, avoids alignment drift, creates audit trail. Pattern: validate_clusters.py::fix_from_db().",
+      "memory_type": "insight",
+      "scope": "project",
+      "decay_class": "architecture",
+      "confidence": 0.95,
+      "tags": [
+        "vault",
+        "data-integrity",
+        "corruption",
+        "repair"
+      ],
+      "promotion_target": "recipe"
+    },
+    {
+      "title": "Self-check validation after every file write",
+      "body": "Wire validation to run immediately after file writes (sync, before return). Raises loudly on schema/parse errors, preventing broken output from shipping silently. Catches template regressions immediately. Most effective if all writes funnel through a single function.",
+      "memory_type": "convention",
+      "scope": "project",
+      "decay_class": "architecture",
+      "confidence": 0.95,
+      "tags": [
+        "testing",
+        "validation",
+        "reliability",
+        "early-detection"
+      ],
+      "promotion_target": "best_practice"
+    },
+    {
+      "title": "Vault corruption: orphans vs broken frontmatter",
+      "body": "Two distinct vault corruption modes: orphaned files (exist on disk, no atoms.db row; don't repair—can't reconstruct safely) vs broken frontmatter (malformed YAML; repair from DB). Different remediation prevents data loss. Applied: 32 broken files fixed; 15 pre-existing orphans flagged but untouched.",
+      "memory_type": "insight",
+      "scope": "project",
+      "decay_class": "architecture",
+      "confidence": 0.9,
+      "tags": [
+        "vault",
+        "corruption",
+        "classification"
+      ],
+      "promotion_target": "note"
+    }
+  ],
+  "vcc_untuned_candidates": [
+    {
+      "title": "Re-render from source, never patch generated output",
+      "body": "When generated data (config, YAML, etc.) is found broken, fix the generator and re-render from the source of truth, don't manually edit the output. Applied here: atoms.db is cluster frontmatter source of truth; fix_from_db() re-renders from DB rows using template logic, never patches YAML text directly.",
+      "memory_type": "decision",
+      "scope": "global",
+      "decay_class": "architecture",
+      "confidence": 0.95,
+      "tags": [
+        "data-generation",
+        "yaml",
+        "source-of-truth"
+      ],
+      "promotion_target": "best_practice"
+    },
+    {
+      "title": "Stale plugin cache caused template regression",
+      "body": "Plugin held in-memory stale copy of add_cluster.py's _render_file, missing json.dumps()-wrap on unique field. Caused 32 cluster files to ship with broken frontmatter. Same bug class as note-012. Risk: plugin caches persist across edits; invalidate cache after template changes.",
+      "memory_type": "failure",
+      "scope": "project",
+      "decay_class": "implementation",
+      "confidence": 0.9,
+      "tags": [
+        "plugin-cache",
+        "frontmatter",
+        "regression"
+      ],
+      "promotion_target": "none"
+    },
+    {
+      "title": "Self-check cluster writes for frontmatter validity",
+      "body": "Wired validate_clusters.fix() into write_cluster() so every cluster render immediately self-validates and raises if broken. Catches template regressions on write, prevents silent shipping. All cluster creation paths (CLI, convergence-extractor, /cluster-atoms) funnel through write_cluster, so validation covers everything.",
+      "memory_type": "convention",
+      "scope": "project",
+      "decay_class": "stable",
+      "confidence": 0.9,
+      "tags": [
+        "cluster",
+        "validation",
+        "self-check"
+      ],
+      "promotion_target": "recipe"
+    },
+    {
+      "title": "Orphan cluster files lack atoms.db backing",
+      "body": "15 cluster .md files exist with no matching atoms.db row (pre-existing gap unrelated to frontmatter bug). Cannot be re-rendered from source; separate handling required. find_orphans() reports but does not touch these files.",
+      "memory_type": "insight",
+      "scope": "project",
+      "decay_class": "stable",
+      "confidence": 0.8,
+      "tags": [
+        "cluster",
+        "orphan",
+        "db-gap"
+      ],
+      "promotion_target": "note"
+    }
+  ],
+  "vcc_v2_candidates": [
+    {
+      "title": "Validate cluster frontmatter on every write",
+      "body": "Wired automated frontmatter validation into add_cluster.py's write_cluster(). Every cluster write self-validates and raises if invalid. Catches regressions immediately since all cluster creation paths (CLI, convergence-extractor, /cluster-atoms) funnel through this function.",
+      "memory_type": "decision",
+      "scope": "project",
+      "decay_class": "architecture",
+      "confidence": 0.95,
+      "tags": [
+        "validation",
+        "frontmatter",
+        "automation",
+        "write-path"
+      ],
+      "promotion_target": "adr"
+    },
+    {
+      "title": "Repair broken cluster YAML via DB re-render",
+      "body": "Broken frontmatter repaired by re-rendering from atoms.db (canonical source) using existing _render_file template. Centralizes rendering logic and prevents manual edit errors. Never hand-patch YAML text.",
+      "memory_type": "decision",
+      "scope": "project",
+      "decay_class": "architecture",
+      "confidence": 0.9,
+      "tags": [
+        "repair",
+        "yaml",
+        "source-of-truth",
+        "db"
+      ],
+      "promotion_target": "adr"
+    },
+    {
+      "title": "Orphan cluster files are separate audit gap",
+      "body": "Some cluster .md files have no atoms.db row (pre-existing orphans, unrelated to frontmatter corruption). Validator flags these separately and leaves untouched—distinct audit issue. Future cleanups should address these separately.",
+      "memory_type": "insight",
+      "scope": "project",
+      "decay_class": "stable",
+      "confidence": 0.85,
+      "tags": [
+        "orphans",
+        "audit",
+        "frontmatter"
+      ],
+      "promotion_target": "note"
+    },
+    {
+      "title": "validate_clusters tool has check and repair modes",
+      "body": "CLI supports --check flag for read-only audit (exits 1 if broken, suitable for CI gates). Default mode repairs in-place and reports results.",
+      "memory_type": "convention",
+      "scope": "project",
+      "decay_class": "stable",
+      "confidence": 0.8,
+      "tags": [
+        "validation",
+        "tool",
+        "cli",
+        "check-mode"
+      ],
+      "promotion_target": "none"
+    }
+  ]
+}

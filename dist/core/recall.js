@@ -6,13 +6,33 @@
  * budget is reached, titles-only thereafter. Pure read — no mutation, no
  * network — so it is cheap enough for the SessionStart hot path.
  */
+import { encode } from 'gpt-tokenizer';
 import { getNexusConfig } from './config.js';
 import { sanitizeFts5Query } from './search.js';
 import { effectiveConfidence } from './decay.js';
 import { generateEmbedding } from './embeddings.js';
 import { rerank as rerankDocuments } from './reranker.js';
 import { normalize } from './memories.js';
-const estTokens = (s) => Math.ceil(s.length / 4);
+import { rrfFuse } from './rrf.js';
+const _tokenMemo = new Map();
+const estTokens = (s) => {
+    if (s.length === 0)
+        return 0;
+    const cached = _tokenMemo.get(s);
+    if (cached !== undefined)
+        return cached;
+    let count;
+    try {
+        count = encode(s).length;
+    }
+    catch {
+        count = Math.ceil(s.length / 4);
+    }
+    _tokenMemo.set(s, count);
+    return count;
+};
+/** Exported only for tests — do not call from production code. */
+export const estTokensForTest = estTokens;
 function rowToMemory(r) {
     return { ...r, tags: JSON.parse(r.tags || '[]') };
 }
@@ -116,17 +136,14 @@ export function recallMemories(db, opts) {
     return { items, markdown, tokenEstimate: estTokens(markdown), total: eligible.length };
 }
 /**
- * Prompt-driven recall: rank memories by vector cosine similarity to a query,
- * keep only those above a relevance floor, exclude a caller-supplied id set
- * (per-session dedup), and return the top `limit`. Falls back to FTS5 only when
- * no embedding is available or the corpus has no vectors — never bypasses the
- * floor on an embedded corpus.
+ * Prompt-driven recall: fuses FTS5 keyword results and vector KNN results via
+ * Reciprocal Rank Fusion, drops excluded ids, applies the minSimilarity cosine
+ * floor to vector-originated candidates only (FTS5-matched ids bypass the floor
+ * so fusion is not undone — see spec § "Floor vs FTS5"), optionally reranks the
+ * bounded fused set with a cross-encoder, and returns the top `limit` memories.
  *
- * When the local cross-encoder reranker is available, KNN candidates are
- * reranked against the query and floored on rerank score instead of cosine
- * similarity — a cross-encoder catches conceptually-relevant matches cosine
- * misses, and drops near-duplicates cosine over-ranks. If the reranker is
- * disabled or unreachable, this falls back to the cosine-floor path unchanged.
+ * Pool sizes: FTS5 limit*3, vector limit*6. Rerank input bounded to ~limit*3.
+ * If the reranker throws or is disabled, falls back to RRF-fused order.
  */
 export async function recallByQuery(db, opts) {
     const empty = { items: [], markdown: '', tokenEstimate: 0, total: 0 };
@@ -141,9 +158,27 @@ export async function recallByQuery(db, opts) {
     const exclude = new Set(opts.excludeIds ?? []);
     const scopeClause = `(m.scope IN ('global','shared') OR (m.scope='project' AND m.project = @project))`;
     const doRerank = opts.rerankFn ?? rerankDocuments;
-    const candidates = []; // pre-floor, in-scope, not excluded
-    const scored = [];
-    let vecEligible = 0; // in-scope approved candidates the vector index produced (pre-floor)
+    // ── FTS5 pool (limit*3) ──────────────────────────────────────────────────────
+    const ftsRowids = [];
+    const sanitizedQ = sanitizeFts5Query(opts.query);
+    if (sanitizedQ) {
+        const ftsRows = db.prepare(`
+      SELECT m.rowid FROM memories_fts f
+      JOIN memories m ON m.rowid = f.rowid
+      WHERE memories_fts MATCH @q
+        AND m.review_status = 'approved' AND m.superseded_by IS NULL
+        AND ${scopeClause}
+      ORDER BY f.rank
+      LIMIT @lim
+    `).all({ q: sanitizedQ, project, lim: limit * 3 });
+        for (const r of ftsRows)
+            ftsRowids.push(r.rowid);
+    }
+    const ftsSet = new Set(ftsRowids);
+    // ── Vector KNN pool (limit*6) ────────────────────────────────────────────────
+    const vecRowids = [];
+    const vecSimMap = new Map(); // rowid → cosine similarity
+    const vecMemMap = new Map(); // rowid → hydrated Memory (pre-loaded)
     const queryVec = await generateEmbedding(opts.query);
     const vecTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='memories_vec'`).get();
     if (queryVec && vecTable) {
@@ -170,61 +205,92 @@ export async function recallByQuery(db, opts) {
             if (!row)
                 continue;
             const m = rowToMemory(row);
-            vecEligible++; // corpus is embedded and produced an in-scope candidate
-            if (exclude.has(m.id))
-                continue;
-            // Stored vectors are unit-normalized: cosine similarity = 1 - d^2/2
+            // Stored vectors are unit-normalised: cosine similarity = 1 - d²/2
             const sim = Math.max(0, Math.min(1, 1 - (r.distance * r.distance) / 2));
-            candidates.push({ m, sim });
+            vecRowids.push(r.rowid);
+            vecSimMap.set(r.rowid, sim);
+            vecMemMap.set(r.rowid, m);
         }
     }
-    // Rerank pass: cross-encoder floor replaces the cosine floor when available.
-    let reranked = null;
-    if (candidates.length >= 2 && rerankerCfg.enabled) {
-        reranked = await doRerank(opts.query, candidates.map(c => c.m.body), rerankerCfg.threshold);
-    }
-    if (reranked) {
-        // Endpoint already sorts descending and floors by threshold — map straight through.
-        for (const r of reranked)
-            scored.push({ m: candidates[r.index].m, score: r.score });
-    }
-    else {
-        // Fallback: cosine floor, unchanged from the pre-reranker behavior.
-        for (const { m, sim } of candidates) {
+    // ── RRF fusion (FTS5 list first, vector list second) ────────────────────────
+    const fused = rrfFuse([ftsRowids, vecRowids]);
+    // ── Hydrate, drop excludeIds, apply floor ────────────────────────────────────
+    // minSimilarity floor applies only to vector-originated candidates; FTS5-matched
+    // ids bypass the floor entirely — re-applying the floor after fusion would undo
+    // the rescue of keyword-exact hits (spec § "Floor vs FTS5").
+    const hydrateStmt = db.prepare(`
+    SELECT m.* FROM memories m
+    WHERE m.rowid = @rowid
+      AND m.review_status = 'approved' AND m.superseded_by IS NULL
+      AND ${scopeClause}
+  `);
+    const hydrated = [];
+    for (const { id: rowid, score: rrfScore } of fused) {
+        const mFromVec = vecMemMap.get(rowid);
+        let m;
+        if (mFromVec) {
+            m = mFromVec;
+        }
+        else {
+            const row = hydrateStmt.get({ rowid, project });
+            if (!row)
+                continue;
+            m = rowToMemory(row);
+        }
+        if (exclude.has(m.id))
+            continue;
+        // Vector-only candidates must clear the cosine floor
+        if (!ftsSet.has(rowid)) {
+            const sim = vecSimMap.get(rowid) ?? 0;
             if (sim < minSimilarity)
                 continue;
-            scored.push({ m, score: sim });
         }
+        hydrated.push({ m, rrfScore });
     }
-    // FTS5 fallback ONLY when the vector path could not run (no embedding / no
-    // vectors). If vectors existed but nothing cleared the floor, respect that.
-    if (scored.length === 0 && vecEligible === 0) {
-        const rows = db.prepare(`
-      SELECT m.* FROM memories_fts f
-      JOIN memories m ON m.rowid = f.rowid
-      WHERE memories_fts MATCH @q
-        AND m.review_status = 'approved' AND m.superseded_by IS NULL
-        AND ${scopeClause}
-      ORDER BY f.rank
-      LIMIT @lim
-    `).all({ q: sanitizeFts5Query(opts.query), project, lim: limit * 3 });
-        for (const row of rows) {
-            const m = rowToMemory(row);
-            if (exclude.has(m.id))
-                continue;
-            scored.push({ m, score: 0 });
-        }
-    }
-    if (scored.length === 0)
+    if (hydrated.length === 0)
         return empty;
-    scored.sort((a, b) => b.score - a.score);
-    const top = scored.slice(0, limit);
+    // ── Rerank bounded fused set ─────────────────────────────────────────────────
+    // task-011 latency spot-check (SC-6): measured doRerank() wall-clock time against
+    // the live jina-reranker-v2-base-multilingual daemon (127.0.0.1:8931), 3-5 warm
+    // calls per size, sweeping candidate count:
+    //   N=1: ~31ms   N=3: ~72ms   N=4: ~96ms   N=5: ~110ms
+    //   N=8: ~169ms  N=10: ~232ms N=15: ~348ms (the original limit*3 bound at limit=5)
+    // The original `limit*3` bound (15 candidates at the default limit=5) measured
+    // ~350ms — over 3x the 100ms envelope ceiling. Rather than shrinking the whole
+    // candidate pool (which would also shrink the non-reranked fallback below
+    // `limit`), only the network call is capped: the RRF-fused pool keeps its full
+    // breadth (~limit*3) for output purposes, but just the head (RERANK_INPUT_CAP=3,
+    // ~72ms avg, comfortable margin below 100ms — N=4 was already borderline at
+    // ~96ms with one sample at 114ms) is sent to the reranker. The unsent tail keeps
+    // its RRF-fused order and is appended after the reranked head. Revisit if the
+    // local daemon is swapped for a faster backend, or if reranking only the top 3
+    // proves too shallow in practice.
+    const bounded = hydrated.slice(0, limit * 3);
+    const RERANK_INPUT_CAP = 3;
+    const rerankHead = bounded.slice(0, RERANK_INPUT_CAP);
+    const rerankTail = bounded.slice(RERANK_INPUT_CAP);
+    const useReranker = rerankerCfg.enabled || opts.rerankFn !== undefined;
+    let reranked = null;
+    if (useReranker && rerankHead.length >= 1) {
+        try {
+            const rrResult = await doRerank(opts.query, rerankHead.map(c => c.m.body), rerankerCfg.threshold);
+            if (rrResult && rrResult.length > 0) {
+                reranked = [
+                    ...rrResult.map(r => ({ m: rerankHead[r.index].m, score: r.score })),
+                    ...rerankTail.map(c => ({ m: c.m, score: c.rrfScore })),
+                ];
+            }
+        }
+        catch { /* reranker unavailable — fall back to fused order */ }
+    }
+    const finalCandidates = reranked ?? bounded.map(c => ({ m: c.m, score: c.rrfScore }));
+    const top = finalCandidates.slice(0, limit);
     const items = top.map(({ m, score }) => ({ memory: m, score, mode: 'full' }));
     const HEADER = '# Recalled Memory\n';
     const parts = [HEADER.trim()];
     for (const i of items)
         parts.push(renderFull(i.memory).trim());
     const markdown = parts.join('\n\n');
-    return { items, markdown, tokenEstimate: estTokens(markdown), total: scored.length };
+    return { items, markdown, tokenEstimate: estTokens(markdown), total: hydrated.length };
 }
 //# sourceMappingURL=recall.js.map

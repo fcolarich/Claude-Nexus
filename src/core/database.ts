@@ -59,6 +59,7 @@ const MIGRATIONS: Migration[] = [
   { version: 8, name: 'project-aliases', up: migrateProjectAliases },
   { version: 9, name: 'promotion-classification', up: migratePromotionClassification },
   { version: 10, name: 'vcc-shrunk-at', up: migrateVccShrunkAt },
+  { version: 11, name: 'distill-cursor', up: migrateDistillCursor },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -521,6 +522,18 @@ function migrateReflectionCursor(db: Database.Database): void {
 
 function migrateVccShrunkAt(db: Database.Database): void {
   try { db.exec(`ALTER TABLE sessions ADD COLUMN vcc_shrunk_at TEXT`); } catch {}
+}
+
+// ── Migration 11: distill cursor ─────────────────────────────────────
+// Timestamp of the last distill run that pulled this memory into its candidate
+// pool. NULL = never examined. src/core/distill.ts selects candidates with
+// `distilled_at IS NULL` (optionally `OR distilled_at < :since`), so successive
+// runs advance through the eligible set instead of re-pulling the same
+// top-`limit` window forever. Survives restarts; needs no caller-passed offset.
+
+function migrateDistillCursor(db: Database.Database): void {
+  try { db.exec(`ALTER TABLE memories ADD COLUMN distilled_at TEXT`); } catch {}
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_distilled_at ON memories(distilled_at)`);
 }
 
 // ── Migration 4: import legacy memory atoms ──────────────────────────

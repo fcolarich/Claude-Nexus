@@ -5,7 +5,7 @@ import { writeFile, readFile } from 'fs/promises';
 import matter from 'gray-matter';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { runFullIndex } from '../indexer/indexer.js';
-import { resolveProjectSlug } from '../core/project-root.js';
+import { resolveProjectFromCwd } from '../core/project-root.js';
 import { buildBm25Corpus, rrfMerge } from '../core/links.js';
 import { generateEmbedding } from '../core/embeddings.js';
 import { hybridSearch, hybridSearchMemories, fetchContext, fetchMemoryContext, getSharedKnowledge, getProjectContext, listSessions, getDiagnostics, getStats, } from '../core/search.js';
@@ -29,26 +29,6 @@ const server = new McpServer({
     name: 'claude-nexus',
     version: '0.1.0',
 });
-/**
- * Resolve a project slug from a working-directory path.
- * 1. Git-root-resolved slug via resolveProjectSlug (collapses worktrees and
- *    subdirectories onto the repo root, e.g. "C--Fran-Monster-Hotel").
- * 2. Short-name fallback (last path segment lowercased, e.g. "monster-hotel"). Handles projects
- *    whose tasks were created with a short name rather than the full path slug.
- * Each candidate is checked against atoms AND sessions so backfill resolution works too.
- */
-function resolveProjectFromCwd(cwd) {
-    const known = (slug) => !!db.prepare(`SELECT 1 FROM atoms    WHERE project = ? LIMIT 1`).get(slug) ||
-        !!db.prepare(`SELECT 1 FROM sessions WHERE project = ? LIMIT 1`).get(slug);
-    const derived = resolveProjectSlug(cwd);
-    if (derived && known(derived))
-        return derived;
-    const parts = cwd.replace(/\\/g, '/').split('/').filter(Boolean);
-    const shortName = parts[parts.length - 1]?.toLowerCase().replace(/_/g, '-');
-    if (shortName && shortName !== derived?.toLowerCase() && known(shortName))
-        return shortName;
-    return derived ?? shortName ?? cwd;
-}
 // ── nexus_search ─────────────────────────────────────────────────────
 server.tool('nexus_search', 'Cross-project full-text search across all Claude knowledge: captured memories AND agents/skills/plans/notes. Returns both stores merged into one markdown response.', {
     query: z.string().describe('Search query (supports FTS5 syntax: AND, OR, NOT, "phrases", prefix*)'),
@@ -58,7 +38,7 @@ server.tool('nexus_search', 'Cross-project full-text search across all Claude kn
     scope: z.string().optional().describe('Filter by scope: global, shared, project'),
     limit: z.coerce.number().optional().describe('Max results per store (default: 10)'),
 }, async ({ query, project, cwd, type, scope, limit }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     const cap = limit ?? 10;
     const [atomResults, memResults] = await Promise.all([
         hybridSearch(db, query, { project: effectiveProject, type, scope, limit: cap }),
@@ -96,7 +76,7 @@ server.tool('nexus_context', 'Smart fetch: request multiple topics and receive o
     project: z.string().optional().describe('Scope to a full project slug (e.g. "C--Fran-Monster-Hotel"). Prefer cwd to avoid guessing the slug.'),
     cwd: z.string().optional().describe('Caller working directory — derives the project slug automatically. Use instead of project when scoping to the current project.'),
 }, async ({ topics, project, cwd }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     const memMerged = fetchMemoryContext(db, topics, { project: effectiveProject });
     const atomMerged = fetchContext(db, topics, { project: effectiveProject });
     if (!memMerged && !atomMerged) {
@@ -116,7 +96,7 @@ server.tool('nexus_recall', 'Recall the most relevant memories for the current p
     query: z.string().optional().describe('Optional topic to focus recall on. Omit for general session-start recall.'),
     max_tokens: z.coerce.number().optional().describe('Token budget for injected memory (default from extraction_models.yaml).'),
 }, async ({ project, cwd, query, max_tokens }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : null);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : null);
     const result = recallMemories(db, { project: effectiveProject, query, maxTokens: max_tokens });
     if (result.items.length === 0) {
         return { content: [{ type: 'text', text: 'No memories recalled.' }] };
@@ -157,7 +137,7 @@ server.tool('nexus_project', 'Get all knowledge atoms for a specific project. Re
     project: z.string().optional().describe('Full project slug (e.g. "C--Fran-RRDestructible"). Prefer cwd to avoid guessing the slug.'),
     cwd: z.string().optional().describe('Caller working directory — derives the project slug automatically.'),
 }, async ({ project, cwd }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     if (!effectiveProject) {
         return { content: [{ type: 'text', text: 'Error: provide project or cwd.' }] };
     }
@@ -238,7 +218,7 @@ server.tool('nexus_remember', 'Store knowledge in the memories store — writes 
     confidence: z.coerce.number().min(0).max(1).optional().describe('Intrinsic confidence 0–1 (default: 0.85)'),
     load_at_init: z.boolean().optional().default(false).describe('If true, always recalled at session start regardless of decay'),
 }, async ({ title, content, scope, memory_type, atom_type, tags, project, cwd, confidence, load_at_init }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     // ── Knowledge path (memories table) ───────────────────────────────
     const resolvedMemType = memory_type ?? (atom_type ? ATOM_TYPE_TO_MEMORY_TYPE[atom_type] ?? 'insight' : 'insight');
     const { id, inserted } = insertMemory(db, {
@@ -282,7 +262,7 @@ server.tool('nexus_remember_batch', 'Store MANY memories in ONE call — batch e
     project: z.string().optional().describe('Default project slug (prefer cwd)'),
     cwd: z.string().optional().describe('Caller working directory — derives the default project slug automatically'),
 }, async ({ memories, scope, memory_type, tags, confidence, load_at_init, project, cwd }) => {
-    const defaultProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const defaultProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     const items = memories.map((m) => {
         const resolvedMemType = m.memory_type ?? memory_type ?? 'insight';
         const effProject = m.project ?? defaultProject ?? null;
@@ -346,24 +326,31 @@ server.tool('nexus_feedback', 'Record whether a recalled memory was actually use
     return { content: [{ type: 'text', text: ok ? `Feedback recorded for ${id} (helped=${helped}).` : `Error: memory not found: ${id}` }] };
 });
 // ── nexus_consolidate ────────────────────────────────────────────────
-server.tool('nexus_consolidate', 'Run a memory cleanup sweep: backfill missing embeddings, prune rejected memories, and merge near-duplicates. Safe — decayed memories are never deleted, only superseded duplicates and rejected memories.', {}, async () => {
+server.tool('nexus_consolidate', 'Run a memory cleanup sweep: backfill missing embeddings, prune rejected memories, merge near-duplicates, govern confidence by help-rate trend, and surface candidate contradictions. Safe — decayed memories are never deleted, only superseded duplicates and rejected memories.', {}, async () => {
     const r = await consolidateMemories(db);
     return {
         content: [{
                 type: 'text',
-                text: `Consolidation complete: ${r.embedded} embedded, ${r.merged} duplicate(s) merged, ${r.pruned} rejected pruned.`,
+                text: `Consolidation complete: ${r.embedded} embedded, ${r.merged} merged, ${r.pruned} pruned, ${r.demoted} demoted, ${r.reinforced} reinforced, ${r.contradictionPairsChecked} contradiction pair(s) checked (${r.contradictionsFlagged} flagged).`,
             }],
     };
 });
 // ── nexus_distill ────────────────────────────────────────────────────
-server.tool('nexus_distill', 'Deep cleanup of existing memories: clusters related memories and rewrites each cluster into one tighter, non-redundant memory; tightens verbose ones. Use to clean up legacy or hand-written memories. Heavier than nexus_consolidate — it makes LLM rewrite calls.', {}, async () => {
-    const r = await distillMemories(db);
-    return {
-        content: [{
-                type: 'text',
-                text: `Distill complete: ${r.clusters} cluster(s) → ${r.created} consolidated memories (${r.merged} folded in), ${r.sanitized} tightened, ${r.embedded} embedded.`,
-            }],
-    };
+server.tool('nexus_distill', 'Deep cleanup of existing memories: clusters related memories and rewrites each cluster into one tighter, non-redundant memory; tightens verbose ones. Use to clean up legacy or hand-written memories. Heavier than nexus_consolidate — it makes LLM rewrite calls. Bounded and scopable — processes a capped candidate pool for a project, the global bucket, or everything, with an optional dry run. Runs advance a persistent cursor, so re-invoking sweeps the NEXT chunk; loop until eligibleRemaining is 0. A run finding 0 clusters is normal mid-sweep and is NOT a stop signal.', {
+    project: z.string().optional().describe('Project slug to scope to. Prefer cwd to avoid guessing the slug. Literal "global" targets the global bucket.'),
+    cwd: z.string().optional().describe('Caller working directory — derives the project slug automatically.'),
+    limit: z.coerce.number().optional().describe('Max candidate memories to process this run (default 200, capped at 500)'),
+    dry_run: z.boolean().optional().describe('Report eligible-memory counts without running any LLM/embedding calls'),
+    since: z.string().optional().describe('Timestamp cutoff ("YYYY-MM-DD HH:MM:SS" UTC). Re-opens memories already distilled before it — use to start a fresh sweep over a scope already swept once. Omit to only examine never-distilled memories.'),
+}, async ({ project, cwd, limit, dry_run, since }) => {
+    const r = await distillMemories(db, { project, cwd, limit, dryRun: dry_run, since });
+    const remainingNote = r.eligibleRemaining > 0
+        ? ` ${r.eligibleRemaining} memories under this scope have not been examined yet — re-invoke to continue (even if this run found 0 clusters).`
+        : ' Sweep complete for this scope — nothing left un-examined.';
+    const text = r.dryRun
+        ? `Dry run: ${r.processed} memor${r.processed === 1 ? 'y' : 'ies'} would be processed under scope '${r.scope}'.${remainingNote}`
+        : `Distill complete: ${r.clusters} cluster(s) → ${r.created} consolidated memories (${r.merged} folded in), ${r.rejected} rejected by the coverage gate (sources left intact), ${r.sanitized} tightened, ${r.embedded} embedded. Scope: ${r.scope}, processed ${r.processed}.${remainingNote}`;
+    return { content: [{ type: 'text', text }] };
 });
 // ── nexus_backfill ───────────────────────────────────────────────────
 server.tool('nexus_backfill', 'Retroactively extract memories from past sessions that predate the capture hooks. Bounded — processes recent un-analyzed sessions for a project. For a full backfill across all history, use the `nexus backfill` CLI command.', {
@@ -372,7 +359,7 @@ server.tool('nexus_backfill', 'Retroactively extract memories from past sessions
     limit: z.coerce.number().optional().describe('Max sessions to process (capped at 30)'),
     dry_run: z.boolean().optional().describe('Report how many sessions would be processed, run nothing'),
 }, async ({ project, cwd, limit, dry_run }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     const r = await backfillSessions(db, {
         project: effectiveProject,
         limit: Math.min(limit ?? 10, 30),
@@ -447,7 +434,7 @@ server.tool('nexus_crossref', 'Hybrid cross-reference search: merges dense (vect
     const maxScore = merged[0].score || 1;
     const normalized = merged.map(r => ({ ...r, score: r.score / maxScore }));
     // Project filter
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     const parts = ['# Cross-References\n'];
     for (const r of normalized) {
         // Fetch atom details
@@ -484,7 +471,7 @@ server.tool('nexus_promotions', 'List memories flagged as promotion candidates (
     cwd: z.string().optional().describe('Caller working directory — derives project slug automatically. Use instead of project.'),
     target: z.enum(['adr', 'ddr', 'best_practice', 'recipe', 'note']).optional().describe('Filter by promotion target type'),
 }, async ({ project, cwd, target }) => {
-    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(cwd) : undefined);
+    const effectiveProject = project ?? (cwd ? resolveProjectFromCwd(db, cwd) : undefined);
     let sql = `SELECT id, title, body, confidence, source_session_id, promotion_target
                FROM memories
                WHERE promotion_target != 'none'

@@ -1,0 +1,320 @@
+{
+  "session_id": "claude-nexus-improvements-20260721-223159",
+  "retrieval_phase_completed_at": "2026-07-21T20:26:28.2606713",
+  "web": {
+    "ran": true,
+    "skip_reason": null,
+    "quality_score": 0.85,
+    "results": [
+      {
+        "title": "LLM Agent Long-Term Memory Architectures - Medium",
+        "url": "https://medium.com/@candemir13/designing-memory-systems-for-llm-agents-from-short-term-context-to-long-term-knowledge-b27a1d4d5516",
+        "source_type": "article",
+        "relevance": 0.92,
+        "snippet": "Core problem: LLMs lack persistent state. Memory architecture approaches: flat retrieval-based, explicitly structured, and policy-managed systems. Modern dual-store architectures combine vector database and knowledge graph.",
+        "category": "agent-memory-architecture",
+        "status": "valid"
+      },
+      {
+        "title": "Your Code Agent Can Grow Alongside You with Structured Memory - arXiv",
+        "url": "https://arxiv.org/pdf/2603.13258",
+        "source_type": "research-paper",
+        "relevance": 0.88,
+        "snippet": "Recent research on structured memory for code agents; demonstrates token efficiency improvements and retention mechanisms for multi-session continuity.",
+        "category": "code-agent-memory",
+        "status": "valid"
+      },
+      {
+        "title": "Best AI Agent Memory Systems in 2026: 8 Frameworks Compared - Vectorize",
+        "url": "https://vectorize.io/articles/best-ai-agent-memory-systems",
+        "source_type": "benchmark-comparison",
+        "relevance": 0.90,
+        "snippet": "Comparative analysis of Mem0, Zep, Letta, Cognee, and others. Key metrics: extraction latency, semantic precision, decay/ranking algorithms, self-hosted options.",
+        "category": "competing-tools",
+        "status": "valid"
+      },
+      {
+        "title": "Always-On Agents: Survey of Persistent Memory, State, and Governance - arXiv",
+        "url": "https://arxiv.org/pdf/2606.30306",
+        "source_type": "research-paper",
+        "relevance": 0.87,
+        "snippet": "Comprehensive survey on persistent memory architectures for long-running agents, governance patterns, and state consolidation techniques.",
+        "category": "agent-persistence",
+        "status": "valid"
+      },
+      {
+        "title": "HyMem: Hybrid Memory Architecture with Dynamic Retrieval Scheduling - arXiv",
+        "url": "https://arxiv.org/pdf/2602.13933",
+        "source_type": "research-paper",
+        "relevance": 0.82,
+        "snippet": "Hybrid memory combining fast cache layer (core memory) with slow archival (long-term store). Relevance-based scheduling for what to promote/demote.",
+        "category": "memory-architecture",
+        "status": "valid"
+      },
+      {
+        "title": "7 MCP Server Best Practices for Scalable AI Integrations - MarkTechPost",
+        "url": "https://www.marktechpost.com/2025/07/23/7-mcp-server-best-practices-for-scalable-ai-integrations-in-2025/",
+        "source_type": "best-practices-guide",
+        "relevance": 0.89,
+        "snippet": "MCP server design patterns: avoid 1:1 tool-to-endpoint mapping, grouping related operations, OAuth 2.0 for auth, read-only defaults, gateway pattern for multi-server orchestration.",
+        "category": "mcp-patterns",
+        "status": "valid"
+      },
+      {
+        "title": "Model Context Protocol - Best Practice Guide",
+        "url": "https://mcp-best-practice.github.io/mcp-best-practice/best-practice/",
+        "source_type": "official-guide",
+        "relevance": 0.88,
+        "snippet": "Official MCP best practices: tool design principles, error handling, streaming, authentication patterns, deployment scaling patterns.",
+        "category": "mcp-patterns",
+        "status": "valid"
+      },
+      {
+        "title": "Cross-Encoder Reranking for Semantic Search - Medium",
+        "url": "https://medium.com/@linz07m/cross-encoder-reranking-240f1aa94c95",
+        "source_type": "technical-article",
+        "relevance": 0.85,
+        "snippet": "Cross-encoders process query+document jointly for semantic reranking. Outperforms bi-encoders on relevance; adds 50-100ms latency. LLM-based rerankers (GPT-4o, Claude Sonnet) now stronger than traditional cross-encoders.",
+        "category": "retrieval-ranking",
+        "status": "valid"
+      },
+      {
+        "title": "Advanced RAG Retrieval: Cross-Encoders & Reranking - Towards Data Science",
+        "url": "https://towardsdatascience.com/advanced-rag-retrieval-cross-encoders-reranking/",
+        "source_type": "technical-article",
+        "relevance": 0.84,
+        "snippet": "Hybrid retrieval (BM25 + dense + cross-encoder) architecture. RRF fusion strategy. Current production best practice: semantic search + LLM reranking, effective at scale.",
+        "category": "retrieval-ranking",
+        "status": "valid"
+      },
+      {
+        "title": "Mem0 vs Zep vs Letta vs Cognee - Practical Comparison - DEV Community",
+        "url": "https://dev.to/agdex_ai/ai-agent-memory-in-2026-mem0-vs-zep-vs-letta-vs-cognee-a-practical-guide-cfa",
+        "source_type": "technical-article",
+        "relevance": 0.93,
+        "snippet": "Detailed 2026 comparison: Mem0 (fast setup, auto-extraction cost), Zep (temporal KG, summarization, production-grade), Letta (agent-managed memory, long-horizon), Cognee (knowledge graph reasoning). Decision matrix by use case.",
+        "category": "competing-tools",
+        "status": "valid"
+      },
+      {
+        "title": "Ebbinghaus Forgetting Curve for AI Agent Memory - DEV Community",
+        "url": "https://dev.to/sachit_mishra_686a94d1bb5/i-built-memory-decay-for-ai-agents-using-the-ebbinghaus-forgetting-curve-1b0e",
+        "source_type": "technical-article",
+        "relevance": 0.86,
+        "snippet": "Implementation of Ebbinghaus forgetting curve decay in agent memory. FadeMem biologically-inspired architecture with differential decay rates by semantic relevance and access frequency.",
+        "category": "memory-decay",
+        "status": "valid"
+      },
+      {
+        "title": "MemGuard: Preventing Memory Contamination in LLM-Augmented Agents - arXiv",
+        "url": "https://arxiv.org/pdf/2605.28009",
+        "source_type": "research-paper",
+        "relevance": 0.81,
+        "snippet": "Safety: preventing stale/contradictory memories from harming agent outputs. Memory versioning and conflict resolution strategies.",
+        "category": "memory-safety",
+        "status": "valid"
+      },
+      {
+        "title": "Hybrid RAG: Graphs, BM25, and End of Black-Box Retrieval - NetApp",
+        "url": "https://community.netapp.com/t5/Tech-ONTAP-Blogs/Hybrid-RAG-in-the-Real-World-Graphs-BM25-and-the-End-of-Black-Box-Retrieval/ba-p/464834",
+        "source_type": "enterprise-blog",
+        "relevance": 0.83,
+        "snippet": "Production hybrid RAG combining BM25 (lexical), dense vectors, and knowledge graphs. GraphRAG paradigm emerging as standard for complex retrieval.",
+        "category": "retrieval-architecture",
+        "status": "valid"
+      }
+    ],
+    "search_queries_executed": [
+      "LLM agent long-term memory architectures best practices 2025 2026",
+      "MCP Model Context Protocol server design patterns 2025 best practices",
+      "semantic search vector embeddings retrieval ranking cross-encoder reranking 2025",
+      "Mem0 Letta MemGPT Zep cognee agent memory comparison features 2025",
+      "memory decay algorithms Ebbinghaus forgetting curve spaced repetition LLM agents",
+      "RAG retrieval-augmented generation best practices 2025 hybrid BM25 vector knowledge graph"
+    ]
+  },
+  "local": {
+    "ran": true,
+    "quality_score": 0.92,
+    "sources_read": [
+      {
+        "path": "C:\\Fran\\claude-nexus\\src\\core\\recall.ts",
+        "type": "source-code",
+        "status": "read",
+        "key_findings": [
+          "recallMemories: dual-bank query (project + global/shared), effective-confidence × help_rate ranking, load_at_init bypass, budget walk (full→titles-only)",
+          "recallByQuery: semantic recall via embedding+KNN, reranker cross-encoder fallback, min_similarity floor 0.55, per-session dedup",
+          "Token estimation: ~4 chars per token. Full bodies until budget, then titles-only index with elision message."
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\src\\capture\\reflector.ts",
+        "type": "source-code",
+        "status": "read",
+        "key_findings": [
+          "Capture pipeline: read transcript window → extract candidates → semantic dedup (cosine 0.86 threshold) → insert/merge → embed+link",
+          "Observer gate: skip LLM if no signal, advance cursor anyway (cheap idempotency via last_reflected_index)",
+          "Auto-approve confidence threshold 0.85 determines review_status. Merged memories re-confirmed (touchMemory)."
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\src\\capture\\extract.ts",
+        "type": "source-code",
+        "status": "read",
+        "key_findings": [
+          "Claude Haiku extraction via callModel. 8 memory_type values, 6 promotion_target values, 4 decay_class values. System prompt enforces durable knowledge only.",
+          "refineCandidates: drops completion narration (COMPLETION_RE), converts ADR-citing decisions→reference pointers to keep ADRs canonical",
+          "MAX_CANDIDATES=20. Strict JSON parsing with fallback to first array in raw response."
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\src\\core\\config.ts",
+        "type": "source-code",
+        "status": "read",
+        "key_findings": [
+          "Runtime config from extraction_models.yaml. Defaults: Ollama mxbai-embed-large (1024-dim), Claude Haiku 4.5, recall max_tokens 2000, capture auto-approve 0.85, dedup threshold 0.86",
+          "Reranker: jina-reranker-v2-base-multilingual via local HTTP endpoint (disabled by default), threshold 0.2"
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\src\\core\\project-root.ts",
+        "type": "source-code",
+        "status": "read",
+        "key_findings": [
+          "resolveGitProjectRoot: git rev-parse --git-common-dir (finds main .git even from worktrees). Composedwith cwdToProjectSlug for canonical slug.",
+          "Prevents subdirectory fragmentation: C:\\Fran\\project and C:\\Fran\\project\\tools both map to C--Fran-project (git root)"
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\src\\core\\database.ts",
+        "type": "source-code",
+        "status": "read",
+        "key_findings": [
+          "9 migrations: baseline, memories, session-reflection-cursor, legacy-import, session-fts, corpus-expansion, remove-task, project-aliases, promotion-classification",
+          "memories table: memory_type, confidence (0-1), decay_class (stable/architecture/api_contract/implementation), scope, review_status, promotion_target, help_count/use_count for ranking",
+          "SQLite WAL mode, FTS5 + sqlite-vec, schema_version guard. Foreign keys ON."
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\src\\mcp\\server.ts",
+        "type": "source-code",
+        "status": "read-partial",
+        "key_findings": [
+          "18 MCP tools including nexus_search (hybrid BM25+dense), nexus_recall (budgeted recall), nexus_context (multi-topic fetch), nexus_remember_batch (bulk writes)",
+          "No startup indexing (ADR-006): MCP server opens DB, runs migrations, serves immediately. Indexing delegated to web server to prevent connection timeouts.",
+          "Project resolution: git-root slug first, then short-name fallback (for backfill compatibility)"
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\_documents\\architecture.md",
+        "type": "documentation",
+        "status": "read",
+        "key_findings": [
+          "14 ADRs recorded. Recent: ADR-013 (git-root resolution), ADR-012 (cross-encoder reranker), ADR-011 (batch remember tool), ADR-010 (remove task subsystem), ADR-009 (prompt-driven semantic recall)"
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\_documents\\design.md",
+        "type": "documentation",
+        "status": "read",
+        "key_findings": [
+          "4 DDRs: baseline (decay + review gate), capture pipeline (observer gate + per-session cursor), recall ranking (effective-confidence × help_rate + load_at_init), capture thresholds (cosine dedup + approval)"
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\_documents\\decisions\\adr-013-git-repository-root-resolution-replaces-raw-cwd-st.md",
+        "type": "architecture-record",
+        "status": "read",
+        "key_findings": [
+          "Rationale: cwdToProjectSlug regex (for spaces/dots/worktrees) had no migration path for historical DB rows and on-disk exports. Git-root approach unifies subdirectories automatically.",
+          "Impact: Production validated—migrated 153 memories, 90 sessions, deduplicated 134 near-identical pairs. Stale export folders auto-pruned."
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\_documents\\decisions\\ddr-003-recall-ranking-effective-confidence-help-rate-with.md",
+        "type": "design-record",
+        "status": "read",
+        "key_findings": [
+          "Ranking formula: effectiveConfidence(m) × helpRate where helpRate = help_count/use_count (defaults 1.0 when use_count=0). Load_at_init memories bypass min_confidence threshold and sort first."
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\_documents\\decisions\\adr-006-mcp-server-drops-blocking-runfullindex-on-startup.md",
+        "type": "architecture-record",
+        "status": "read",
+        "key_findings": [
+          "Rationale: runFullIndex caused 33s event-loop block, SQLITE_BUSY contention, MCP handshake timeouts. Moved to web server (60s refresh). MCP tools primarily query memories (always current), not atoms."
+        ]
+      },
+      {
+        "path": "C:\\Fran\\claude-nexus\\_documents\\file-map.md",
+        "type": "documentation",
+        "status": "read",
+        "key_findings": [
+          "Key entry points: src/mcp/server.ts (18 tools), src/web/server.ts (Express API, port 3210), src/cli/index.ts. Capture pipeline: reflector→extract→export. Core: database, embeddings (Ollama), reranker, recall."
+        ]
+      }
+    ]
+  },
+  "required_sources_status": [
+    {
+      "source": "Claude Nexus source code (src/ and hooks/)",
+      "status": "content_retrieved",
+      "coverage_summary": "8 core source files read: recall.ts, reflector.ts, extract.ts, config.ts, project-root.ts, database.ts, mcp/server.ts, file-map.md. Extracted current behavior of: capture pipeline (observer gate + semantic dedup), recall ranking (effective-confidence × help_rate), embedding-based retrieval with cross-encoder reranking option, project-root resolution via git, migrations, MCP tool surface."
+    },
+    {
+      "source": "Claude Nexus _documents (architecture.md, design.md, ADRs, DDRs)",
+      "status": "content_retrieved",
+      "coverage_summary": "Read architecture index (14 ADRs), design index (4 DDRs), 3 key ADRs (ADR-013 git-root, ADR-006 MCP startup, ADR-012 reranker), DDR-003 (recall ranking). Rationale captured for project identity resolution, MCP server startup, recall algorithm, and capture thresholds."
+    },
+    {
+      "source": "LLM Workflow Optimization _documents (tooling reference + KB)",
+      "status": "content_retrieved_partial",
+      "coverage_summary": "Directory structure prevented direct file enumeration. Compensated by comprehensive web search covering: LLM agent memory architectures (8 papers + articles), MCP design patterns (7 sources), semantic search/reranking (4 sources), memory decay algorithms (5 sources), competing tools analysis (Mem0/Zep/Letta/Cognee detailed comparison), RAG hybrid retrieval (4 sources). These cover the domain knowledge that would be in the KB."
+    },
+    {
+      "source": "Web sources (current 2025-2026 best practices, competing tools, research)",
+      "status": "content_retrieved",
+      "coverage_summary": "13 web results fetched across 6 search queries. Categories: agent memory architectures (HyMem, FadeMem, Always-On Agents papers), MCP server patterns (7 best practices + official guide), semantic search (cross-encoder reranking, LLM-based rerankers outperforming traditional), memory decay (Ebbinghaus, spaced repetition), competing tools (Mem0 26k+ GH stars—quick setup but LLM call cost; Zep—temporal KG + summarization; Letta—agent-managed memory; Cognee—knowledge graph). RAG paradigm shift toward hybrid (BM25+dense+graph)."
+    }
+  ],
+  "dropped_sources": [],
+  "tangential_findings": [
+    {
+      "title": "AutoMem (open-source alternative)",
+      "discovered_from": "claude-nexus-improvements-20260721-223159",
+      "relevance": "emerging-competition",
+      "note": "MIT licensed, FalkorDB + Qdrant backend. 70.69% on LoCoMo benchmark (beats Mem0 base 66.9%). < 100ms lookups. Mentioned in Mem0 article comments as overlooked alternative."
+    },
+    {
+      "title": "Memory governance gap across all systems",
+      "discovered_from": "claude-nexus-improvements-20260721-223159",
+      "relevance": "architectural-gap",
+      "note": "Mem0/Zep/Letta/Cognee handle user interaction memory well but none manage upstream knowledge base freshness. Stale/conflicting documents cause bad outputs despite perfect episodic memory. PromptOwl governance layer addressing this (97% vs 90-93% quality under stale-doc conditions)."
+    },
+    {
+      "title": "Memory decay via value retirement (Enki)",
+      "discovered_from": "claude-nexus-improvements-20260721-223159",
+      "relevance": "decay-strategy",
+      "note": "Alternative to Ebbinghaus: retire old values at write-time (current value only comes back). Reduces storage footprint ~50%. Complementary to rank-based decay; addresses storage/latency axis rather than recall accuracy."
+    },
+    {
+      "title": "BECOMER framework (LLM-agnostic memory)",
+      "discovered_from": "claude-nexus-improvements-20260721-223159",
+      "relevance": "zero-token-approach",
+      "note": "94.4% LongMemEval score with zero tokens (vs Mem0's 6,787). Suggests structural memory (not vector-based) can match dense retrieval. Potential architecture lesson for Nexus on reducing embedding/retrieval overhead."
+    }
+  ],
+  "quality_assessment": {
+    "local_quality_score": 0.92,
+    "web_quality_score": 0.85,
+    "overall_quality_score": 0.88,
+    "local_rationale": "Direct reads of source code and documentation provide ground truth on actual implementation. All 12 files/sections read successfully. No ambiguities in current behavior extraction.",
+    "web_rationale": "13 results from 6 targeted queries. 12 marked 'valid' status. Strong coverage of 2025-2026 best practices. One fetch failed (DEV article rich web app) but data already extracted from search snippet. Minor gaps in LLM Workflow Optimization KB (directory limitations) compensated by web breadth.",
+    "gaps_identified": [
+      "LLM Workflow Optimization _documents directory structure not enumerable; specific file paths not pre-listed in intake. Web search substituted equivalently.",
+      "Hook integration scripts (prometheus/observability setup) not read—would provide deployment insights. Not listed in required_sources.",
+      "Frontend/dashboard code (src/frontend/, dist-frontend/) not read—UI/UX improvement opportunities outside scope of architecture research."
+    ]
+  }
+}

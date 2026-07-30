@@ -8,6 +8,7 @@
  */
 export interface TranscriptWindow {
     text: string;
+    rawLines: string[];
     totalLines: number;
     newLines: number;
     hasSignal: boolean;

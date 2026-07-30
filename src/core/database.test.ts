@@ -209,6 +209,32 @@ describe('schema migrations', () => {
     db.close();
   });
 
+  it('migration v11: distilled_at column + index exist and default to NULL', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    expect(columnExists(db, 'memories', 'distilled_at')).toBe(true);
+
+    db.prepare(`
+      INSERT INTO memories (id, title, body, memory_type, content_hash)
+      VALUES ('test-distill-cursor', 'Test', 'body', 'insight', 'hash-distill')
+    `).run();
+    const row = db.prepare(`SELECT distilled_at FROM memories WHERE id = 'test-distill-cursor'`).get() as { distilled_at: string | null };
+    expect(row.distilled_at).toBeNull();
+
+    const idx = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memories_distilled_at'`).get();
+    expect(idx).toBeTruthy();
+    expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+    db.close();
+  });
+
+  it('migration v11: running initializeSchema twice is idempotent (no throw, column queryable)', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    expect(() => initializeSchema(db)).not.toThrow();
+    expect(db.prepare(`SELECT distilled_at FROM memories LIMIT 0`).all()).toEqual([]);
+    db.close();
+  });
+
   it('migration v7 removes task support while preserving corpus-expansion columns', () => {
     const db = openDatabase(':memory:');
 

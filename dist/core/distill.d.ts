@@ -11,12 +11,94 @@
  * model via callModel().
  */
 import Database from 'better-sqlite3';
+import type { Memory } from './types.js';
+export interface DistillOptions {
+    project?: string;
+    cwd?: string;
+    limit?: number;
+    dryRun?: boolean;
+    since?: string;
+}
 export interface DistillResult {
     embedded: number;
     clusters: number;
     merged: number;
     created: number;
+    rejected: number;
     sanitized: number;
+    backendFailed: boolean;
+    processed: number;
+    eligibleRemaining: number;
+    scope: string;
+    dryRun: boolean;
 }
-export declare function distillMemories(db: Database.Database, embedFn?: (text: string) => Promise<Float32Array | null>, callFn?: (system: string, user: string) => Promise<string>): Promise<DistillResult>;
+/**
+ * Exported so scripts/check-merge-model.mjs gates a candidate merge model against
+ * the exact prompt distill uses, rather than a copy that can drift.
+ *
+ * The sentence budget scales with cluster size. The previous flat "1-4 sentences"
+ * contradicted "drop nothing that matters" — a cluster of information-dense
+ * memories cannot fit in 4 sentences, so models obeyed the cap and silently
+ * discarded identifiers. An audit of 678 real merges (2026-07-26) measured ~30%
+ * of file names, script names, config keys and shader keywords lost, on both
+ * Haiku and a local model. Since distill supersedes the originals, that is
+ * permanent loss, so the budget now yields to the facts rather than the reverse.
+ */
+export declare const mergePrompt: (clusterSize: number) => string;
+export declare const SANITIZE_PROMPT = "Tighten this memory. Remove redundancy and filler; keep every distinct fact and the reasoning. Do not add anything.\n\nReproduce every identifier VERBATIM \u2014 file names and paths, function/script/class names, config keys, CLI flags, numbers, versions, URLs. Compress prose, never identifiers.\n\nOutput STRICT JSON ONLY: {\"title\": \"...\", \"body\": \"...\"}  No prose or fences.";
+export type ResolvedScope = {
+    kind: 'project';
+    slug: string;
+} | {
+    kind: 'global';
+} | {
+    kind: 'all';
+};
+/**
+ * Maps DistillOptions -> ResolvedScope. `project` wins over `cwd`; literal
+ * `project: "global"` targets the global bucket. `cwd` derives a slug via
+ * resolveProjectFromCwd — the same fallback-enhanced resolver nexus_backfill
+ * and nexus_search use, so a project stored only under a short-name slug
+ * still resolves instead of silently degrading to "all" (a clean-zero run).
+ */
+export declare function resolveScope(db: Database.Database, opts: DistillOptions | undefined): ResolvedScope;
+/**
+ * The sweep cursor predicate. A memory is a candidate only while it has never
+ * been examined (`distilled_at IS NULL`), or — when the caller passes `since` —
+ * was last examined before that cutoff. Without this, every invocation re-pulls
+ * the identical top-`limit` window and a large scope can never be swept.
+ */
+export declare function cursorClause(since: string | undefined): string;
+/** Pure SQL builder over the scope + cursor filter. Appends LIMIT :limit — countEligible never does. */
+export declare function buildEligibleQuery(scope: ResolvedScope, limit: number, since?: string): {
+    sql: string;
+    params: Record<string, unknown>;
+};
+/**
+ * Count of rows under scope that the cursor still considers un-examined — same
+ * filter as buildEligibleQuery, no LIMIT. This is genuine remaining work, so a
+ * caller looping until it hits 0 terminates.
+ */
+export declare function countEligible(db: Database.Database, scope: ResolvedScope, since?: string): number;
+/**
+ * Read a memory's already-stored embedding straight from memories_vec by
+ * SQLite rowid — no schema change, no Ollama call. Returns null on any miss
+ * (no row yet, or memories_vec/sqlite-vec unavailable) so callers fall back
+ * to embedFn(m.body).
+ */
+export declare function loadStoredVector(db: Database.Database, memoryId: number): Float32Array | null;
+/**
+ * Cosine of a freshly written merge against every source it folded in, returning
+ * the worst offender when any falls below MERGE_COVERAGE_FLOOR, else null.
+ *
+ * Vectors are stored normalized (embedMemory -> normalize), so cosine is a dot
+ * product — no embedding calls, no model. Returns null when vectors are
+ * unreadable (sqlite-vec absent): the gate fails OPEN, preserving today's
+ * behaviour rather than blocking all merges on an unrelated capability.
+ */
+export declare function coverageShortfall(db: Database.Database, mergeId: string, sources: Memory[], floor?: number): {
+    sourceId: string;
+    similarity: number;
+} | null;
+export declare function distillMemories(db: Database.Database, opts?: DistillOptions, embedFn?: (text: string) => Promise<Float32Array | null>, callFn?: (system: string, user: string) => Promise<string>): Promise<DistillResult>;
 //# sourceMappingURL=distill.d.ts.map

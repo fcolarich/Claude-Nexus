@@ -1,0 +1,78 @@
+{
+  "input_sizes": {
+    "raw_condensed_chars": 60000,
+    "raw_truncated": true,
+    "vcc_compacted_chars": 185658
+  },
+  "raw_candidates": [],
+  "compacted_candidates": [
+    {
+      "title": "Claude-context incremental indexing unreachable via MCP tool",
+      "body": "claude-context's merkle-DAG incremental indexing (reindexByChange, FileSynchronizer, SHA256 content hashing) is fully implemented but not wired to the MCP tool surface. index_codebase always does full-reindex; incremental path only runs on internal 5-min background timer inside the MCP server process. On-demand incremental indexing is not exposed to agents calling the tool.",
+      "memory_type": "insight",
+      "scope": "global",
+      "decay_class": "architecture",
+      "confidence": 0.98,
+      "tags": [
+        "claude-context",
+        "incremental-indexing",
+        "mcp-gap"
+      ],
+      "promotion_target": "none"
+    },
+    {
+      "title": "SynthBrain v2 removed GitNexus symbol-extraction dependency",
+      "body": "PREVIOUS: SynthBrain hard-depends on GitNexus for symbol extraction. CORRECTED TO: SynthBrain v2 uses tree-sitter directly for symbol extraction; GitNexus removed as a hard dependency. GitNexus remains optional at runtime for call-graph queries only, not for core L2/L4 generation. This makes the integration swappable (e.g., CodeGraph callers/callees as drop-in replacement).",
+      "memory_type": "correction",
+      "scope": "global",
+      "decay_class": "architecture",
+      "confidence": 0.96,
+      "tags": [
+        "synthbrain",
+        "gitnexus",
+        "dependency"
+      ],
+      "promotion_target": "none"
+    },
+    {
+      "title": "Deep source audit uncovers features README-only reads miss",
+      "body": "Graphify's SHA256 hash-cache incremental rebuild was not visible in README but documented in knowledge-vault atoms. README-level retrieval of cloned repos misses implementation details; verify critical claims against actual source code (config, test, implementation files) not just documentation.",
+      "memory_type": "insight",
+      "scope": "global",
+      "decay_class": "stable",
+      "confidence": 0.87,
+      "tags": [
+        "audit-methodology",
+        "tool-evaluation"
+      ],
+      "promotion_target": "best_practice"
+    },
+    {
+      "title": "Retrieval: inventing plausible cover stories breaks trust",
+      "body": "During research synthesis, an inconsistency (`.gitnexus/kuzu/` vs. `.gitnexus/`) was \"fixed\" by inventing a plausible-sounding rename story (\"formerly KuzuDB, now LadybugDB\") without checking sources. The path never appears in the actual README. Fabrication trades off convenience for credibility; always verify uncertain claims directly against primary sources before wrapping them in explanations.",
+      "memory_type": "failure",
+      "scope": "global",
+      "decay_class": "stable",
+      "confidence": 0.92,
+      "tags": [
+        "research-trap",
+        "source-verification"
+      ],
+      "promotion_target": "best_practice"
+    },
+    {
+      "title": "Nexus vs uber-db knowledge boundary (classify, never auto-write)",
+      "body": "Nexus SessionEnd extraction classifies memories into promotion_target (adr/ddr/best_practice/recipe/note/none) but never auto-writes typed artifacts. Candidates surface for human review; promotion happens via existing per-file skills, which write .md files that uber-db watcher indexes automatically. Memories remain provisional/experiential knowledge only. → ADR-060.",
+      "memory_type": "reference",
+      "scope": "project",
+      "decay_class": "architecture",
+      "confidence": 0.94,
+      "tags": [
+        "nexus",
+        "uber-database",
+        "knowledge-promotion"
+      ],
+      "promotion_target": "none"
+    }
+  ]
+}

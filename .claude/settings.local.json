@@ -1,6 +1,7 @@
 {
   "env": {
-    "OTEL_RESOURCE_ATTRIBUTES": "project=claude_nexus"
+    "OTEL_RESOURCE_ATTRIBUTES": "project=claude_nexus",
+    "UBERDB_PROJECT_ID": "041e44cdc96e68a820ea87b5eb6651119790d8c1ff1d5e65ecd6c6cd9830eace"
   },
   "permissions": {
     "allow": [
@@ -19,7 +20,10 @@
       "PowerShell(echo $env:TEMP)",
       "PowerShell(python \"$env:LOCAL_MARKETPLACE\\\\..\\\\..\\\\..\\\\Users\\\\Fran\\\\.claude\\\\plugins\\\\cache\\\\local\\\\session-kanban\\\\scripts\\\\card_write.py\" \"Run one real session end-to-end for Promotion Classification feature; check nexus_promotions/SYSTEM_PROMPT classification precision \\(AC-1\\) and tighten conservative-flagging prompt rules if Haiku over-flags promotion_target\" 2>&1)",
       "PowerShell(git -C C:\\\\Fran\\\\claude-nexus log -1 --format=%cd dist/mcp/server.js 2>$null)",
-      "PowerShell(git -C C:\\\\Fran\\\\claude-nexus status --short src/mcp/server.ts)"
+      "PowerShell(git -C C:\\\\Fran\\\\claude-nexus status --short src/mcp/server.ts)",
+      "PowerShell(git branch -d feature/promotion-classification)",
+      "mcp__plugin_claude-nexus_claude-nexus__nexus_promotions",
+      "PowerShell(\"utc now: \" + \\(Get-Date\\).ToUniversalTime\\(\\).ToString\\('yyyy-MM-dd HH:mm:ss'\\); \"local now: \" + \\(Get-Date\\).ToString\\('yyyy-MM-dd HH:mm:ss'\\))"
     ]
   }
 }

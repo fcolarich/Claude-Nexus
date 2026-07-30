@@ -1,1 +1,1 @@
-{"version":3,"file":"runner.d.ts","sourceRoot":"","sources":["../../src/capture/runner.ts"],"names":[],"mappings":"AAAA;;;;;GAKG"}
+{"version":3,"file":"runner.d.ts","sourceRoot":"","sources":["../../src/capture/runner.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AAMH,OAAO,QAAQ,MAAM,gBAAgB,CAAC;AAQtC,OAAO,KAAK,EAAE,OAAO,EAAE,MAAM,qBAAqB,CAAC;AAoBnD;;;;;;;;;;;GAWG;AACH,wBAAsB,eAAe,CACnC,EAAE,EAAE,QAAQ,CAAC,QAAQ,EACrB,SAAS,EAAE,MAAM,EACjB,cAAc,EAAE,MAAM,EACtB,QAAQ,GAAE,MAAwB,EAClC,OAAO,CAAC,EAAE,OAAO,GAChB,OAAO,CAAC,IAAI,CAAC,CAoCf"}

@@ -7,7 +7,7 @@ Maintained via the `update-file-map` skill.
 
 | File | Role |
 |------|------|
-| `src/mcp/server.ts` | MCP server — 18 tools exposed over stdio transport (knowledge, recall, search, project/session management) |
+| `src/mcp/server.ts` | MCP server — 20 tools exposed over stdio transport (knowledge, recall, search, project/session management); see NOTE-002 for the full tool audit |
 | `src/web/server.ts` | Express REST API server, port 3210; serves built dashboard from dist-frontend/ |
 | `src/cli/index.ts` | CLI entry point — index, search, context, list, health, stats, sessions, watch, backfill, prune-narration, migrate-projects |
 | `hooks/hooks.json` | Claude Code hook manifest — wires UserPromptSubmit (recall) and Stop/PreCompact/SessionEnd (capture) |
@@ -23,6 +23,9 @@ Maintained via the `update-file-map` skill.
 | `src/core/config.ts` | Reads extraction_models.yaml; provides runtime config with sane defaults |
 | `src/core/project-root.ts` | Project identity resolution — `resolveGitProjectRoot()` (git-common-dir lookup, collapses worktrees onto main checkout) composed with `cwdToProjectSlug()` via `resolveProjectSlug()`; the one function every live-cwd call site uses (ADR-013) |
 | `src/core/governance.ts` | consolidateMemories() phases 4-5: `governByHelpRate` (confidence demote/reinforce by observed help-rate) and `detectContradictions` (heuristic pre-filter + bounded Haiku confirmation, surfacing-only via `diagnostics` rows, gated behind DDR-005) |
+| `src/core/search.ts` | `hybridSearch`/`hybridSearchMemories` — FTS5 + sqlite-vec retrieval fused via `rrf.ts`; backs the `nexus_search` MCP tool |
+| `src/core/rrf.ts` | Reciprocal Rank Fusion helper — merges ranked FTS5 and vector result lists (k=60) |
+| `src/capture/feedback-judge.ts` | Retrospective feedback judge — feeds `governByHelpRate` demotion/reinforcement signal (DDR-006) |
 | `src/capture/reflector.ts` | Background capture pipeline — reads new transcript lines, calls Haiku, dedup-merges memories |
 | `src/capture/extract.ts` | Haiku-based memory extraction from transcript windows |
 | `src/capture/export.ts` | Exports memories as markdown mirror files; prunes stale project export buckets with no live memories |
@@ -31,6 +34,10 @@ Maintained via the `update-file-map` skill.
 | `extraction_models.yaml` | Runtime config: embedding model, extraction model, recall budget, capture thresholds |
 | `package.json` | Project manifest, scripts, dependencies |
 | `scripts/review-distill.mjs` | Read-only reviewer for `nexus_distill` output — shows each merged memory next to the originals it superseded, via `memories.superseded_by`. Run with `npm run review-distill -- <project-slug> [limit]`. |
+| `scripts/distill-sweep.mjs` | Drives `distillMemories` chunk-by-chunk until `eligibleRemaining` hits 0, importing the current `dist/` build (the long-lived MCP server pins whatever build it started with). Aborts on a stalled cursor or on `clusters > 0 && created == 0` (silent extraction-backend failure). `--merge-model` routes merges at a local Ollama model. `node scripts/distill-sweep.mjs [--limit N] [--project SLUG] [--merge-model M] [--dry-run]`. |
+| `scripts/check-merge-model.mjs` | Pre-sweep gate for a candidate merge model — runs the real `mergePrompt()` over clusters with known identifiers and fails any model that drops one. Includes identifier-dense cases mirroring observed failures (ADR-018). `node scripts/check-merge-model.mjs <ollama-model\|configured>`. |
+| `scripts/audit-merges.mjs` | Post-sweep verification on two independent signals: **identifier loss** (code-like tokens in the superseded originals missing from the merge) and **coverage** (cosine of the merge against each folded source, read straight from `memories_vec` — a low minimum means a source was ignored, which identifier-matching cannot detect for prose-only sources). `--strict`, `--all`, `--db <snapshot>` for before/after, `--out <json>` writes flagged merges plus their originals' full text for later agent review. Read-only, safe during a live sweep. |
+| `scripts/rollback-distill.mjs` | Undoes a distill sweep: restores folded originals (`superseded_by` → NULL), deletes the merges, clears `distilled_at`. Identifies merges by their `'refines'` links and aborts if any candidate has a `source_session_id` (i.e. is not distill output). Dry-run by default; `VACUUM INTO` snapshot before `--apply`. |
 
 ## Key folders
 

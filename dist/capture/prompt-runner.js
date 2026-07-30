@@ -23,20 +23,38 @@ async function readStdin() {
         input += chunk;
     return input;
 }
-const stateDir = join(homedir(), '.claude', 'memories', '.recall-state');
-function loadInjected(sessionId) {
+const defaultStateDir = join(homedir(), '.claude', 'memories', '.recall-state');
+/**
+ * Loads the per-session recall-state file as a Map<memoryId, evaluated>.
+ * Transparently migrates the legacy flat string[] format (pre-feedback-judge)
+ * to {id, evaluated:false} entries. Missing/corrupt files return an empty map
+ * — best-effort, matches the rest of this hook's failure handling.
+ */
+export function loadInjected(sessionId, stateDir = defaultStateDir) {
     try {
-        const ids = JSON.parse(readFileSync(join(stateDir, `${sessionId}.json`), 'utf-8'));
-        return new Set(Array.isArray(ids) ? ids : []);
+        const raw = JSON.parse(readFileSync(join(stateDir, `${sessionId}.json`), 'utf-8'));
+        const result = new Map();
+        if (!Array.isArray(raw))
+            return result;
+        for (const entry of raw) {
+            if (typeof entry === 'string') {
+                result.set(entry, false); // legacy format
+            }
+            else if (entry && typeof entry.id === 'string') {
+                result.set(entry.id, entry.evaluated === true);
+            }
+        }
+        return result;
     }
     catch {
-        return new Set();
+        return new Map();
     }
 }
-function saveInjected(sessionId, ids) {
+export function saveInjected(sessionId, ids, stateDir = defaultStateDir) {
     try {
         mkdirSync(stateDir, { recursive: true });
-        writeFileSync(join(stateDir, `${sessionId}.json`), JSON.stringify([...ids]));
+        const entries = [...ids.entries()].map(([id, evaluated]) => ({ id, evaluated }));
+        writeFileSync(join(stateDir, `${sessionId}.json`), JSON.stringify(entries));
     }
     catch { /* best-effort */ }
 }
@@ -53,19 +71,19 @@ async function main() {
     if (prompt.split(/\s+/).filter(Boolean).length < cfg.min_words)
         return;
     const project = resolveProjectSlug(payload.cwd || process.cwd()) ?? null;
-    const injected = sessionId ? loadInjected(sessionId) : new Set();
+    const injected = sessionId ? loadInjected(sessionId) : new Map();
     const db = openDatabase(process.env.NEXUS_DB);
     try {
         const result = await recallByQuery(db, {
             project,
             query: prompt,
             limit: 5,
-            excludeIds: [...injected],
+            excludeIds: [...injected.keys()],
         });
         if (result.items.length === 0 || !result.markdown.trim())
             return;
         for (const i of result.items)
-            injected.add(i.memory.id);
+            injected.set(i.memory.id, false);
         if (sessionId)
             saveInjected(sessionId, injected);
         process.stdout.write(JSON.stringify({

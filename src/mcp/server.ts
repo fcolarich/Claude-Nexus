@@ -496,22 +496,23 @@ server.tool(
 
 server.tool(
   'nexus_distill',
-  'Deep cleanup of existing memories: clusters related memories and rewrites each cluster into one tighter, non-redundant memory; tightens verbose ones. Use to clean up legacy or hand-written memories. Heavier than nexus_consolidate — it makes LLM rewrite calls. Bounded and scopable — processes a capped candidate pool for a project, the global bucket, or everything, with an optional dry run.',
+  'Deep cleanup of existing memories: clusters related memories and rewrites each cluster into one tighter, non-redundant memory; tightens verbose ones. Use to clean up legacy or hand-written memories. Heavier than nexus_consolidate — it makes LLM rewrite calls. Bounded and scopable — processes a capped candidate pool for a project, the global bucket, or everything, with an optional dry run. Runs advance a persistent cursor, so re-invoking sweeps the NEXT chunk; loop until eligibleRemaining is 0. A run finding 0 clusters is normal mid-sweep and is NOT a stop signal.',
   {
     project: z.string().optional().describe('Project slug to scope to. Prefer cwd to avoid guessing the slug. Literal "global" targets the global bucket.'),
     cwd:     z.string().optional().describe('Caller working directory — derives the project slug automatically.'),
     limit:   z.coerce.number().optional().describe('Max candidate memories to process this run (default 200, capped at 500)'),
     dry_run: z.boolean().optional().describe('Report eligible-memory counts without running any LLM/embedding calls'),
+    since:   z.string().optional().describe('Timestamp cutoff ("YYYY-MM-DD HH:MM:SS" UTC). Re-opens memories already distilled before it — use to start a fresh sweep over a scope already swept once. Omit to only examine never-distilled memories.'),
   },
-  async ({ project, cwd, limit, dry_run }) => {
-    const r = await distillMemories(db, { project, cwd, limit, dryRun: dry_run });
+  async ({ project, cwd, limit, dry_run, since }) => {
+    const r = await distillMemories(db, { project, cwd, limit, dryRun: dry_run, since });
     const remainingNote = r.eligibleRemaining > 0
-      ? ` ${r.eligibleRemaining} eligible memories remain under this scope — re-invoke to continue.`
-      : '';
+      ? ` ${r.eligibleRemaining} memories under this scope have not been examined yet — re-invoke to continue (even if this run found 0 clusters).`
+      : ' Sweep complete for this scope — nothing left un-examined.';
 
     const text = r.dryRun
       ? `Dry run: ${r.processed} memor${r.processed === 1 ? 'y' : 'ies'} would be processed under scope '${r.scope}'.${remainingNote}`
-      : `Distill complete: ${r.clusters} cluster(s) → ${r.created} consolidated memories (${r.merged} folded in), ${r.sanitized} tightened, ${r.embedded} embedded. Scope: ${r.scope}, processed ${r.processed}.${remainingNote}`;
+      : `Distill complete: ${r.clusters} cluster(s) → ${r.created} consolidated memories (${r.merged} folded in), ${r.rejected} rejected by the coverage gate (sources left intact), ${r.sanitized} tightened, ${r.embedded} embedded. Scope: ${r.scope}, processed ${r.processed}.${remainingNote}`;
 
     return { content: [{ type: 'text', text }] };
   }

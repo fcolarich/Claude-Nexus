@@ -117,5 +117,74 @@ describe('reflect', () => {
         expect(status).toBe('pending');
         db.close();
     });
+    it('passes vcc-compacted text to extract() when compactWindowLines succeeds', async () => {
+        const db = freshDb();
+        const p = makeTranscript(SIGNAL_TRANSCRIPT);
+        let receivedText = '';
+        const fakeVcc = {
+            compactWindowLines: () => ({ ok: true, text: 'compacted' }),
+            compactFileInPlace: () => ({ ok: true, text: 'shrunk' }),
+        };
+        await reflect(db, { session_id: 's7', transcript_path: p, project: 'proj' }, {
+            extract: async (text) => { receivedText = text; return [candA]; },
+            embed: async (t) => vecFromText(t),
+            vcc: fakeVcc,
+        });
+        expect(receivedText).toBe('compacted');
+        db.close();
+    });
+    it('falls back to window.text when compactWindowLines fails', async () => {
+        const db = freshDb();
+        const p = makeTranscript(SIGNAL_TRANSCRIPT);
+        let receivedText = '';
+        const fakeVcc = {
+            compactWindowLines: () => ({ ok: false, error: 'boom' }),
+            compactFileInPlace: () => ({ ok: true, text: 'shrunk' }),
+        };
+        await reflect(db, { session_id: 's8', transcript_path: p, project: 'proj' }, {
+            extract: async (text) => { receivedText = text; return [candA]; },
+            embed: async (t) => vecFromText(t),
+            vcc: fakeVcc,
+        });
+        expect(receivedText).toContain("no, don't use global variables here");
+        db.close();
+    });
+    it('sets sessions.vcc_shrunk_at after a full reflect() pass when compactFileInPlace succeeds', async () => {
+        const db = freshDb();
+        const p = makeTranscript(SIGNAL_TRANSCRIPT);
+        const fakeVcc = {
+            compactWindowLines: () => ({ ok: true, text: 'compacted' }),
+            compactFileInPlace: () => ({ ok: true, text: 'shrunk' }),
+        };
+        await reflect(db, { session_id: 's9', transcript_path: p, project: 'proj' }, { extract: async () => [candA], embed: async (t) => vecFromText(t), vcc: fakeVcc });
+        const row = db.prepare(`SELECT vcc_shrunk_at FROM sessions WHERE session_id = 's9'`).get();
+        expect(row.vcc_shrunk_at).not.toBeNull();
+        db.close();
+    });
+    it('leaves sessions.vcc_shrunk_at NULL when compactFileInPlace fails', async () => {
+        const db = freshDb();
+        const p = makeTranscript(SIGNAL_TRANSCRIPT);
+        const fakeVcc = {
+            compactWindowLines: () => ({ ok: true, text: 'compacted' }),
+            compactFileInPlace: () => ({ ok: false, error: 'boom' }),
+        };
+        await reflect(db, { session_id: 's10', transcript_path: p, project: 'proj' }, { extract: async () => [candA], embed: async (t) => vecFromText(t), vcc: fakeVcc });
+        const row = db.prepare(`SELECT vcc_shrunk_at FROM sessions WHERE session_id = 's10'`).get();
+        expect(row.vcc_shrunk_at).toBeNull();
+        db.close();
+    });
+    it('never invokes compactFileInPlace on a gate-skipped (trivial) window', async () => {
+        const db = freshDb();
+        const p = makeTranscript([userMsg('hi')]);
+        let shrinkCalled = false;
+        const fakeVcc = {
+            compactWindowLines: () => ({ ok: true, text: 'compacted' }),
+            compactFileInPlace: () => { shrinkCalled = true; return { ok: true, text: 'shrunk' }; },
+        };
+        const r = await reflect(db, { session_id: 's11', transcript_path: p, project: 'proj' }, { extract: async () => [candA], embed: async (t) => vecFromText(t), vcc: fakeVcc });
+        expect(r.skipped).toBe(true);
+        expect(shrinkCalled).toBe(false);
+        db.close();
+    });
 });
 //# sourceMappingURL=reflector.test.js.map

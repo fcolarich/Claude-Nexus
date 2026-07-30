@@ -1,0 +1,15 @@
+{
+  "session_id": "best-prose-embedding-model-20260727-020154",
+  "prompt": "Find the current best (2026) embedding model for prose/text retrieval in the same size class as mxbai-embed-large (~335M params, 1024 dims). Compare candidates against each other and against mxbai-embed-large on retrieval benchmarks (MTEB or similar), latency, and local-deployability. Also check whether quantized variants exist for the top candidates and what quality/speed tradeoff they offer.",
+  "scope": "Open-weight prose/text embedding models (~300-400M param class, similar to mxbai-embed-large), excluding closed API-only services (OpenAI text-embedding-3, Voyage, Cohere). Must be runnable locally via Ollama, llama-swap, or a similar local inference runtime — this is a hard requirement, not a nice-to-have. Context: candidate is a replacement for mxbai-embed-large in Claude Nexus's memory-recall embedding pipeline, which embeds prose-based decision/insight memories (not code) and prompt text for semantic recall. Query volume is low, so latency is not the bottleneck — retrieval quality (MTEB retrieval/STS scores) is the primary decision criterion. Also identify quantized (e.g. GGUF/int8) variants of top candidates and their quality/speed tradeoffs.",
+  "depth": "deep",
+  "output_format": "comparison_table",
+  "sources_provided": [],
+  "search_strategy": {
+    "local": false,
+    "web": true
+  },
+  "output_instructions": "Deliver a comparison table covering: model name, params, embedding dims, MTEB retrieval/STS score, local runtime availability (Ollama pull name / llama-swap / GGUF), quantized variant availability and quality/speed tradeoff notes, and any other relevant notes (context length, license). Follow the table with a written synthesis recommending whether to keep mxbai-embed-large or switch, given retrieval quality is the priority and query volume is low (speed not a bottleneck). Include original model papers/tech reports and quantization benchmark data as depth is deep.",
+  "required_sources": ["web search: MTEB leaderboard, model cards, Ollama library, benchmark reports"],
+  "optional_sources": []
+}

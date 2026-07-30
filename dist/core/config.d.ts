@@ -26,6 +26,7 @@ export interface NexusConfig {
         auto_approve_confidence: number;
         dedup_cosine_threshold: number;
         export_dir: string;
+        memory_md_max_items: number;
     };
     reranker: {
         enabled: boolean;

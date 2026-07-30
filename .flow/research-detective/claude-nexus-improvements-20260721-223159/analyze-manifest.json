@@ -1,0 +1,26 @@
+{
+  "session_id": "claude-nexus-improvements-20260721-223159",
+  "sources": [
+    {
+      "id": "nexus-source-code",
+      "type": "source-code",
+      "path": "C:\\Fran\\claude-nexus\\src",
+      "title": "Claude Nexus Source Code Implementation",
+      "confidence": 0.92
+    },
+    {
+      "id": "nexus-documentation",
+      "type": "documentation",
+      "path": "C:\\Fran\\claude-nexus\\_documents",
+      "title": "Claude Nexus Documentation & Design Records",
+      "confidence": 0.88
+    },
+    {
+      "id": "web-research-synthesis",
+      "type": "web-sources",
+      "path": "https://web-research-sources",
+      "title": "Web Research: Agent Memory Best Practices, MCP Patterns, and Competing Systems",
+      "confidence": 0.82
+    }
+  ]
+}

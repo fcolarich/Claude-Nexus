@@ -1,0 +1,62 @@
+{
+  "issues_found": 9,
+  "design_revised": false,
+  "quality_score": 0.62,
+  "issues": [
+    {
+      "category": "scope_gap",
+      "severity": "blocker",
+      "description": "The intake lists 4 required sources including 'C:\\Fran\\LLM_Workflow_Optimization\\_documents (tooling reference + knowledge base)' and specifies output_format 'per_source_plus_synthesis' with 'one source-N.md per source'. The synthesis references only 3 sources (source-1.md = Nexus code, source-2.md = Nexus ADRs/DDRs, source-3.md = web). There is no source file for the LLM Workflow Optimization KB. The synthesis never cites any finding from that KB — either it was skipped entirely, or its findings were silently folded into source-3.md without attribution. The intake scope explicitly names it as a required cross-reference for KB atoms/clusters on LLM workflows, agent memory, and RAG patterns. No recommendation in the synthesis cites it."
+    },
+    {
+      "category": "scope_gap",
+      "severity": "blocker",
+      "description": "The intake output_instructions state 'All source-code claims must be traceable to actual file contents read during this research, not inferred from documentation alone.' Items 3 and 7 explicitly self-flag with '[TODO: source needed]' and 'not confirmed in the available summaries'. Item 3 (time-based decay) admits it cannot confirm whether decay_class is currently wired into ranking math. Item 7 (non-git fallback) admits fallback behavior was not read from project-root.ts. Both are presented as final deliverable recommendations without the source-code verification the intake requires — this violates the intake's core validation requirement, not just the author's own hedges."
+    },
+    {
+      "category": "unsupported_claim",
+      "severity": "warning",
+      "description": "Item 4 attributes 'dynamic promotion/demotion scheduling based on relevance' to HyMem (source-3.md). The actual HyMem paper (arxiv 2602.13933) is about 'dynamic retrieval scheduling' and dual-granularity storage (when to activate deep vs shallow retrieval), not about promoting or demoting stored memories based on accumulated help_rate. The claim mischaracterizes HyMem's contribution to support Recommendation 4. The closer match in the literature is H-MEM's Ebbinghaus-curve-based dynamic update mechanism, which is a different paper."
+    },
+    {
+      "category": "unsupported_claim",
+      "severity": "warning",
+      "description": "Item 5 cites 'MemGuard' as the source for memory contamination / governance gap findings (source-3.md). MemGuard is a well-known adversarial defense system for deep neural networks (membership inference attack mitigation), not an agent memory governance system. Attributing agent-memory-contamination findings to MemGuard is likely a misattribution or hallucination in source-3.md that the synthesis carried forward uncritically. The finding about stale/contradictory memories degrading output quality may be real, but the cited authority is wrong."
+    },
+    {
+      "category": "unsupported_claim",
+      "severity": "warning",
+      "description": "Item 2 states the latency cost of enabling the reranker at session start is 'a one-time 50-100ms'. No web source confirmed this specific figure. The jina-reranker-v2-base-multilingual model page and Hugging Face listing discuss throughput advantages (6x vs predecessor, 15x vs bge-reranker-v2-m3) but cite no concrete millisecond latency numbers. The 50-100ms figure appears in source-1.md (likely derived from code comments or ADR-012) but its origin is not traced to a direct line reference — it may be reasonable, but it should be attributed to ADR-012's rationale, not stated as a standalone fact."
+    },
+    {
+      "category": "unsupported_claim",
+      "severity": "warning",
+      "description": "Item 8 cites 'BECOMER's structural, non-vector memory' as a competing system showing graph/structural approaches can outperform vector storage. BECOMER is not a widely documented system in the agent-memory literature and was not spot-checked. The synthesis assigns it 'lower confidence — web-only, benchmark numbers from a single paper' but this compound citation bundles BECOMER with Zep and Cognee (which are real, documented systems) in a way that makes each claim harder to evaluate. If BECOMER is not a real paper/system, this recommendation's evidence base weakens significantly."
+    },
+    {
+      "category": "ambiguity",
+      "severity": "warning",
+      "description": "The synthesis uses 'effectiveConfidence' throughout (items 2, 3, 4) as if it is a defined column or computed field, but neither source-1.md nor source-2.md defines how it is derived. Source-1.md says ranking is 'effectiveConfidence(m) × helpRate' and notes load_at_init memories bypass the min_confidence gate — implying effectiveConfidence may differ from the raw `confidence` column depending on memory state. Without a clear definition (is it the raw confidence? a decayed value? a gated value?), recommendations touching the ranking formula (items 2, 3) may be proposing changes to the wrong variable."
+    },
+    {
+      "category": "internal_conflict",
+      "severity": "nit",
+      "description": "Item 2 states that enabling the reranker by default 'constitutes a design change to DDR-003's ranking formula'. But DDR-003 governs the recall ranking formula (effectiveConfidence × helpRate), which determines which memories enter the recall window. Cross-encoder reranking is a post-retrieval reordering step — it would reorder the already-selected set, not change the formula that selects them. The conflict with DDR-003 is imprecisely stated; the actual concern is more likely that reranking would change which memory appears first in the injected context, which may or may not be within DDR-003's scope. This could lead to a misframed revisit of DDR-003."
+    },
+    {
+      "category": "missing_perspective",
+      "severity": "nit",
+      "description": "The synthesis does not address capture/extraction pipeline quality gaps beyond dedup thresholds (DDR-baseline). The intake scope explicitly calls out 'capture/extraction pipeline quality' as a research area. Source-1.md confirms extraction uses a system prompt enforcing durable-knowledge-only, but there is no recommendation addressing extraction prompt quality, false-positive memory capture (non-durable facts slipping through), or extraction failure modes (Haiku 4.5 misclassifying memory type or decay class). Given this is the pipeline's main quality lever, its absence from the prioritized list is a gap relative to the declared scope."
+    }
+  ],
+  "recommendations": [
+    "Produce a fourth source file for the LLM Workflow Optimization KB (C:\\Fran\\LLM_Workflow_Optimization\\_documents) and update the synthesis to cite findings from it, or explicitly state that KB research found no additional signal beyond what the other sources cover.",
+    "Items 3 and 7 must be resolved before shipping: read recall.ts and project-root.ts directly to verify (a) whether decay_class modulates effectiveConfidence over time, and (b) what the non-git fallback path does. Either replace the [TODO] with a confirmed finding, or remove the recommendation from the deliverable and flag it as a follow-up task.",
+    "Replace the HyMem citation in Item 4 with the correct paper — H-MEM (EACL 2026) uses an Ebbinghaus-curve-based dynamic update mechanism that more accurately describes the promotion/demotion pattern being recommended. Correct the characterization or cite both with accurate descriptions.",
+    "Verify the MemGuard citation in Item 5 against source-3.md. If source-3.md misidentifies MemGuard as an agent-memory-governance paper, replace it with the actual source (e.g., the 'Adaptive Memory Structures for LLM Agents' survey at arxiv 2602.14038, which covers contamination concerns).",
+    "Attribute the 50-100ms reranker latency figure to its actual source (ADR-012 decision rationale or a specific code comment) rather than stating it as a standalone fact. If it comes from ADR-012, say so.",
+    "Spot-check the BECOMER citation against a real paper or system before the synthesis is used to inform implementation decisions. If it cannot be verified, remove it or clearly mark it as unverified.",
+    "Define effectiveConfidence precisely (column name, derived formula, and any conditional branches) in the synthesis preamble so that recommendations in items 2, 3, and 4 are unambiguous about what they propose to modify.",
+    "Add a recommendation covering extraction/capture pipeline quality (prompt engineering for durable-knowledge-only enforcement, memory type / decay class misclassification rates) to address the declared scope area that is currently absent from all 8 items."
+  ]
+}

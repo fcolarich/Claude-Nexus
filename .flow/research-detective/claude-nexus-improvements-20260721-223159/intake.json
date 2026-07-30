@@ -1,0 +1,26 @@
+{
+  "session_id": "claude-nexus-improvements-20260721-223159",
+  "prompt": "Create a prioritized list of improvements we can do to Claude Nexus, validating recommendations against the real implementation (not just docs). Use the LLM Workflow Optimization tooling reference and knowledge base, plus any helpful web sources.",
+  "scope": "Claude Nexus is an autonomous cross-session memory engine for Claude Code (TypeScript/Node 22, SQLite+FTS5+sqlite-vec, Ollama mxbai-embed-large embeddings, Claude Haiku 4.5 extraction, MCP stdio server, Express REST API, Svelte 5 dashboard, Vitest). Research must identify concrete, prioritized improvement opportunities across: capture/extraction pipeline quality, recall/ranking/decay logic, embedding and retrieval accuracy, MCP tool surface design, schema/migration hygiene, project-slug/root resolution robustness (recent focus area per ADR-013), documentation upkeep tooling, and any gaps versus current best practices for LLM agent memory systems. Every recommendation must be validated against the actual current implementation in C:\\Fran\\claude-nexus\\src, hooks\\, and _documents\\ (architecture.md, design.md, ADRs, DDRs, notes) — not assumed from docs alone — cross-referenced with C:\\Fran\\LLM_Workflow_Optimization\\_documents (tooling reference + knowledge-vault atoms/clusters on LLM workflows, agent memory, RAG, MCP patterns) and relevant web sources (recent Claude Code / MCP / agent-memory-system practices, competing memory tools, embedding/retrieval techniques).",
+  "depth": "deep",
+  "output_format": "per_source_plus_synthesis",
+  "sources_provided": [
+    "C:\\Fran\\claude-nexus\\src",
+    "C:\\Fran\\claude-nexus\\hooks",
+    "C:\\Fran\\claude-nexus\\_documents",
+    "C:\\Fran\\LLM_Workflow_Optimization\\_documents",
+    "web search"
+  ],
+  "search_strategy": {
+    "local": true,
+    "web": true
+  },
+  "output_instructions": "Deliverable is a prioritized improvement list for Claude Nexus (highest-impact/lowest-effort first where possible), each item stating: the current implementation behavior (with file/line references verified against real source), the identified gap or opportunity, the recommended change, supporting evidence/citation (LLM Workflow KB atom/cluster, ADR/DDR, or web source), and estimated effort/risk. Produce one source-N.md per source (Nexus source code review, Nexus own docs, LLM Workflow Optimization KB, web findings) plus a unified synthesis.md that consolidates and prioritizes across all sources. All source-code claims must be traceable to actual file contents read during this research, not inferred from documentation alone.",
+  "required_sources": [
+    "C:\\Fran\\claude-nexus\\src and hooks (real source code)",
+    "C:\\Fran\\claude-nexus\\_documents (architecture.md, design.md, ADRs, DDRs, notes)",
+    "C:\\Fran\\LLM_Workflow_Optimization\\_documents (tooling reference + knowledge base)",
+    "web search"
+  ],
+  "optional_sources": []
+}
