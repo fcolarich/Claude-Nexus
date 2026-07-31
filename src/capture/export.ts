@@ -9,7 +9,7 @@
  * conflict with prompt-runner's per-prompt relevance-floored recall.
  */
 
-import { mkdirSync, writeFileSync, readdirSync, rmSync, existsSync } from 'fs';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync } from 'fs';
 import { join } from 'path';
 import Database from 'better-sqlite3';
 import { stringify as yamlStringify } from 'yaml';
@@ -60,11 +60,6 @@ export function exportAll(db: Database.Database, exportDirOverride?: string): Ex
     const dir = join(exportDir, bucket, 'memory');
     mkdirSync(dir, { recursive: true });
 
-    // Prune stale markdown so the export stays in sync with the DB
-    for (const f of readdirSync(dir)) {
-      if (f.endsWith('.md')) rmSync(join(dir, f));
-    }
-
     // Sort by decay rank desc so the index always shows the most-relevant memories.
     // Use stable sort: ties preserved in SQL-fetch order (memory_type, confidence DESC, title).
     const sorted = [...mems].sort((a, b) => effectiveConfidence(b) - effectiveConfidence(a));
@@ -72,9 +67,11 @@ export function exportAll(db: Database.Database, exportDirOverride?: string): Ex
     const topMems = sorted.slice(0, cap);
 
     const byType = new Map<string, { title: string; file: string; hook: string }[]>();
+    const expected = new Set(['MEMORY.md']);
 
     for (const m of mems) {
       const fname = `${m.id}-${slug(m.title)}.md`;
+      expected.add(fname);
       const frontmatter = yamlStringify({
         id: m.id,
         memory_type: m.memory_type,
@@ -88,8 +85,18 @@ export function exportAll(db: Database.Database, exportDirOverride?: string): Ex
         last_verified_at: m.last_verified_at,
       }).trim();
 
-      writeFileSync(join(dir, fname), `---\n${frontmatter}\n---\n\n# ${m.title}\n\n${m.body}\n`);
-      files++;
+      const content = `---\n${frontmatter}\n---\n\n# ${m.title}\n\n${m.body}\n`;
+      const fpath = join(dir, fname);
+      // Skip the write if content is unchanged, to avoid needless mtime/git churn.
+      if (!existsSync(fpath) || readFileSync(fpath, 'utf-8') !== content) {
+        writeFileSync(fpath, content);
+        files++;
+      }
+    }
+
+    // Remove only files no longer backed by a live memory in this bucket.
+    for (const f of readdirSync(dir)) {
+      if (f.endsWith('.md') && !expected.has(f)) rmSync(join(dir, f));
     }
 
     // Build index from top-N only
@@ -111,8 +118,12 @@ export function exportAll(db: Database.Database, exportDirOverride?: string): Ex
     if (totalCount > cap) {
       index.push(`> … ${totalCount - cap} more memories — use nexus_search to retrieve them.`);
     }
-    writeFileSync(join(dir, 'MEMORY.md'), index.join('\n'));
-    files++;
+    const indexContent = index.join('\n');
+    const indexPath = join(dir, 'MEMORY.md');
+    if (!existsSync(indexPath) || readFileSync(indexPath, 'utf-8') !== indexContent) {
+      writeFileSync(indexPath, indexContent);
+      files++;
+    }
   }
 
   // Prune project directories whose memory/ export Nexus wrote previously but
