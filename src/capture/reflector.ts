@@ -53,11 +53,15 @@ export interface ReflectResult {
  * that row's `promotion_target` (broadened per design Decision 2). Everything
  * else falls through to the ordinary touch-and-continue dedup path.
  */
-function isReferenceUpgrade(candidate: MemoryCandidate, matched: Memory): boolean {
-  return candidate.memory_type === 'reference'
-    && ADR_REF_RE.test(candidate.body)
-    && matched.memory_type === 'decision'
-    && matched.superseded_by == null;
+function isReferenceUpgrade(candidate: MemoryCandidate, matched: Memory, validIds: Set<string>): boolean {
+  if (candidate.memory_type !== 'reference'
+    || !ADR_REF_RE.test(candidate.body)
+    || matched.memory_type !== 'decision'
+    || matched.superseded_by != null) {
+    return false;
+  }
+  const id = (candidate.body.match(ADR_REF_RE) ?? [])[0]?.toUpperCase();
+  return !!id && validIds.has(id);
 }
 
 /**
@@ -105,6 +109,7 @@ export async function reflect(
   // available; fail-open to the raw condensed window text on any error.
   let extractionText = window.text;
   const compacted = vcc.compactWindowLines(window.rawLines, { timeoutMs: 10_000 });
+  const source: 'vcc' | 'generic' = compacted.ok && !!compacted.text ? 'vcc' : 'generic';
   if (compacted.ok && compacted.text) {
     extractionText = compacted.text;
   } else if (!compacted.ok) {
@@ -112,7 +117,8 @@ export async function reflect(
   }
 
   const decisions = readDecisionIndex(opts.cwd);
-  const candidates = await extract(extractionText, { project: opts.project, decisions });
+  const validIds = new Set(decisions.map((d) => d.split(':')[0].trim().toUpperCase()));
+  const candidates = await extract(extractionText, { project: opts.project, decisions, source });
 
   let inserted = 0;
   let merged = 0;
@@ -126,7 +132,7 @@ export async function reflect(
     if (vec) {
       const sim = findSimilarMemory(db, normalize(vec), { scope: c.scope, project: memProject, excludeSuperseded: true });
       if (sim && sim.similarity >= cfg.dedup_cosine_threshold) {
-        if (isReferenceUpgrade(c, sim.memory)) {
+        if (isReferenceUpgrade(c, sim.memory, validIds)) {
           // Fix 1 — supersede-insert. The matched decision row is content-drifted:
           // insert the reference pointer as its own content-addressed row, then
           // mark the old decision row superseded. Both writes share one txn so a
