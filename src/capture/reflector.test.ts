@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { writeFileSync, mkdtempSync } from 'fs';
+import { writeFileSync, mkdtempSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { openDatabase, initializeSchema } from '../core/database.js';
@@ -11,6 +11,23 @@ function makeTranscript(entries: object[]): string {
   const p = join(dir, 'transcript.jsonl');
   writeFileSync(p, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
   return p;
+}
+
+/**
+ * Fixture for readDecisionIndex()'s cwd -> _documents/decisions/ convention
+ * (see docspine.ts). Writes short-form filenames (adr-NNN-slug.md) — the only
+ * form the current id-derivation parses correctly (timestamp-form ids are a
+ * known separate out-of-scope issue, see impl-spec.md Resolved Open Questions).
+ * `entries` are bare ids like '042'; returns the cwd root to pass as opts.cwd.
+ */
+function makeDecisions(entries: string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), 'nexus-decisions-'));
+  const decisionsDir = join(dir, '_documents', 'decisions');
+  mkdirSync(decisionsDir, { recursive: true });
+  for (const id of entries) {
+    writeFileSync(join(decisionsDir, `adr-${id}-decision.md`), `# ADR-${id}: Test decision\n\nBody.\n`);
+  }
+  return dir;
 }
 const userMsg = (content: unknown) => ({ type: 'user', message: { role: 'user', content } });
 const asstMsg = (content: unknown) => ({ type: 'assistant', message: { role: 'assistant', content } });
@@ -246,15 +263,16 @@ describe('reflect', () => {
 
     it('happy path — upgrades a decision to a reference when a real ADR id is later cited', async () => {
       const db = freshDb();
+      const cwd = makeDecisions(['042']);
       const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
-      const r1 = await reflect(db, { session_id: 'u1', transcript_path: p1, project: 'proj' },
+      const r1 = await reflect(db, { session_id: 'u1', transcript_path: p1, project: 'proj', cwd },
         { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
       expect(r1.inserted).toBe(1);
 
       const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
 
       const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
-      const r2 = await reflect(db, { session_id: 'u2', transcript_path: p2, project: 'proj' },
+      const r2 = await reflect(db, { session_id: 'u2', transcript_path: p2, project: 'proj', cwd },
         { extract: async () => [refCand], embed: async () => FIXED_VEC });
 
       expect(r2.upgraded).toBe(1);
@@ -312,14 +330,15 @@ describe('reflect', () => {
 
     it('positive — broadened trigger: promotion_target=\'none\' decision row also gets superseded', async () => {
       const db = freshDb();
+      const cwd = makeDecisions(['042']);
       const noneDecisionCand: MemoryCandidate = { ...decisionCand, promotion_target: 'none' };
       const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
-      await reflect(db, { session_id: 'x1', transcript_path: p1, project: 'proj' },
+      await reflect(db, { session_id: 'x1', transcript_path: p1, project: 'proj', cwd },
         { extract: async () => [noneDecisionCand], embed: async () => FIXED_VEC });
       const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
 
       const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
-      const r2 = await reflect(db, { session_id: 'x2', transcript_path: p2, project: 'proj' },
+      const r2 = await reflect(db, { session_id: 'x2', transcript_path: p2, project: 'proj', cwd },
         { extract: async () => [refCand], embed: async () => FIXED_VEC });
 
       expect(r2.upgraded).toBe(1);
@@ -331,12 +350,13 @@ describe('reflect', () => {
 
     it('idempotency / convergence — a third window matching the reference row is touch-only, no re-supersede', async () => {
       const db = freshDb();
+      const cwd = makeDecisions(['042']);
       const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
-      await reflect(db, { session_id: 'y1', transcript_path: p1, project: 'proj' },
+      await reflect(db, { session_id: 'y1', transcript_path: p1, project: 'proj', cwd },
         { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
 
       const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
-      const r2 = await reflect(db, { session_id: 'y2', transcript_path: p2, project: 'proj' },
+      const r2 = await reflect(db, { session_id: 'y2', transcript_path: p2, project: 'proj', cwd },
         { extract: async () => [refCand], embed: async () => FIXED_VEC });
       expect(r2.upgraded).toBe(1);
       expect(countMemories(db)).toBe(2); // decision (superseded) + reference
@@ -344,7 +364,7 @@ describe('reflect', () => {
       const referenceId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'reference'`).get() as { id: string }).id;
 
       const p3 = makeTranscript(SIGNAL_TRANSCRIPT);
-      const r3 = await reflect(db, { session_id: 'y3', transcript_path: p3, project: 'proj' },
+      const r3 = await reflect(db, { session_id: 'y3', transcript_path: p3, project: 'proj', cwd },
         { extract: async () => [refCand], embed: async () => FIXED_VEC });
 
       expect(r3.upgraded).toBe(0);
@@ -358,8 +378,9 @@ describe('reflect', () => {
 
     it('rollback — a throw during the supersede UPDATE persists neither the new row nor superseded_by', async () => {
       const db = freshDb();
+      const cwd = makeDecisions(['042']);
       const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
-      await reflect(db, { session_id: 'z1', transcript_path: p1, project: 'proj' },
+      await reflect(db, { session_id: 'z1', transcript_path: p1, project: 'proj', cwd },
         { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
       const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
       const beforeCount = countMemories(db);
@@ -374,12 +395,52 @@ describe('reflect', () => {
       (db as unknown as { prepare: typeof db.prepare }).prepare = spy as unknown as typeof db.prepare;
 
       const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
-      await expect(reflect(db, { session_id: 'z2', transcript_path: p2, project: 'proj' },
+      await expect(reflect(db, { session_id: 'z2', transcript_path: p2, project: 'proj', cwd },
         { extract: async () => [refCand], embed: async () => FIXED_VEC })).rejects.toThrow();
 
       (db as unknown as { prepare: typeof db.prepare }).prepare = originalPrepare;
 
       expect(countMemories(db)).toBe(beforeCount); // no new reference row persisted
+      const decisionRow = db.prepare(`SELECT superseded_by FROM memories WHERE id = ?`).get(decisionId) as { superseded_by: string | null };
+      expect(decisionRow.superseded_by).toBeNull();
+      db.close();
+    });
+
+    it('negative — hallucinated citation: candidate cites a plausible but nonexistent ADR id: touch-only', async () => {
+      const db = freshDb();
+      const cwd = makeDecisions(['042']); // fixture does not contain ADR-999
+      const hallucinatedRefCand: MemoryCandidate = {
+        ...refCand, body: 'Supersede-insert dedup upgrade decision → ADR-999',
+      };
+      const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
+      await reflect(db, { session_id: 'aa1', transcript_path: p1, project: 'proj', cwd },
+        { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
+      const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
+
+      const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
+      const r2 = await reflect(db, { session_id: 'aa2', transcript_path: p2, project: 'proj', cwd },
+        { extract: async () => [hallucinatedRefCand], embed: async () => FIXED_VEC });
+
+      expect(r2.upgraded).toBe(0);
+      expect(r2.merged).toBe(1);
+      const decisionRow = db.prepare(`SELECT superseded_by FROM memories WHERE id = ?`).get(decisionId) as { superseded_by: string | null };
+      expect(decisionRow.superseded_by).toBeNull();
+      db.close();
+    });
+
+    it('negative — no doc-spine (opts.cwd omitted): fail-closed, touch-only despite a real-shaped citation', async () => {
+      const db = freshDb();
+      const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
+      await reflect(db, { session_id: 'bb1', transcript_path: p1, project: 'proj' },
+        { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
+      const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
+
+      const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
+      const r2 = await reflect(db, { session_id: 'bb2', transcript_path: p2, project: 'proj' }, // no cwd
+        { extract: async () => [refCand], embed: async () => FIXED_VEC });
+
+      expect(r2.upgraded).toBe(0);
+      expect(r2.merged).toBe(1);
       const decisionRow = db.prepare(`SELECT superseded_by FROM memories WHERE id = ?`).get(decisionId) as { superseded_by: string | null };
       expect(decisionRow.superseded_by).toBeNull();
       db.close();

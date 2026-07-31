@@ -21,13 +21,14 @@ export interface MemoryCandidate {
 }
 
 /** Injectable for testing — the Reflector accepts a fake of this shape. */
-export type Extractor = (condensed: string, ctx: { project: string | null; decisions?: string[] }) => Promise<MemoryCandidate[]>;
+export type Extractor = (condensed: string, ctx: { project: string | null; decisions?: string[]; source?: 'vcc' | 'generic' }) => Promise<MemoryCandidate[]>;
 
 const MEMORY_TYPES = new Set<string>(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference']);
 const PROMOTION_TARGETS = new Set<string>(['none', 'adr', 'ddr', 'best_practice', 'recipe', 'note']);
 const DECAY_CLASSES = new Set<string>(['stable', 'architecture', 'api_contract', 'implementation']);
 const SCOPES = new Set<string>(['global', 'shared', 'project']);
-const MAX_CANDIDATES = 20;
+const MAX_CANDIDATES_GENERIC = 20;
+const MAX_CANDIDATES_VCC = 40;
 
 /**
  * Completion / session-progress narration — never durable knowledge.
@@ -103,10 +104,11 @@ Rules:
 - If a decision is ALREADY recorded as an ADR or DDR (see the "Existing canonical decisions" list in the user message, or if the transcript cites an ADR-NNN / DDR-NNN id), do NOT restate it. Emit a "reference" memory instead: title = the decision name, body = a one-line gist followed by "→ ADR-NNN". The ADR/DDR file is the source of truth; the memory only aids retrieval.
 - Density does not rank memories. A single-sentence durable statement about how the user wants work done (workflow rule, commit/review protocol, tool or communication preference) is EXACTLY as extractable as a multi-paragraph technical failure. Never drop one because the surrounding transcript is technically dense or because it looks small next to the other items.
 - Explicit, unconditional user directives about process ("only do X when I ask", "never do Y") are high-confidence global preferences. Emit them even when they appear once, in passing, and even when the rest of the window is about something unrelated.
+- If the transcript contains "### Phase:" headings (a Flow-structured session), treat each phase section as an independent extraction unit — scan every phase for durable facts rather than skimming the transcript as one flat block. Distinct phases (design/architect/execute/merge) commonly carry distinct ADR/DDR pointers, tool quirks, and decisions.
 - Output STRICT JSON ONLY: an array of objects with keys title, body, memory_type, scope, decay_class, confidence, tags, promotion_target. No prose, no markdown fences.`;
 
 /** Extract the first top-level JSON array from a model response and validate it. */
-export function parseCandidates(raw: string): MemoryCandidate[] {
+export function parseCandidates(raw: string, maxCandidates: number = MAX_CANDIDATES_GENERIC): MemoryCandidate[] {
   if (!raw || !raw.trim()) return [];
 
   let parsed: unknown;
@@ -138,7 +140,7 @@ export function parseCandidates(raw: string): MemoryCandidate[] {
     const promotion_target = PROMOTION_TARGETS.has(o.promotion_target as string) ? (o.promotion_target as PromotionTarget) : 'none';
 
     out.push({ title: title.slice(0, 120), body, memory_type: o.memory_type as MemoryType, scope, decay_class, confidence, tags, promotion_target });
-    if (out.length >= MAX_CANDIDATES) break;
+    if (out.length >= maxCandidates) break;
   }
   return out;
 }
@@ -175,12 +177,13 @@ export function refineCandidates(cands: MemoryCandidate[]): MemoryCandidate[] {
 }
 
 /** Default extractor — used by the Reflector unless a fake is injected. */
-export async function extractMemories(condensed: string, ctx: { project: string | null; decisions?: string[] }): Promise<MemoryCandidate[]> {
+export async function extractMemories(condensed: string, ctx: { project: string | null; decisions?: string[]; source?: 'vcc' | 'generic' }): Promise<MemoryCandidate[]> {
   if (!condensed.trim()) return [];
   const decisionsBlock = ctx.decisions && ctx.decisions.length
     ? `\n\nExisting canonical decisions (already recorded as ADR/DDR — do NOT restate these; emit a reference pointer if relevant):\n${ctx.decisions.map(d => `- ${d}`).join('\n')}`
     : '';
   const userPrompt = `Project: ${ctx.project ?? '(none)'}${decisionsBlock}\n\nTranscript:\n${condensed}\n\nExtract the durable memories as a JSON array.`;
   const raw = await callModel(SYSTEM_PROMPT, userPrompt);
-  return refineCandidates(parseCandidates(raw));
+  const maxCandidates = ctx.source === 'vcc' ? MAX_CANDIDATES_VCC : MAX_CANDIDATES_GENERIC;
+  return refineCandidates(parseCandidates(raw, maxCandidates));
 }
