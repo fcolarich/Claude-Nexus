@@ -83,7 +83,10 @@ app.post('/api/reflect', (req, res) => {
             });
             if (!result.skipped && (result.inserted > 0 || result.merged > 0))
                 exportAll(db);
-            console.log('[web] reflect:', JSON.stringify(result));
+            if (result.excluded_reason)
+                console.log(`[web] reflect: origin excluded (${result.excluded_reason})`);
+            else
+                console.log('[web] reflect:', JSON.stringify(result));
         }
         catch (err) {
             console.warn('[web] reflect error:', err.message);

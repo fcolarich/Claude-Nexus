@@ -14,9 +14,26 @@ import { generateEmbedding } from '../core/embeddings.js';
 import { insertMemory, touchMemory, embedMemory, findSimilarMemory, normalize, } from '../core/memories.js';
 import { linkMemory } from '../core/links.js';
 import { readTranscriptWindow } from './transcript.js';
-import { extractMemories } from './extract.js';
+import { classifyOrigin } from './origin.js';
+import { extractMemories, ADR_REF_RE } from './extract.js';
 import { readDecisionIndex } from './docspine.js';
 import { compactWindowLines, compactFileInPlace } from './vcc-bridge.js';
+/**
+ * Fix 1 — ADR-reference demotion. A `reference` candidate carrying a real
+ * ADR/DDR id supersedes an earlier `decision` row it duplicates, regardless of
+ * that row's `promotion_target` (broadened per design Decision 2). Everything
+ * else falls through to the ordinary touch-and-continue dedup path.
+ */
+function isReferenceUpgrade(candidate, matched, validIds) {
+    if (candidate.memory_type !== 'reference'
+        || !ADR_REF_RE.test(candidate.body)
+        || matched.memory_type !== 'decision'
+        || matched.superseded_by != null) {
+        return false;
+    }
+    const id = (candidate.body.match(ADR_REF_RE) ?? [])[0]?.toUpperCase();
+    return !!id && validIds.has(id);
+}
 /**
  * Reflect over a session transcript and write any new memories.
  * `deps` lets tests inject a fake extractor / embedder.
@@ -26,6 +43,18 @@ export async function reflect(db, opts, deps = {}) {
     const embed = deps.embed ?? generateEmbedding;
     const vcc = deps.vcc ?? { compactWindowLines, compactFileInPlace };
     const cfg = getNexusConfig().capture;
+    // Origin gate. Runs before the session row is created and before the
+    // transcript is read, so an excluded session costs nothing. Deliberately does
+    // NOT advance a cursor: if the denylist later changes, the session becomes
+    // eligible again from the top.
+    const origin = classifyOrigin(opts.transcript_path, getNexusConfig().exclude);
+    if (origin.excluded) {
+        return {
+            session_id: opts.session_id, project: opts.project, newLines: 0,
+            extracted: 0, inserted: 0, merged: 0, upgraded: 0, skipped: true,
+            excluded_reason: origin.reason,
+        };
+    }
     // Ensure a session row exists to hold the reflection cursor. The indexer
     // enriches the other columns later (ON CONFLICT preserves last_reflected_index).
     db.prepare(`INSERT OR IGNORE INTO sessions (session_id, project, jsonl_path, status) VALUES (?, ?, ?, 'dead')`).run(opts.session_id, opts.project ?? 'unknown', opts.transcript_path);
@@ -40,12 +69,13 @@ export async function reflect(db, opts, deps = {}) {
     // Observer gate — nothing worth an LLM call. Advance past these lines anyway.
     if (window.newLines === 0 || !window.hasSignal) {
         advanceCursor(window.totalLines);
-        return { session_id: opts.session_id, project: opts.project, newLines: window.newLines, extracted: 0, inserted: 0, merged: 0, skipped: true };
+        return { session_id: opts.session_id, project: opts.project, newLines: window.newLines, extracted: 0, inserted: 0, merged: 0, upgraded: 0, skipped: true };
     }
     // Pre-extraction compaction — feed the Haiku extractor compacted text when
     // available; fail-open to the raw condensed window text on any error.
     let extractionText = window.text;
     const compacted = vcc.compactWindowLines(window.rawLines, { timeoutMs: 10_000 });
+    const source = compacted.ok && !!compacted.text ? 'vcc' : 'generic';
     if (compacted.ok && compacted.text) {
         extractionText = compacted.text;
     }
@@ -53,9 +83,11 @@ export async function reflect(db, opts, deps = {}) {
         console.error('[claude-nexus] vcc pre-extraction compaction failed, using raw window text:', compacted.error);
     }
     const decisions = readDecisionIndex(opts.cwd);
-    const candidates = await extract(extractionText, { project: opts.project, decisions });
+    const validIds = new Set(decisions.map((d) => d.split(':')[0].trim().toUpperCase()));
+    const candidates = await extract(extractionText, { project: opts.project, decisions, source });
     let inserted = 0;
     let merged = 0;
+    let upgraded = 0;
     for (const c of candidates) {
         const memProject = c.scope === 'project' ? opts.project : null;
         // Semantic dedup — a near-identical memory already exists -> reconfirm it.
@@ -63,6 +95,45 @@ export async function reflect(db, opts, deps = {}) {
         if (vec) {
             const sim = findSimilarMemory(db, normalize(vec), { scope: c.scope, project: memProject, excludeSuperseded: true });
             if (sim && sim.similarity >= cfg.dedup_cosine_threshold) {
+                if (isReferenceUpgrade(c, sim.memory, validIds)) {
+                    // Fix 1 — supersede-insert. The matched decision row is content-drifted:
+                    // insert the reference pointer as its own content-addressed row, then
+                    // mark the old decision row superseded. Both writes share one txn so a
+                    // throw leaves the pre-existing touch-only state, never a half-state.
+                    const review_status = c.confidence >= cfg.auto_approve_confidence ? 'approved' : 'pending';
+                    let res;
+                    db.transaction(() => {
+                        res = insertMemory(db, {
+                            title: c.title,
+                            body: c.body,
+                            memory_type: c.memory_type,
+                            scope: c.scope,
+                            project: memProject,
+                            confidence: c.confidence,
+                            decay_class: c.decay_class,
+                            review_status,
+                            source_session_id: opts.session_id,
+                            discovered_from: null,
+                            tags: c.tags,
+                            promotion_target: c.promotion_target,
+                        });
+                        db.prepare(`UPDATE memories SET superseded_by = ?, updated_at = datetime('now') WHERE id = ?`)
+                            .run(res.id, sim.memory.id);
+                    })();
+                    if (res.inserted) {
+                        const embedded = await embedMemory(db, res.id, embed);
+                        if (embedded) {
+                            await linkMemory(db, res.id, embed);
+                        }
+                    }
+                    else {
+                        // The reference row already existed from an earlier window — still
+                        // supersede the decision row above; just reconfirm the reference.
+                        touchMemory(db, res.id);
+                    }
+                    upgraded++;
+                    continue;
+                }
                 touchMemory(db, sim.memory.id);
                 merged++;
                 continue;
@@ -119,6 +190,7 @@ export async function reflect(db, opts, deps = {}) {
         extracted: candidates.length,
         inserted,
         merged,
+        upgraded,
         skipped: false,
     };
 }

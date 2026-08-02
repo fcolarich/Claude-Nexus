@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { parseCandidates, refineCandidates } from './extract.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+const { callModelMock } = vi.hoisted(() => ({ callModelMock: vi.fn() }));
+vi.mock('../core/llm.js', () => ({ callModel: callModelMock }));
+import { parseCandidates, refineCandidates, extractMemories } from './extract.js';
 function cand(overrides) {
     return {
         title: 'Some durable fact',
@@ -85,6 +87,41 @@ describe('parseCandidates', () => {
         const out = parseCandidates(JSON.stringify([{ ...valid, promotion_target: 'bogus' }]));
         expect(out).toHaveLength(1);
         expect(out[0].promotion_target).toBe('none');
+    });
+});
+describe('parseCandidates — source-aware cap', () => {
+    function manyRaw(n) {
+        return JSON.stringify(Array.from({ length: n }, (_, i) => ({ ...valid, title: `Fact ${i}` })));
+    }
+    it('caps at a custom maxCandidates when provided', () => {
+        const out = parseCandidates(manyRaw(30), 25);
+        expect(out).toHaveLength(25);
+    });
+    it('defaults to a cap of 20 when maxCandidates omitted', () => {
+        const out = parseCandidates(manyRaw(30));
+        expect(out).toHaveLength(20);
+    });
+});
+describe('extractMemories — source-aware cap', () => {
+    function manyRaw(n) {
+        return JSON.stringify(Array.from({ length: n }, (_, i) => ({ ...valid, title: `Fact ${i}` })));
+    }
+    beforeEach(() => callModelMock.mockReset());
+    it('allows more than 20, up to 40, when ctx.source is vcc', async () => {
+        callModelMock.mockResolvedValue(manyRaw(50));
+        const out = await extractMemories('some transcript', { project: 'p', source: 'vcc' });
+        expect(out.length).toBeGreaterThan(20);
+        expect(out.length).toBeLessThanOrEqual(40);
+    });
+    it('caps at 20 when ctx.source is generic', async () => {
+        callModelMock.mockResolvedValue(manyRaw(50));
+        const out = await extractMemories('some transcript', { project: 'p', source: 'generic' });
+        expect(out).toHaveLength(20);
+    });
+    it('caps at 20 when ctx.source is omitted', async () => {
+        callModelMock.mockResolvedValue(manyRaw(50));
+        const out = await extractMemories('some transcript', { project: 'p' });
+        expect(out).toHaveLength(20);
     });
 });
 describe('refineCandidates', () => {

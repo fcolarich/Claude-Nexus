@@ -28,6 +28,10 @@ export interface NexusConfig {
         export_dir: string;
         memory_md_max_items: number;
     };
+    exclude: {
+        commands: string[];
+        scheduled_tasks: string[];
+    };
     reranker: {
         enabled: boolean;
         endpoint: string;

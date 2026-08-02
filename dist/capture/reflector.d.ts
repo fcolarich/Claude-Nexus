@@ -33,7 +33,9 @@ export interface ReflectResult {
     extracted: number;
     inserted: number;
     merged: number;
+    upgraded: number;
     skipped: boolean;
+    excluded_reason?: string | null;
 }
 /**
  * Reflect over a session transcript and write any new memories.

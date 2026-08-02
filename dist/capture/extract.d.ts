@@ -20,6 +20,7 @@ export interface MemoryCandidate {
 export type Extractor = (condensed: string, ctx: {
     project: string | null;
     decisions?: string[];
+    source?: 'vcc' | 'generic';
 }) => Promise<MemoryCandidate[]>;
 /**
  * Completion / session-progress narration — never durable knowledge.
@@ -37,7 +38,7 @@ export declare const ADR_REF_RE: RegExp;
  */
 export declare const RESTATEMENT_RE: RegExp;
 /** Extract the first top-level JSON array from a model response and validate it. */
-export declare function parseCandidates(raw: string): MemoryCandidate[];
+export declare function parseCandidates(raw: string, maxCandidates?: number): MemoryCandidate[];
 /**
  * Deterministic quality filter applied to extracted candidates.
  * - Drops completion / progress narration.
@@ -56,5 +57,6 @@ export declare function refineCandidates(cands: MemoryCandidate[]): MemoryCandid
 export declare function extractMemories(condensed: string, ctx: {
     project: string | null;
     decisions?: string[];
+    source?: 'vcc' | 'generic';
 }): Promise<MemoryCandidate[]>;
 //# sourceMappingURL=extract.d.ts.map

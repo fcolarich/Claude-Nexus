@@ -53,6 +53,17 @@ const DEFAULTS = {
         export_dir: join(homedir(), '.claude', 'memories', 'exports'),
         memory_md_max_items: 200,
     },
+    exclude: {
+        commands: [
+            'harvest-knowledge',
+            'extract-knowledge',
+            'add-book-to-encyclopedia',
+            'book-encyclopedia-batch',
+        ],
+        scheduled_tasks: [
+            'nexus-memory-distill',
+        ],
+    },
     reranker: {
         enabled: true,
         endpoint: 'http://127.0.0.1:8931/rerank',
@@ -85,6 +96,7 @@ export function getNexusConfig() {
         extraction: { ...DEFAULTS.extraction, ...loaded.extraction },
         recall: { ...DEFAULTS.recall, ...loaded.recall },
         capture: { ...DEFAULTS.capture, ...loaded.capture },
+        exclude: { ...DEFAULTS.exclude, ...loaded.exclude },
         reranker: { ...DEFAULTS.reranker, ...loaded.reranker },
     };
     cached.capture.export_dir = expandHome(cached.capture.export_dir);
