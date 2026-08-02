@@ -26,8 +26,16 @@ export interface ExcludeConfig {
 
 const NOT_EXCLUDED: OriginVerdict = { excluded: false, reason: null };
 
-/** Origin markers live in the opening turns; no need to scan a 40MB transcript. */
-const SCAN_CHARS = 40_000;
+/**
+ * Origin markers live in the opening turns, but "opening" must be counted in
+ * LINES, not bytes: Claude Code injects CLAUDE.md, recalled memories and system
+ * reminders into the first turns, which can run to tens of KB before the marker
+ * appears. A byte window silently fails open on exactly the sessions this
+ * classifier exists to catch. The byte cap is only a backstop against a
+ * pathological single line.
+ */
+const SCAN_LINES = 80;
+const SCAN_CHARS_MAX = 2_000_000;
 
 // Transcript lines are JSON-encoded, so a marker written as name="x" is stored
 // as name=\"x\". Tolerate the optional backslash on both sides of the value.
@@ -51,7 +59,10 @@ export function classifyOrigin(
   let head: string;
   try {
     if (!existsSync(transcriptPath)) return NOT_EXCLUDED;
-    head = readFileSync(transcriptPath, 'utf-8').slice(0, SCAN_CHARS);
+    head = readFileSync(transcriptPath, 'utf-8')
+      .split('\n', SCAN_LINES)
+      .join('\n')
+      .slice(0, SCAN_CHARS_MAX);
   } catch {
     // Fail OPEN. A classifier that cannot read the transcript must never be
     // the reason a real memory is silently lost.

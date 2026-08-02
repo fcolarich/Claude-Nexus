@@ -65,4 +65,14 @@ describe('classifyOrigin', () => {
   it('fails OPEN when the transcript is missing', () => {
     expect(classifyOrigin('/does/not/exist.jsonl', cfg, {}).excluded).toBe(false);
   });
+
+  it('finds a marker pushed past 40KB by injected context', () => {
+    const bigInjection = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: 'CLAUDE.md context: ' + 'x'.repeat(60_000) },
+    });
+    const v = classifyOrigin(transcript(bigInjection, scheduledLine), cfg, {});
+    expect(v.excluded).toBe(true);
+    expect(v.reason).toBe('scheduled-task:nexus-memory-distill');
+  });
 });
