@@ -59,6 +59,7 @@ Or run `/update-project-docs` after a change and let the doc-sync agent route it
 - Default new atoms to load_at_init: false
 - INSERT ... ON CONFLICT DO UPDATE must include all fields in SET clause
 - Smart project resolution: derive slug from cwd, fallback strategies
+- Capture is gated on session ORIGIN before anything else — see `exclude:` in `extraction_models.yaml`. Set `NEXUS_NO_CAPTURE=1` in the environment to disable capture for a session entirely. The gate fails OPEN (an unreadable transcript still captures); the retroactive purge fails CLOSED (an unclassifiable memory is never deleted).
 
 ## Key Files
 
@@ -67,7 +68,8 @@ Or run `/update-project-docs` after a change and let the doc-sync agent route it
 | `src/mcp/server.ts` | MCP server — 20 tools exposed over stdio transport |
 | `src/web/server.ts` | Express REST API server, port 3210; serves built dashboard from dist-frontend/ |
 | `src/cli/index.ts` | CLI entry point — index, search, context, list, health, stats, sessions, watch, backfill, prune-narration, migrate-projects |
-| `hooks/hooks.json` | Claude Code hook manifest — wires UserPromptSubmit (recall) and Stop/PreCompact/SessionEnd (capture) |
+| `src/capture/origin.ts` | Origin classifier — decides whether a session may capture at all (scheduled-task + command denylists, `NEXUS_NO_CAPTURE`). Used by `reflect()` and by `scripts/purge-origin.mjs` (ADR-20260802200851-8e) |
+| `scripts/purge-origin.mjs` | Retroactive purge of memories from excluded-origin sessions. Dry-run by default; `--apply` snapshots via VACUUM INTO first |
 | `src/core/database.ts` | SQLite init, migrations, schema_version management |
 | `src/core/recall.ts` | Memory retrieval — bulk decay-ranked recall (recallMemories, for MCP/web) + prompt-driven semantic recall (recallByQuery) |
 | `src/core/embeddings.ts` | Embedding generation via Ollama mxbai-embed-large |

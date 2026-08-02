@@ -20,3 +20,5 @@
 | [ADR-013](decisions/adr-013-git-repository-root-resolution-replaces-raw-cwd-st.md) | Git-repository-root resolution replaces raw-cwd string slugging for project identity | 2026-07-05 | accepted |
 | [ADR-014](decisions/adr-014-stop-piggybacking-memory-export-on-claude-codes-na.md) | Stop piggybacking memory export on Claude Code's native auto-memory directory | 2026-07-05 | accepted |
 | [ADR-015](decisions/adr-20260730134500-2c-supersede-insert-reference-upgrade-exception-in-re.md) | Supersede-insert reference-upgrade exception in reflect() dedup | 2026-07-30 | accepted |
+| [ADR-016](decisions/adr-20260802190639-f8-unattended-nightly-distill-sweep-gates-on-gpu-vram.md) | Unattended nightly distill sweep gates on GPU VRAM and a wall-clock deadline, paired with a pre-sweep snapshot/rollback anchor | 2026-08-02 | accepted |
+| [ADR-017](decisions/adr-20260802200851-8e-capture-is-gated-on-session-origin-and-content-too.md) | Capture is gated on session origin, and content-tool output is scrubbed from the window | 2026-08-02 | accepted |

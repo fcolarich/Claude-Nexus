@@ -29,3 +29,4 @@
 | [FEAT-021](features/feature-20260730150659-74-validate-cited-adrddr-id-before-fix-1-reference-up.md) | Validate cited ADR/DDR id before Fix-1 reference-upgrade supersede | planned | ADR-20260730134500-2c |
 | [FEAT-022](features/feature-20260730150709-cf-reconstruct-a-permanent-incremental-window-extract.md) | Reconstruct a permanent incremental-window extraction validation harness | planned | NOTE-20260730134513-3b, FEAT-20260730150641-ad |
 | [FEAT-023](features/feature-20260730150718-3e-window-only-extraction-prompt-variant-contingent-o.md) | Window-only extraction prompt variant (contingent on shared-addendum regression) | planned | NOTE-20260730134513-3b |
+| [FEAT-024](features/feature-20260802190757-2d-fix-vcc-compact-rendering-quality-and-re-verify-be.md) | Fix vcc_compact rendering quality and re-verify before re-enabling reflector's post-extraction shrink | planned | ADR-015 |
