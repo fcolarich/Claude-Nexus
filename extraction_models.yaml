@@ -53,3 +53,18 @@ reranker:
   script_path: C:/Fran/Cloned Repos/local-reranker-mcp/server.py
   threshold: 0.2          # cross-encoder score floor (nexus atoms/memories convention)
   timeout_ms: 10000
+
+# Capture exclusion — sessions whose ORIGIN disqualifies them from writing
+# memories at all. Book/article processing belongs in the Knowledge bases, not
+# Nexus; distill-audit runs otherwise capture commentary about their own
+# auditing. Content-level filtering (file bodies from Read/Grep/etc.) is
+# separate and lives in src/capture/transcript.ts.
+# Also honoured: NEXUS_NO_CAPTURE=1 in the environment.
+exclude:
+  commands:
+    - harvest-knowledge
+    - extract-knowledge
+    - add-book-to-encyclopedia
+    - book-encyclopedia-batch
+  scheduled_tasks:
+    - nexus-memory-distill

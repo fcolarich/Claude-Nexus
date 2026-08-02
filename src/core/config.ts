@@ -46,6 +46,14 @@ export interface NexusConfig {
     export_dir: string;
     memory_md_max_items: number;
   };
+  // Origin-based capture exclusion. A session matching any entry never writes
+  // memories. Top-level (not nested under capture) so the shallow per-section
+  // merge below picks up new default entries even when the YAML overrides a
+  // sibling key.
+  exclude: {
+    commands: string[];         // slash-command / skill names, with or without leading '/'
+    scheduled_tasks: string[];  // <scheduled-task name="..."> values
+  };
   reranker: {
     enabled: boolean;
     endpoint: string;
@@ -92,6 +100,17 @@ const DEFAULTS: NexusConfig = {
     export_dir: join(homedir(), '.claude', 'memories', 'exports'),
     memory_md_max_items: 200,
   },
+  exclude: {
+    commands: [
+      'harvest-knowledge',
+      'extract-knowledge',
+      'add-book-to-encyclopedia',
+      'book-encyclopedia-batch',
+    ],
+    scheduled_tasks: [
+      'nexus-memory-distill',
+    ],
+  },
   reranker: {
     enabled: true,
     endpoint: 'http://127.0.0.1:8931/rerank',
@@ -127,6 +146,7 @@ export function getNexusConfig(): NexusConfig {
     extraction: { ...DEFAULTS.extraction, ...loaded.extraction },
     recall: { ...DEFAULTS.recall, ...loaded.recall },
     capture: { ...DEFAULTS.capture, ...loaded.capture },
+    exclude: { ...DEFAULTS.exclude, ...loaded.exclude },
     reranker: { ...DEFAULTS.reranker, ...loaded.reranker },
   };
   cached.capture.export_dir = expandHome(cached.capture.export_dir);
