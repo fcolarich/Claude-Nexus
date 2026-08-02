@@ -43,7 +43,50 @@ function truncate(s: string, cap: number): string {
   return t.length > cap ? t.slice(0, cap) + '…' : t;
 }
 
-interface Block { type?: string; text?: string; name?: string; input?: unknown; content?: unknown; is_error?: boolean }
+interface Block { type?: string; text?: string; name?: string; id?: string; tool_use_id?: string; input?: unknown; content?: unknown; is_error?: boolean }
+
+/**
+ * Tools whose successful output is document/file content rather than a fact
+ * about the system. Their bodies are what turns "Claude read a book chapter"
+ * into a durable memory about the book. Matched on the bare name or on the
+ * trailing segment of an MCP-namespaced name (mcp__server__search_code).
+ */
+const CONTENT_TOOL_RE = /(^|__)(read|grep|glob|webfetch|websearch|notebookread|search_code|search_unity_knowledge)$/i;
+
+const OMITTED = '<content omitted by nexus capture filter>';
+
+/**
+ * Blank successful content-tool result bodies inside one raw JSONL line.
+ *
+ * Operates on the RAW line, not the condensed text, because reflect() feeds
+ * window.rawLines to VCC and uses VCC's output as the extraction text — a
+ * filter applied only to the condensed text would be bypassed on that path.
+ *
+ * Errors always keep their bodies. An unidentifiable tool_use_id is scrubbed
+ * rather than kept: leaking file content is the failure being fixed, and the
+ * only cost is losing a little context at a window boundary.
+ */
+function scrubLine(line: string, toolNames: Map<string, string>): string {
+  let entry: { message?: { content?: unknown } };
+  try { entry = JSON.parse(line); } catch { return line; }
+  const content = entry?.message?.content;
+  if (!Array.isArray(content)) return line;
+
+  let changed = false;
+  for (const b of content as Block[]) {
+    if (!b || typeof b !== 'object') continue;
+    if (b.type === 'tool_use' && typeof b.id === 'string') {
+      toolNames.set(b.id, typeof b.name === 'string' ? b.name : 'tool');
+    } else if (b.type === 'tool_result' && !b.is_error) {
+      const name = typeof b.tool_use_id === 'string' ? toolNames.get(b.tool_use_id) : undefined;
+      if (name === undefined || CONTENT_TOOL_RE.test(name)) {
+        b.content = OMITTED;
+        changed = true;
+      }
+    }
+  }
+  return changed ? JSON.stringify(entry) : line;
+}
 
 /** Convert one message's content blocks into condensed transcript lines. */
 function renderContent(content: unknown, role: string): string[] {
@@ -96,13 +139,18 @@ export function readTranscriptWindow(jsonlPath: string, fromIndex: number): Tran
   const totalLines = lines.length;
   const fresh = lines.slice(Math.max(0, fromIndex));
 
+  // Scrub before anything consumes the window. Order matters: tool_use always
+  // precedes its tool_result, so a single forward pass resolves every id it can.
+  const toolNames = new Map<string, string>();
+  const scrubbed = fresh.map(l => scrubLine(l, toolNames));
+
   const rendered: string[] = [];
   let userMessages = 0;
   let exchanges = 0;
   let markerSignal = false;
   let toolErrors = 0;
 
-  for (const line of fresh) {
+  for (const line of scrubbed) {
     let entry: RawEntry;
     try { entry = JSON.parse(line); } catch { continue; }
 
@@ -134,5 +182,5 @@ export function readTranscriptWindow(jsonlPath: string, fromIndex: number): Tran
   // Observer gate: extract when there is a real exchange or an explicit marker.
   const hasSignal = markerSignal || toolErrors > 0 || (userMessages >= 1 && exchanges >= 4);
 
-  return { text, rawLines: fresh, totalLines, newLines: fresh.length, hasSignal, truncated };
+  return { text, rawLines: scrubbed, totalLines, newLines: scrubbed.length, hasSignal, truncated };
 }
