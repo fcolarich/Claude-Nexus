@@ -75,4 +75,30 @@ describe('classifyOrigin', () => {
     expect(v.excluded).toBe(true);
     expect(v.reason).toBe('scheduled-task:nexus-memory-distill');
   });
+
+  it('matches a plugin-namespaced command against a bare denylist entry', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: '<command-name>llm-workflow-knowledge:harvest-knowledge</command-name>' },
+    });
+    const v = classifyOrigin(transcript(line), cfg, {});
+    expect(v.excluded).toBe(true);
+  });
+
+  it('matches when the denylist entry is itself fully qualified', () => {
+    const qualified = { commands: ['unity-knowledge:extract-knowledge'], scheduled_tasks: [] };
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: '<command-name>unity-knowledge:extract-knowledge</command-name>' },
+    });
+    expect(classifyOrigin(transcript(line), qualified, {}).excluded).toBe(true);
+  });
+
+  it('still does not match an unrelated namespaced command', () => {
+    const line = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: '<command-name>shared-skills:brainstorming</command-name>' },
+    });
+    expect(classifyOrigin(transcript(line), cfg, {}).excluded).toBe(false);
+  });
 });

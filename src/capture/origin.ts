@@ -44,6 +44,10 @@ const COMMAND_NAME_RE = /<command-name>\\?\/?([a-z0-9:_-]+)<\/command-name>/gi;
 
 const normalize = (s: string) => s.replace(/^\//, '').toLowerCase();
 
+/** Commands arrive plugin-namespaced (`plugin:command`); the denylist may hold
+ *  either form, so compare on the trailing segment. */
+const bareName = (s: string) => normalize(s).split(':').pop() ?? '';
+
 export function classifyOrigin(
   transcriptPath: string,
   cfg: ExcludeConfig,
@@ -76,11 +80,13 @@ export function classifyOrigin(
     }
   }
 
-  const commands = (cfg.commands ?? []).map(normalize);
+  // Match on the bare name, but report the full marker as observed, so the
+  // reason still says which namespaced command actually triggered it.
+  const commands = (cfg.commands ?? []).map(bareName);
   for (const m of head.matchAll(COMMAND_NAME_RE)) {
-    const name = normalize(m[1]);
-    if (commands.includes(name)) {
-      return { excluded: true, reason: `command:/${name}` };
+    const observed = normalize(m[1]);
+    if (commands.includes(bareName(observed))) {
+      return { excluded: true, reason: `command:/${observed}` };
     }
   }
 
