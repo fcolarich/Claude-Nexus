@@ -110,6 +110,22 @@ describe('reflect', () => {
     db.close();
   });
 
+  it('never extracts from a denylisted scheduled-task session', async () => {
+    const db = freshDb();
+    const p = makeTranscript([
+      { type: 'user', message: { role: 'user', content: '<scheduled-task name="nexus-memory-distill" file="x">sweep</scheduled-task>' } },
+      { type: 'assistant', message: { role: 'assistant', content: 'I always prefer tabs over spaces, never use spaces.' } },
+    ]);
+    let called = false;
+    const r = await reflect(db, { session_id: 'sched-1', transcript_path: p, project: 'proj' },
+      { extract: async () => { called = true; return []; }, embed: async () => null });
+
+    expect(called).toBe(false);
+    expect(r.skipped).toBe(true);
+    expect(r.excluded_reason).toBe('scheduled-task:nexus-memory-distill');
+    db.close();
+  });
+
   it('does not re-process transcript lines on a second run', async () => {
     const db = freshDb();
     const p = makeTranscript(SIGNAL_TRANSCRIPT);

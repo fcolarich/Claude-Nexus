@@ -18,6 +18,7 @@ import {
 } from '../core/memories.js';
 import { linkMemory } from '../core/links.js';
 import { readTranscriptWindow } from './transcript.js';
+import { classifyOrigin } from './origin.js';
 import { extractMemories, ADR_REF_RE, type Extractor, type MemoryCandidate } from './extract.js';
 import { readDecisionIndex } from './docspine.js';
 import { compactWindowLines, compactFileInPlace } from './vcc-bridge.js';
@@ -45,6 +46,7 @@ export interface ReflectResult {
   merged: number;
   upgraded: number;
   skipped: boolean;     // Observer gate skipped the LLM call
+  excluded_reason?: string | null;   // set when the origin gate refused the session
 }
 
 /**
@@ -77,6 +79,19 @@ export async function reflect(
   const embed = deps.embed ?? generateEmbedding;
   const vcc = deps.vcc ?? { compactWindowLines, compactFileInPlace };
   const cfg = getNexusConfig().capture;
+
+  // Origin gate. Runs before the session row is created and before the
+  // transcript is read, so an excluded session costs nothing. Deliberately does
+  // NOT advance a cursor: if the denylist later changes, the session becomes
+  // eligible again from the top.
+  const origin = classifyOrigin(opts.transcript_path, getNexusConfig().exclude);
+  if (origin.excluded) {
+    return {
+      session_id: opts.session_id, project: opts.project, newLines: 0,
+      extracted: 0, inserted: 0, merged: 0, upgraded: 0, skipped: true,
+      excluded_reason: origin.reason,
+    };
+  }
 
   // Ensure a session row exists to hold the reflection cursor. The indexer
   // enriches the other columns later (ON CONFLICT preserves last_reflected_index).
