@@ -386,11 +386,11 @@ describe('reflect', () => {
       const beforeCount = countMemories(db);
 
       const originalPrepare = db.prepare.bind(db);
-      const spy = (sql: string, ...args: unknown[]) => {
+      const spy = (sql: string) => {
         if (sql.includes('SET superseded_by')) {
           throw new Error('boom — forced supersede failure');
         }
-        return originalPrepare(sql, ...args);
+        return originalPrepare(sql);
       };
       (db as unknown as { prepare: typeof db.prepare }).prepare = spy as unknown as typeof db.prepare;
 
