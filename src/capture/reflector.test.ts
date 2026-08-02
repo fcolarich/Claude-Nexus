@@ -110,12 +110,37 @@ describe('reflect', () => {
     db.close();
   });
 
+  /**
+   * The origin gate's central safety property is "an excluded session never
+   * reaches the extractor". Asserting that on a trivial transcript would be
+   * vacuous — the Observer gate already suppresses extraction there, so the test
+   * would pass even if the origin gate ran AFTER extraction (or not at all).
+   * Both cases below therefore share one signal-bearing body and differ ONLY in
+   * the origin marker; the control case is what proves the fixture would
+   * otherwise reach the extractor.
+   */
+  const SCHED_MARKER = '<scheduled-task name="nexus-memory-distill" file="x">sweep</scheduled-task>';
+  const schedTranscript = (marker: string) => [
+    userMsg(`${marker}no, don't use global variables here`),
+    ...SIGNAL_TRANSCRIPT.slice(1),
+  ];
+
+  it('control — the same transcript without the marker DOES reach the extractor', async () => {
+    const db = freshDb();
+    const p = makeTranscript(schedTranscript(''));
+    let called = false;
+    const r = await reflect(db, { session_id: 'sched-control', transcript_path: p, project: 'proj' },
+      { extract: async () => { called = true; return []; }, embed: async () => null });
+
+    expect(called).toBe(true);
+    expect(r.skipped).toBe(false);
+    expect(r.excluded_reason).toBeUndefined();
+    db.close();
+  });
+
   it('never extracts from a denylisted scheduled-task session', async () => {
     const db = freshDb();
-    const p = makeTranscript([
-      { type: 'user', message: { role: 'user', content: '<scheduled-task name="nexus-memory-distill" file="x">sweep</scheduled-task>' } },
-      { type: 'assistant', message: { role: 'assistant', content: 'I always prefer tabs over spaces, never use spaces.' } },
-    ]);
+    const p = makeTranscript(schedTranscript(SCHED_MARKER));
     let called = false;
     const r = await reflect(db, { session_id: 'sched-1', transcript_path: p, project: 'proj' },
       { extract: async () => { called = true; return []; }, embed: async () => null });
