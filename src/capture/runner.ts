@@ -114,7 +114,9 @@ async function main(): Promise<void> {
       cwd,
     });
 
-    if (!result.skipped && (result.inserted > 0 || result.merged > 0)) {
+    if (result.excluded_reason) {
+      console.error(`[nexus-reflect] skipped: origin excluded (${result.excluded_reason})`);
+    } else if (!result.skipped && (result.inserted > 0 || result.merged > 0)) {
       const exp = exportAll(db);
       console.error(`[nexus-reflect] ${JSON.stringify({ ...result, exported: exp.files })}`);
     } else {
