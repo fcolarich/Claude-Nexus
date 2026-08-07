@@ -1,0 +1,10 @@
+merge model: gemma3:12b
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[23:10:05] chunk 1 (602.7s) scope=all processed=300 clusters=5 created=0 rejected=0 merged=0 sanitized=0 remaining=4113
+
+ABORTED: chunk 1 found 5 clusters but created 0 ΓÇö probable auth/extraction-backend failure
+totals: 1 chunks, 300 examined, 5 clusters, 0 consolidated, 0 rejected by coverage gate (0.0%), 0 folded in, 0 tightened, 0 zero-cluster chunks

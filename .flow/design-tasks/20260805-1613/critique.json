@@ -1,0 +1,87 @@
+{
+  "issues_found": 6,
+  "design_revised": false,
+  "quality_score": 0.71,
+  "issues": [
+    {
+      "category": "scope_gap",
+      "severity": "blocker",
+      "description": "The required 'Sequencing Recommendation' section is incomplete. Cross-bucket priority is an explicit TODO with no resolution: 'No source establishes cross-bucket sequencing priority.' The scope requires a full sequencing recommendation. The document acknowledges FEAT-001 (secret-redaction guard) as a confirmed safety gap but explicitly declines to rank it — this leaves the plan's most consequential ordering question unanswered."
+    },
+    {
+      "category": "unsupported_claim",
+      "severity": "warning",
+      "description": "FEAT-ae claims '35% fewer retrieval failures alone, 49% combined with BM25, 67% combined with reranking' as if these apply to Nexus. These figures originate from Anthropic's contextual retrieval blog post on generic RAG benchmarks, not on Nexus's specific stack (mxbai-embed-large + FTS5 + sqlite-vec on short typed memories). The transfer is not validated. The document cites these as 'cited results' without noting the source domain mismatch."
+    },
+    {
+      "category": "missing_perspective",
+      "severity": "warning",
+      "description": "FEAT-ae (contextual retrieval indexing, step 2: 'Reindex corpus') and FEAT-3d (hash-based skip on re-embedding) both touch the bulk embedding path. FEAT-ae is sequenced first (position 1) and FEAT-3d sixth in Retrieval & Recall. But FEAT-ae triggers a full corpus reindex — which, without FEAT-3d in place, re-embeds every unchanged memory expensively. There is no note in either feature's steps or in the sequencing section that FEAT-3d should ship before or alongside the FEAT-ae reindex to avoid a costly redundant pass."
+    },
+    {
+      "category": "ambiguity",
+      "severity": "warning",
+      "description": "FEAT-001 (secret-redaction guard) Step 1 defers an architectural decision: 'Decide: build regex/entropy gate in-house or integrate GuardrailEngine.' GuardrailEngine (Pi.dev) is a third-party external dependency that would add a new trust boundary to the capture path. The document does not flag the security and trust-surface implications of the third-party option vs. the in-house option, nor does it recommend one. An implementer reading this has no basis to make the call."
+    },
+    {
+      "category": "ambiguity",
+      "severity": "warning",
+      "description": "FEAT-eb is listed as KEEP in the Fit Check table with no conditional qualifier, but the feature is gated on FEAT-2a (local model co-residency) which is itself needs-research and may conclude that local serving is not feasible. If FEAT-2a's spike is negative, FEAT-eb has zero applicability. A KEEP verdict with a hard prerequisite that may not materialize overstates the feature's standing and could mislead prioritization."
+    },
+    {
+      "category": "scope_gap",
+      "severity": "nit",
+      "description": "The 'Pending / Follow-up' section records an ADR numbering collision (FEAT-2d referencing 'ADR-015' which maps to an unrelated decision in the index) but defers resolution to a future doc-hygiene action with no owner or trigger. FEAT-2d's implementation steps reference 'ADR-015' without clarifying which file is authoritative, which could confuse an implementer. The scope asked verdicts to be grounded in feature source files — this is a traceability loose end left open in the document itself."
+    }
+  ],
+  "recommendations": [
+    "Resolve the cross-bucket sequencing TODO before this plan is used to schedule work. At minimum, declare a single tiebreaker rule (e.g., 'data-safety gaps first, then highest-confidence-to-effort ratio') and apply it to rank the buckets. The safety argument for FEAT-001 first is already present — commit to it or explicitly override it with a stated reason.",
+    "Qualify the '35% / 49% / 67%' retrieval-failure statistics in FEAT-ae with their source (Anthropic contextual retrieval blog, generic RAG benchmarks) and note that Nexus-specific validation is required in step 3 before treating those numbers as projections.",
+    "Add a sequencing note to FEAT-ae step 2 (or to the Retrieval & Recall within-bucket ordering): FEAT-3d (hash-based skip) should be implemented before or in the same sprint as the FEAT-ae corpus reindex to avoid re-embedding unchanged memories.",
+    "For FEAT-001 step 1, make a recommendation between the in-house and GuardrailEngine options. At minimum, note that a third-party capture-path dependency requires trust and supply-chain evaluation that an in-house regex/entropy gate does not.",
+    "Change FEAT-eb's Fit Check verdict from KEEP to KEEP (conditional on FEAT-2a positive outcome) so readers understand the feature's standing is not unconditional.",
+    "Resolve the ADR-015 numbering collision inline in FEAT-2d's section (state which file slug is the authoritative disable-shrink decision) rather than deferring it to a Pending section with no owner."
+  ],
+  "needs_decision": [
+    {
+      "id": "cross-bucket-order",
+      "header": "Bucket order",
+      "question": "The document deferred cross-bucket sequencing priority. Which tiebreaker should determine which bucket is implemented first?",
+      "options": [
+        {
+          "label": "Safety first",
+          "description": "Capture Identity & Guardrails (FEAT-001 secret-redaction, FEAT-003 slug fallback) ships first because FEAT-001 is a confirmed safety gap with no existing mitigation."
+        },
+        {
+          "label": "Recall value first",
+          "description": "Retrieval & Recall bucket ships first because recall quality improvements have the highest day-to-day workflow impact (per the plan's stated priority driver)."
+        },
+        {
+          "label": "Unblock most work first",
+          "description": "Capture/Extraction Tuning ships first because FEAT-2d and FEAT-cf are prerequisites that gate safe changes to the extraction prompt and post-extraction shrink."
+        },
+        {
+          "label": "Confidence-to-effort first",
+          "description": "Low-effort, high-confidence quick wins across all buckets (FEAT-74, FEAT-005, FEAT-4c, FEAT-3d) ship first regardless of bucket, before any spike-gated items."
+        }
+      ],
+      "default": "Safety first"
+    },
+    {
+      "id": "feat001-redaction-impl",
+      "header": "FEAT-001 impl",
+      "question": "The document chose to leave the secret-redaction implementation choice open (in-house regex/entropy vs. GuardrailEngine). Which approach should be taken?",
+      "options": [
+        {
+          "label": "In-house gate",
+          "description": "Build a regex + entropy scorer in extract.ts or reflector.ts. No new external dependency; maintainable in-project; scope limited to secrets and credentials."
+        },
+        {
+          "label": "GuardrailEngine",
+          "description": "Integrate Pi.dev GuardrailEngine for injection detection + PII/secret redaction + content filtering in one component. Broader coverage but adds a third-party trust boundary on the capture path."
+        }
+      ],
+      "default": "In-house gate"
+    }
+  ]
+}

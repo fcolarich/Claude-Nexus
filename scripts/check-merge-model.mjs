@@ -148,6 +148,7 @@ console.log(`gating merge model: ${model}\nendpoint: ${endpoint}\n`);
 let passed = 0;
 let unsafe = 0;    // dropped a fact — the disqualifying outcome
 let noMerge = 0;   // unparseable output; distill discards it and supersedes nothing
+let errored = 0;   // call threw or timed out — no output to judge at all
 let enumWarnings = 0;
 const timings = [];
 
@@ -161,6 +162,10 @@ for (const c of CASES) {
 	try {
 		raw = await call(mergePrompt(c.cluster.length), listing);
 	} catch (err) {
+		// Must count: a case that never returns produces no merge to inspect, so
+		// leaving it out of the tallies let a model that timed out on half the
+		// cases still exit with "safe" on unsafe === 0.
+		errored++;
 		console.log(`FAIL  ${c.name}\n      call error: ${err.message}\n`);
 		continue;
 	} finally {
@@ -203,11 +208,25 @@ for (const c of CASES) {
 const avg = timings.length ? (timings.reduce((a, b) => a + b, 0) / timings.length).toFixed(1) : '—';
 console.log(
 	`${passed}/${CASES.length} merged with full retention, ${noMerge} declined to merge (safe), ` +
-	`${unsafe} dropped facts (unsafe). avg ${avg}s/call. ${enumWarnings} case(s) needed enum fallback.`
+	`${unsafe} dropped facts (unsafe), ${errored} failed to answer. avg ${avg}s/call. ` +
+	`${enumWarnings} case(s) needed enum fallback.`
 );
-// Only fact loss disqualifies: a declined merge costs a call, a lossy merge costs
-// a memory. Timing is reported for the operator to weigh, never gated on.
-console.log(unsafe === 0
-	? 'VERDICT: safe for a distill sweep.'
-	: 'VERDICT: NOT safe — this model loses facts, and distill supersedes the originals.');
-process.exit(unsafe === 0 ? 0 : 1);
+// Two independent disqualifiers.
+//
+// Fact loss is a correctness failure: a declined merge costs a call, a lossy
+// merge costs a memory, because distill supersedes the originals either way.
+//
+// A call that never answers is a viability failure. It destroys nothing, but
+// distill-sweep aborts at 120s — shorter than this gate's 180s — so a model that
+// times out here returns '' for its hardest clusters, skips them, and grinds
+// through a multi-thousand-call sweep achieving almost nothing. gemma3:12b timed
+// out on 3/6 cases on 2026-08-02 and still exited "safe" while errors went
+// uncounted; that is what this branch exists to catch.
+if (unsafe > 0) {
+	console.log('VERDICT: NOT safe — this model loses facts, and distill supersedes the originals.');
+} else if (errored > 0) {
+	console.log(`VERDICT: NOT viable — ${errored}/${CASES.length} call(s) failed or timed out; a sweep would stall, not merge.`);
+} else {
+	console.log('VERDICT: safe for a distill sweep.');
+}
+process.exit(unsafe === 0 && errored === 0 ? 0 : 1);

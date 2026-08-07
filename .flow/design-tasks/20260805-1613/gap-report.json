@@ -1,0 +1,69 @@
+{
+  "sections_present": [],
+  "sections_missing": [
+    "Overview",
+    "Capture/Extraction Tuning (vcc_compact)",
+    "Retrieval & Recall",
+    "Memory Lifecycle & Governance",
+    "Capture Identity & Guardrails",
+    "Scope & Filtering",
+    "Local Inference Infra",
+    "Long-term / Exploratory",
+    "Fit Check: Candidates to Drop",
+    "Sequencing Recommendation"
+  ],
+  "open_questions": [
+    {
+      "id": "q-001",
+      "question": "The Overview section requires a stated priority criterion for the plan. No source establishes one. What should drive grouping order — risk reduction, implementation effort, value to active workflows, or something else?",
+      "section": "Overview"
+    },
+    {
+      "id": "q-002",
+      "question": "FEAT-004 (structural/graph memory) explicitly self-declares as 'not an active work item' and FEAT-20260730150718-3e (window-only prompt variant) is marked contingent-only and deferred. Should both be formally dropped in the Fit Check, or kept as named backlog items with no sequencing slot?",
+      "section": "Fit Check: Candidates to Drop"
+    },
+    {
+      "id": "q-003",
+      "question": "Beyond the two self-flagged candidates (FEAT-004, FEAT-3e), are there other features among the 26 that no longer fit the tool's stated intent of flat/minimal-abstraction autonomous memory, and should be flagged for dropping rather than planned?",
+      "section": "Fit Check: Candidates to Drop"
+    },
+    {
+      "id": "q-004",
+      "question": "FEAT-20260805151847-eb (constrained decoding for JSON-schema-valid Haiku output) is explicitly conditioned on 'if/when nexus's extraction model is served locally' — currently it uses the Anthropic API. Should it be grouped under Local Inference Infra as a prerequisite to FEAT-2a, moved to Long-term/Exploratory, or dropped?",
+      "section": "Local Inference Infra"
+    },
+    {
+      "id": "q-005",
+      "question": "FEAT-20260805151847-56 (per-skill memory scope) references FEAT-006 as a dependency but FEAT-006 was not supplied as a source and is not among the 26 planned features. What is FEAT-006 and does FEAT-56's planning depend on its completion?",
+      "section": "Scope & Filtering"
+    },
+    {
+      "id": "q-006",
+      "question": "FEAT-20260805151847-3d (hash-based skip of unchanged memories on re-embedding) and FEAT-20260805151847-77 (reduced-dimension embeddings) are tagged 'performance/embeddings' with no declared bucket. Should they land in Retrieval & Recall (they affect recall latency) or Local Inference Infra (they affect the embedding stack)?",
+      "section": "Local Inference Infra"
+    },
+    {
+      "id": "q-007",
+      "question": "FEAT-20260805151847-7e (cosine-similarity zero-shot classification as a cheaper alternative to Haiku calls) is tagged 'governance, cost' but its mechanism is embedding-based. Should it be grouped under Memory Lifecycle & Governance or Local Inference Infra?",
+      "section": "Memory Lifecycle & Governance"
+    },
+    {
+      "id": "q-008",
+      "question": "At least 12 of the 26 features are tagged 'needs-research: implementation approach not yet decided' (FEAT-2d, FEAT-cf, FEAT-56, FEAT-5a, FEAT-68, FEAT-77, FEAT-7e, FEAT-bd, FEAT-ce, FEAT-d1, FEAT-eb, FEAT-2a). Should the implementation plan include research spikes as discrete sequenced steps within each bucket, or should all 'needs-research' features be listed separately as pre-implementation investigations outside the main sequencing?",
+      "section": "Sequencing Recommendation"
+    },
+    {
+      "id": "q-009",
+      "question": "No source establishes cross-bucket sequencing priority. What constraint should determine which bucket is implemented first — for example, unblocking the most other work, highest confidence-to-effort ratio, or addressing known data-safety gaps first?",
+      "section": "Sequencing Recommendation"
+    }
+  ],
+  "inconsistencies": [
+    {
+      "description": "FEAT-20260802190757-2d states 'ADR-015 disabled reflector.ts's call to vcc.compactFileInPlace()' as the decision that blocked re-enabling compaction. However, architecture.md shows ADR-015 (the 15th entry, file adr-20260730134500-2c) is titled 'Supersede-insert reference-upgrade exception in reflect() dedup' — a completely different decision. No ADR in the architecture index matches the compactFileInPlace disable. Either the feature file cites the wrong ADR number, or the relevant ADR was never recorded.",
+      "source_a": "feature-20260802190757-2d-fix-vcc-compact-rendering-quality-and-re-verify-be.md",
+      "source_b": "architecture.md"
+    }
+  ]
+}

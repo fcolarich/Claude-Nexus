@@ -1,0 +1,18 @@
+merge model: gemma3:12b
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[06:18:22] chunk 1 (883.2s) scope=all processed=300 clusters=36 created=28 rejected=0 merged=74 sanitized=0 remaining=3779
+[06:18:22] waiting for GPU: 182 MiB free, need 4000 MiB (checking every 300s)
+[06:23:22] GPU free (8946 MiB) after waiting 5 min ΓÇö resuming
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[06:33:26] chunk 2 (603.8s) scope=all processed=300 clusters=5 created=0 rejected=0 merged=0 sanitized=0 remaining=3781
+
+ABORTED: chunk 2 found 5 clusters but created 0 ΓÇö probable auth/extraction-backend failure
+totals: 2 chunks, 600 examined, 41 clusters, 28 consolidated, 0 rejected by coverage gate (0.0%), 74 folded in, 0 tightened, 0 zero-cluster chunks

@@ -1,0 +1,50 @@
+{
+  "feature": "vcc extraction tuning (3 features)",
+  "branch": "feature/vcc-extraction-tuning",
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Add phase-section-cue instruction to SYSTEM_PROMPT",
+      "description": "In src/capture/extract.ts, insert a new paragraph into SYSTEM_PROMPT (currently ~lines 50-106) instructing the extractor to treat each '### Phase:' heading as an independent extraction unit — scan every phase section for durable facts (ADR/DDR pointers, tool quirks, decisions) rather than skimming the transcript as one flat block. Insert near the existing 'Rules:' block, before the STRICT JSON output rule (~line 105). No pre-existing addendum exists in this file (confirmed) — this is a fresh addition, not a merge. Suggested wording (adapt to match surrounding prompt style): \"If the transcript contains '### Phase:' headings (a Flow-structured session), treat each phase section as an independent extraction unit — scan every phase for durable facts rather than skimming the transcript as one flat block. Distinct phases (design/architect/execute/merge) commonly carry distinct ADR/DDR pointers, tool quirks, and decisions.\" If src/capture/extract.test.ts exists and contains an assertion/snapshot on SYSTEM_PROMPT's literal content, update it to account for the new paragraph — do not create that file if it doesn't exist, and do not add a new test asserting exact SYSTEM_PROMPT wording (not meaningfully testable, explicit design constraint). Acceptance: SYSTEM_PROMPT contains the phase-section-cue instruction; any pre-existing prompt-content test still passes or is updated.",
+      "files": ["src/capture/extract.ts", "src/capture/extract.test.ts"],
+      "depends_on": [],
+      "estimated_tokens": 3500,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-002",
+      "title": "Source-aware MAX_CANDIDATES capping (vcc vs generic)",
+      "description": "Add source-aware candidate capping across extract.ts and reflector.ts. In extract.ts: replace flat MAX_CANDIDATES=20 (~line 30) with MAX_CANDIDATES_GENERIC=20 and MAX_CANDIDATES_VCC=40. Change parseCandidates(raw: string, maxCandidates: number = MAX_CANDIDATES_GENERIC): MemoryCandidate[] (~line 141) to cap out.length against the passed-in maxCandidates instead of closing over the old module constant (default param keeps any bare parseCandidates(raw) caller compiling and behaviorally identical). Add source?: 'vcc' | 'generic' to the Extractor type and extractMemories()'s ctx param. Inside extractMemories(), resolve maxCandidates = ctx.source === 'vcc' ? MAX_CANDIDATES_VCC : MAX_CANDIDATES_GENERIC and pass it into parseCandidates(raw, maxCandidates). In reflector.ts: inside reflect()'s window-processing block (~lines 104-113, where compacted.ok && compacted.text already gates extractionText selection), derive source: 'vcc' | 'generic' = compacted.ok && !!compacted.text ? 'vcc' : 'generic' (no new state, reuses the existing boolean) and add source as a third key to the ctx object literal passed into the extract(extractionText, { project, decisions, source }) call. Write unit tests in src/capture/extract.test.ts (create if it doesn't exist) for parseCandidates/extractMemories: raw JSON with >20 candidate objects + ctx.source:'vcc' -> more than 20 (up to 40) survive; same raw input + ctx.source:'generic' or source omitted -> cap stays 20. Write/confirm these tests fail against the old flat-cap behavior first, then implement the parameterization (TDD). Acceptance matches design.md Success Criteria: vcc path allows >20 up to 40, generic path unchanged at 20.",
+      "files": ["src/capture/extract.ts", "src/capture/reflector.ts", "src/capture/extract.test.ts"],
+      "depends_on": [],
+      "estimated_tokens": 6500,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "medium"
+    },
+    {
+      "id": "task-003",
+      "title": "Fixture + test coverage for validated-supersede fail-closed behavior (TDD red)",
+      "description": "In src/capture/reflector.test.ts, add a decisions-index fixture helper analogous to the existing makeTranscript() (e.g. makeDecisions(entries: string[]): string) that creates a temp dir via mkdtempSync/writeFileSync containing _documents/decisions/*.md files readDecisionIndex() will pick up. Read src/capture/docspine.ts first to confirm the exact cwd -> _documents/decisions/ join convention so the fixture writes to the correct location, and use short-form filenames (adr-NNN-slug.md) so the derived id matches ADR-NNN (timestamp-form filenames are a known separate issue, out of scope here — see impl-spec.md Resolved Open Questions). Update the 4 existing tests in the 'Fix 1 — ADR-reference demotion (supersede-insert)' describe block that currently expect upgraded:1 or a thrown rejection ('happy path — upgrades a decision...', 'positive — broadened trigger...', 'idempotency / convergence...', 'rollback — a throw during the supersede UPDATE...') to pass opts.cwd pointing at a fixture decisions dir containing a real ADR-042 entry (matching refCand's citation) — required because none of these tests currently set opts.cwd, so once isReferenceUpgrade fail-closes on an empty validIds set (task-004), all 4 would otherwise regress. The 2 negative tests in the same block ('negative — reference candidate has no ADR/DDR id...', 'negative — matched row is not a decision...') need no change — they already fail on an earlier gate regardless of validIds. Add 2 new tests: (1) candidate cites a plausible but nonexistent id (e.g. ADR-999) against a fixture decisions dir that does NOT contain it — assert via reflect(): upgraded:0, merged:1, superseded_by stays null (hallucinated-citation rejection). (2) same valid-shaped citation as the happy path (refCand, ADR-042) but opts.cwd omitted entirely (no doc-spine) — assert upgraded:0, merged:1 (empty-validIds fail-closed — the intended behavior change, not a regression). This task only touches the test file; it will not pass until task-004 lands the isReferenceUpgrade fail-closed logic — expected red until then.",
+      "files": ["src/capture/reflector.test.ts", "src/capture/docspine.ts", "src/capture/reflector.ts"],
+      "depends_on": [],
+      "estimated_tokens": 8500,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-004",
+      "title": "Implement isReferenceUpgrade fail-closed validIds check (TDD green)",
+      "description": "In src/capture/reflector.ts: change isReferenceUpgrade(candidate: MemoryCandidate, matched: Memory): boolean (~lines 56-61) to isReferenceUpgrade(candidate: MemoryCandidate, matched: Memory, validIds: Set<string>): boolean — after the existing shape-match (ADR_REF_RE.test(candidate.body)) and matched-row-is-decision checks, extract the matched ADR/DDR id from candidate.body via ADR_REF_RE, uppercase it, and require validIds.has(id); return false if the id can't be extracted or isn't in validIds (fails closed, including when validIds is empty). In reflect(), right after the existing readDecisionIndex(opts.cwd) call (~line 114, call itself unchanged), derive validIds = new Set(decisions.map(d => d.split(':')[0].trim().toUpperCase())) and pass it as the third argument at the existing call site (~line 129): isReferenceUpgrade(c, sim.memory, validIds). No change to reflect()'s exported signature or ReflectResult shape. Verify against src/capture/reflector.test.ts (task-003): all tests pass, including the 4 retrofitted existing tests and the 2 new fail-closed tests. Acceptance matches design.md Success Criteria: isReferenceUpgrade returns false on unresolvable/hallucinated id (falls through to touch-and-continue, candidate never dropped) and still true on the existing valid-citation case (regression coverage); empty validIds (no doc-spine) yields false for every candidate, the intended fix.",
+      "files": ["src/capture/reflector.ts"],
+      "depends_on": ["task-002", "task-003"],
+      "estimated_tokens": 6000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "medium"
+    }
+  ]
+}

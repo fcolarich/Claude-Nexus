@@ -11,8 +11,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { getNexusConfig } from './config.js';
 async function callAgentSdk(system, user, model, timeoutMs) {
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
-    try {
+    const drain = async () => {
         let result = '';
         for await (const message of query({
             prompt: user,
@@ -30,6 +29,25 @@ async function callAgentSdk(system, user, model, timeoutMs) {
             }
         }
         return result;
+    };
+    // The abortController alone does not bound this call. When the underlying
+    // `claude` CLI wedges, the async iterator simply stops yielding — it never
+    // rejects — so ac.abort() fires into a void and `for await` waits forever. A
+    // 2026-08-02 distill sweep sat on one such call for 1800s against this very
+    // 120s budget. Racing a hard timer guarantees a return on schedule; callModel
+    // then degrades to ''. The abort is still issued first so an SDK that is merely
+    // slow, rather than wedged, gets the chance to tear its subprocess down.
+    let timer;
+    const expiry = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            ac.abort();
+            reject(new Error(`agent-sdk call exceeded ${timeoutMs}ms`));
+        }, timeoutMs);
+    });
+    const drained = drain();
+    drained.catch(() => { }); // race may settle via expiry; swallow the orphaned rejection
+    try {
+        return await Promise.race([drained, expiry]);
     }
     finally {
         clearTimeout(timer);

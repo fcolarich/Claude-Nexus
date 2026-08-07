@@ -11,6 +11,7 @@
  *                                       [--merge-model OLLAMA_MODEL] [--dry-run]
  */
 
+import { execFileSync } from 'node:child_process';
 import { openDatabase, initializeSchema } from '../dist/core/database.js';
 import { distillMemories } from '../dist/core/distill.js';
 import { callModel } from '../dist/core/llm.js';
@@ -26,6 +27,19 @@ const project = flag('--project', undefined);
 const maxChunks = Number(flag('--max-chunks', 200));
 const mergeModel = flag('--merge-model', undefined);
 const dryRun = args.includes('--dry-run');
+// Free VRAM (MiB) required before each chunk. A local merge model that is
+// resident but starved does not fail cleanly — it times out slowly, so the
+// consecutive-failure abort never trips and chunks limp along at a fraction of
+// normal cluster yield. Waiting for a quiet GPU is what makes an unattended
+// overnight run viable. 0 disables the check.
+const minFreeVram = Number(flag('--min-free-vram', mergeModel ? 3000 : 0));
+const vramPollSeconds = Number(flag('--vram-poll', 300));
+// Wall-clock budget, checked at chunk boundaries and while parked waiting for the
+// GPU. A nightly job must hand the machine back before the working day whether or
+// not the sweep finished — the cursor makes stopping mid-sweep free.
+const maxRuntimeMin = Number(flag('--max-runtime-min', 0));
+const deadline = maxRuntimeMin ? Date.now() + maxRuntimeMin * 60_000 : null;
+const outOfTime = () => deadline !== null && Date.now() >= deadline;
 
 /**
  * The default extraction provider (claude-agent-sdk) spawns a fresh `claude` CLI
@@ -58,6 +72,36 @@ const ollamaCall = async (system, user) => {
 
 const callFn = mergeModel ? ollamaCall : callModel;
 
+/** Free VRAM in MiB via nvidia-smi, or null when it is unavailable. */
+function freeVram() {
+	try {
+		const out = execFileSync('nvidia-smi', ['--query-gpu=memory.free', '--format=csv,noheader,nounits'], {
+			encoding: 'utf8', timeout: 15000,
+		});
+		const n = Number(out.trim().split('\n')[0]);
+		return Number.isFinite(n) ? n : null;
+	} catch {
+		return null;  // no nvidia-smi (CPU box, non-NVIDIA) — never block on it
+	}
+}
+
+async function waitForGpu() {
+	if (!minFreeVram) return;
+	let waited = 0;
+	for (;;) {
+		if (outOfTime()) return;               // deadline wins over waiting; the chunk loop then exits
+		const free = freeVram();
+		if (free === null) return;             // cannot measure: proceed rather than stall forever
+		if (free >= minFreeVram) {
+			if (waited) console.log(`[${stamp()}] GPU free (${free} MiB) after waiting ${Math.round(waited / 60)} min — resuming`);
+			return;
+		}
+		if (!waited) console.log(`[${stamp()}] waiting for GPU: ${free} MiB free, need ${minFreeVram} MiB (checking every ${vramPollSeconds}s)`);
+		await new Promise(r => setTimeout(r, vramPollSeconds * 1000));
+		waited += vramPollSeconds;
+	}
+}
+
 const db = openDatabase();
 initializeSchema(db);
 console.log(`merge model: ${mergeModel ?? 'configured extraction model (extraction_models.yaml)'}`);
@@ -69,6 +113,8 @@ let stalled = 0;
 let stopReason = 'max-chunks guard hit';
 
 for (let chunk = 1; chunk <= maxChunks; chunk++) {
+	await waitForGpu();
+	if (outOfTime()) { stopReason = `time budget reached (${maxRuntimeMin} min) — stopping at a chunk boundary`; break; }
 	const t0 = Date.now();
 	const r = await distillMemories(db, { project, limit, dryRun }, undefined, callFn);
 	const secs = ((Date.now() - t0) / 1000).toFixed(1);

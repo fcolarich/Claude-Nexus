@@ -1,0 +1,2 @@
+merge model: gemma3:12b
+[10:32:32] waiting for GPU: 410 MiB free, need 4000 MiB (checking every 300s)

@@ -14,7 +14,52 @@
 - `reflect()` already runs VCC (`vcc.compactWindowLines(window.rawLines)`) at `src/capture/reflector.ts:92` and uses its output as extraction text. Filtering only `window.text` would be dead code on the normal path. **Scrub `rawLines`.**
 - Transcript `.jsonl` files are JSON-encoded, so markers appear with **escaped quotes**: `<scheduled-task name=\"nexus-memory-distill\"`. Regexes must tolerate the backslash.
 
-**Start:** create a dedicated worktree via the `git-worktrees` skill before Task 1. **End:** Task 9 hands off to `finish-branch`; Task 10 updates docs.
+**Start:** create a dedicated worktree via the `git-worktrees` skill before Task 0. **End:** Task 9 hands off to `finish-branch`; Task 10 updates docs.
+
+**Verification note:** use `npm run build` (tsc with the project tsconfig) as the compile gate. A bare `npx tsc --noEmit` additionally reports pre-existing type errors inside `node_modules/@anthropic-ai/claude-agent-sdk` that are unrelated to this work and are suppressed by the project's `skipLibCheck`.
+
+**KNOWN-RED BASELINE — do not fix, do not edit:** `src/capture/reflector.test.ts > sets sessions.vcc_shrunk_at after a full reflect() pass when compactFileInPlace succeeds` fails on `main` before this work starts. It asserts behaviour that a deliberate safety change disabled (`compactFileInPlace` is commented out to stop it destroying raw transcripts). Resolving it belongs to the concurrent VCC workstream, not this one. Baseline is **342 passed / 1 failed**; treat any *other* failure as a real regression introduced by this plan.
+
+**Worktree:** `C:\Fran\claude-nexus\.worktrees\origin-capture-exclusion`, branch `feat/origin-capture-exclusion`, based on `cb73cbc`. All work happens there. Another session is committing to `main` concurrently — do not edit files outside this plan's scope.
+
+---
+
+### Task 0: Repair the broken baseline build
+
+`main` does not currently compile. Fix it first so every later verification step is meaningful. Pre-existing failure, unrelated to this feature.
+
+**Files:**
+- Modify: `src/capture/reflector.test.ts:389-394`
+
+**Step 1: Confirm the failure**
+
+Run: `npm run build`
+Expected: FAIL — `src/capture/reflector.test.ts(393,37): error TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.`
+
+**Step 2: Implement**
+
+`better-sqlite3`'s `prepare()` takes a single `sql` argument, so the spread is both unnecessary and untypeable. Replace the spy:
+
+```typescript
+      const spy = (sql: string) => {
+        if (sql.includes('SET superseded_by')) {
+          throw new Error('boom — forced supersede failure');
+        }
+        return originalPrepare(sql);
+      };
+```
+
+**Step 3: Verify**
+
+Run: `npm run build`
+Expected: exits 0, no output.
+
+**Step 4: Commit**
+
+```bash
+git add src/capture/reflector.test.ts
+git commit -m "fix: repair reflector test spy type error breaking the build"
+```
 
 ---
 

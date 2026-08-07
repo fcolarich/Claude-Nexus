@@ -1,0 +1,340 @@
+diff --git a/src/capture/extract.test.ts b/src/capture/extract.test.ts
+index b3202a8..1abe7b4 100644
+--- a/src/capture/extract.test.ts
++++ b/src/capture/extract.test.ts
+@@ -1,5 +1,9 @@
+-import { describe, it, expect } from 'vitest';
+-import { parseCandidates, refineCandidates, type MemoryCandidate } from './extract.js';
++import { describe, it, expect, vi, beforeEach } from 'vitest';
++
++const { callModelMock } = vi.hoisted(() => ({ callModelMock: vi.fn() }));
++vi.mock('../core/llm.js', () => ({ callModel: callModelMock }));
++
++import { parseCandidates, refineCandidates, extractMemories, type MemoryCandidate } from './extract.js';
+ 
+ function cand(overrides: Partial<MemoryCandidate>): MemoryCandidate {
+   return {
+@@ -105,6 +109,49 @@ describe('parseCandidates', () => {
+   });
+ });
+ 
++describe('parseCandidates — source-aware cap', () => {
++  function manyRaw(n: number) {
++    return JSON.stringify(Array.from({ length: n }, (_, i) => ({ ...valid, title: `Fact ${i}` })));
++  }
++
++  it('caps at a custom maxCandidates when provided', () => {
++    const out = parseCandidates(manyRaw(30), 25);
++    expect(out).toHaveLength(25);
++  });
++
++  it('defaults to a cap of 20 when maxCandidates omitted', () => {
++    const out = parseCandidates(manyRaw(30));
++    expect(out).toHaveLength(20);
++  });
++});
++
++describe('extractMemories — source-aware cap', () => {
++  function manyRaw(n: number) {
++    return JSON.stringify(Array.from({ length: n }, (_, i) => ({ ...valid, title: `Fact ${i}` })));
++  }
++
++  beforeEach(() => callModelMock.mockReset());
++
++  it('allows more than 20, up to 40, when ctx.source is vcc', async () => {
++    callModelMock.mockResolvedValue(manyRaw(50));
++    const out = await extractMemories('some transcript', { project: 'p', source: 'vcc' });
++    expect(out.length).toBeGreaterThan(20);
++    expect(out.length).toBeLessThanOrEqual(40);
++  });
++
++  it('caps at 20 when ctx.source is generic', async () => {
++    callModelMock.mockResolvedValue(manyRaw(50));
++    const out = await extractMemories('some transcript', { project: 'p', source: 'generic' });
++    expect(out).toHaveLength(20);
++  });
++
++  it('caps at 20 when ctx.source is omitted', async () => {
++    callModelMock.mockResolvedValue(manyRaw(50));
++    const out = await extractMemories('some transcript', { project: 'p' });
++    expect(out).toHaveLength(20);
++  });
++});
++
+ describe('refineCandidates', () => {
+   it('drops completion / progress narration by title', () => {
+     const c = cand({ title: 'Rumble Editor Tools doc spine initialized', memory_type: 'reference' });
+diff --git a/src/capture/extract.ts b/src/capture/extract.ts
+index 9cc63dd..52099ef 100644
+--- a/src/capture/extract.ts
++++ b/src/capture/extract.ts
+@@ -21,13 +21,14 @@ export interface MemoryCandidate {
+ }
+ 
+ /** Injectable for testing — the Reflector accepts a fake of this shape. */
+-export type Extractor = (condensed: string, ctx: { project: string | null; decisions?: string[] }) => Promise<MemoryCandidate[]>;
++export type Extractor = (condensed: string, ctx: { project: string | null; decisions?: string[]; source?: 'vcc' | 'generic' }) => Promise<MemoryCandidate[]>;
+ 
+ const MEMORY_TYPES = new Set<string>(['preference', 'convention', 'failure', 'correction', 'decision', 'insight', 'tool_quirk', 'reference']);
+ const PROMOTION_TARGETS = new Set<string>(['none', 'adr', 'ddr', 'best_practice', 'recipe', 'note']);
+ const DECAY_CLASSES = new Set<string>(['stable', 'architecture', 'api_contract', 'implementation']);
+ const SCOPES = new Set<string>(['global', 'shared', 'project']);
+-const MAX_CANDIDATES = 20;
++const MAX_CANDIDATES_GENERIC = 20;
++const MAX_CANDIDATES_VCC = 40;
+ 
+ /**
+  * Completion / session-progress narration — never durable knowledge.
+@@ -103,10 +104,11 @@ Rules:
+ - If a decision is ALREADY recorded as an ADR or DDR (see the "Existing canonical decisions" list in the user message, or if the transcript cites an ADR-NNN / DDR-NNN id), do NOT restate it. Emit a "reference" memory instead: title = the decision name, body = a one-line gist followed by "→ ADR-NNN". The ADR/DDR file is the source of truth; the memory only aids retrieval.
+ - Density does not rank memories. A single-sentence durable statement about how the user wants work done (workflow rule, commit/review protocol, tool or communication preference) is EXACTLY as extractable as a multi-paragraph technical failure. Never drop one because the surrounding transcript is technically dense or because it looks small next to the other items.
+ - Explicit, unconditional user directives about process ("only do X when I ask", "never do Y") are high-confidence global preferences. Emit them even when they appear once, in passing, and even when the rest of the window is about something unrelated.
++- If the transcript contains "### Phase:" headings (a Flow-structured session), treat each phase section as an independent extraction unit — scan every phase for durable facts rather than skimming the transcript as one flat block. Distinct phases (design/architect/execute/merge) commonly carry distinct ADR/DDR pointers, tool quirks, and decisions.
+ - Output STRICT JSON ONLY: an array of objects with keys title, body, memory_type, scope, decay_class, confidence, tags, promotion_target. No prose, no markdown fences.`;
+ 
+ /** Extract the first top-level JSON array from a model response and validate it. */
+-export function parseCandidates(raw: string): MemoryCandidate[] {
++export function parseCandidates(raw: string, maxCandidates: number = MAX_CANDIDATES_GENERIC): MemoryCandidate[] {
+   if (!raw || !raw.trim()) return [];
+ 
+   let parsed: unknown;
+@@ -138,7 +140,7 @@ export function parseCandidates(raw: string): MemoryCandidate[] {
+     const promotion_target = PROMOTION_TARGETS.has(o.promotion_target as string) ? (o.promotion_target as PromotionTarget) : 'none';
+ 
+     out.push({ title: title.slice(0, 120), body, memory_type: o.memory_type as MemoryType, scope, decay_class, confidence, tags, promotion_target });
+-    if (out.length >= MAX_CANDIDATES) break;
++    if (out.length >= maxCandidates) break;
+   }
+   return out;
+ }
+@@ -175,12 +177,13 @@ export function refineCandidates(cands: MemoryCandidate[]): MemoryCandidate[] {
+ }
+ 
+ /** Default extractor — used by the Reflector unless a fake is injected. */
+-export async function extractMemories(condensed: string, ctx: { project: string | null; decisions?: string[] }): Promise<MemoryCandidate[]> {
++export async function extractMemories(condensed: string, ctx: { project: string | null; decisions?: string[]; source?: 'vcc' | 'generic' }): Promise<MemoryCandidate[]> {
+   if (!condensed.trim()) return [];
+   const decisionsBlock = ctx.decisions && ctx.decisions.length
+     ? `\n\nExisting canonical decisions (already recorded as ADR/DDR — do NOT restate these; emit a reference pointer if relevant):\n${ctx.decisions.map(d => `- ${d}`).join('\n')}`
+     : '';
+   const userPrompt = `Project: ${ctx.project ?? '(none)'}${decisionsBlock}\n\nTranscript:\n${condensed}\n\nExtract the durable memories as a JSON array.`;
+   const raw = await callModel(SYSTEM_PROMPT, userPrompt);
+-  return refineCandidates(parseCandidates(raw));
++  const maxCandidates = ctx.source === 'vcc' ? MAX_CANDIDATES_VCC : MAX_CANDIDATES_GENERIC;
++  return refineCandidates(parseCandidates(raw, maxCandidates));
+ }
+diff --git a/src/capture/reflector.test.ts b/src/capture/reflector.test.ts
+index 518b3ff..ed94e79 100644
+--- a/src/capture/reflector.test.ts
++++ b/src/capture/reflector.test.ts
+@@ -1,5 +1,5 @@
+ import { describe, it, expect } from 'vitest';
+-import { writeFileSync, mkdtempSync } from 'fs';
++import { writeFileSync, mkdtempSync, mkdirSync } from 'fs';
+ import { join } from 'path';
+ import { tmpdir } from 'os';
+ import { openDatabase, initializeSchema } from '../core/database.js';
+@@ -12,6 +12,23 @@ function makeTranscript(entries: object[]): string {
+   writeFileSync(p, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+   return p;
+ }
++
++/**
++ * Fixture for readDecisionIndex()'s cwd -> _documents/decisions/ convention
++ * (see docspine.ts). Writes short-form filenames (adr-NNN-slug.md) — the only
++ * form the current id-derivation parses correctly (timestamp-form ids are a
++ * known separate out-of-scope issue, see impl-spec.md Resolved Open Questions).
++ * `entries` are bare ids like '042'; returns the cwd root to pass as opts.cwd.
++ */
++function makeDecisions(entries: string[]): string {
++  const dir = mkdtempSync(join(tmpdir(), 'nexus-decisions-'));
++  const decisionsDir = join(dir, '_documents', 'decisions');
++  mkdirSync(decisionsDir, { recursive: true });
++  for (const id of entries) {
++    writeFileSync(join(decisionsDir, `adr-${id}-decision.md`), `# ADR-${id}: Test decision\n\nBody.\n`);
++  }
++  return dir;
++}
+ const userMsg = (content: unknown) => ({ type: 'user', message: { role: 'user', content } });
+ const asstMsg = (content: unknown) => ({ type: 'assistant', message: { role: 'assistant', content } });
+ 
+@@ -246,15 +263,16 @@ describe('reflect', () => {
+ 
+     it('happy path — upgrades a decision to a reference when a real ADR id is later cited', async () => {
+       const db = freshDb();
++      const cwd = makeDecisions(['042']);
+       const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
+-      const r1 = await reflect(db, { session_id: 'u1', transcript_path: p1, project: 'proj' },
++      const r1 = await reflect(db, { session_id: 'u1', transcript_path: p1, project: 'proj', cwd },
+         { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
+       expect(r1.inserted).toBe(1);
+ 
+       const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
+ 
+       const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
+-      const r2 = await reflect(db, { session_id: 'u2', transcript_path: p2, project: 'proj' },
++      const r2 = await reflect(db, { session_id: 'u2', transcript_path: p2, project: 'proj', cwd },
+         { extract: async () => [refCand], embed: async () => FIXED_VEC });
+ 
+       expect(r2.upgraded).toBe(1);
+@@ -312,14 +330,15 @@ describe('reflect', () => {
+ 
+     it('positive — broadened trigger: promotion_target=\'none\' decision row also gets superseded', async () => {
+       const db = freshDb();
++      const cwd = makeDecisions(['042']);
+       const noneDecisionCand: MemoryCandidate = { ...decisionCand, promotion_target: 'none' };
+       const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
+-      await reflect(db, { session_id: 'x1', transcript_path: p1, project: 'proj' },
++      await reflect(db, { session_id: 'x1', transcript_path: p1, project: 'proj', cwd },
+         { extract: async () => [noneDecisionCand], embed: async () => FIXED_VEC });
+       const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
+ 
+       const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
+-      const r2 = await reflect(db, { session_id: 'x2', transcript_path: p2, project: 'proj' },
++      const r2 = await reflect(db, { session_id: 'x2', transcript_path: p2, project: 'proj', cwd },
+         { extract: async () => [refCand], embed: async () => FIXED_VEC });
+ 
+       expect(r2.upgraded).toBe(1);
+@@ -331,12 +350,13 @@ describe('reflect', () => {
+ 
+     it('idempotency / convergence — a third window matching the reference row is touch-only, no re-supersede', async () => {
+       const db = freshDb();
++      const cwd = makeDecisions(['042']);
+       const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
+-      await reflect(db, { session_id: 'y1', transcript_path: p1, project: 'proj' },
++      await reflect(db, { session_id: 'y1', transcript_path: p1, project: 'proj', cwd },
+         { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
+ 
+       const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
+-      const r2 = await reflect(db, { session_id: 'y2', transcript_path: p2, project: 'proj' },
++      const r2 = await reflect(db, { session_id: 'y2', transcript_path: p2, project: 'proj', cwd },
+         { extract: async () => [refCand], embed: async () => FIXED_VEC });
+       expect(r2.upgraded).toBe(1);
+       expect(countMemories(db)).toBe(2); // decision (superseded) + reference
+@@ -344,7 +364,7 @@ describe('reflect', () => {
+       const referenceId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'reference'`).get() as { id: string }).id;
+ 
+       const p3 = makeTranscript(SIGNAL_TRANSCRIPT);
+-      const r3 = await reflect(db, { session_id: 'y3', transcript_path: p3, project: 'proj' },
++      const r3 = await reflect(db, { session_id: 'y3', transcript_path: p3, project: 'proj', cwd },
+         { extract: async () => [refCand], embed: async () => FIXED_VEC });
+ 
+       expect(r3.upgraded).toBe(0);
+@@ -358,8 +378,9 @@ describe('reflect', () => {
+ 
+     it('rollback — a throw during the supersede UPDATE persists neither the new row nor superseded_by', async () => {
+       const db = freshDb();
++      const cwd = makeDecisions(['042']);
+       const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
+-      await reflect(db, { session_id: 'z1', transcript_path: p1, project: 'proj' },
++      await reflect(db, { session_id: 'z1', transcript_path: p1, project: 'proj', cwd },
+         { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
+       const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
+       const beforeCount = countMemories(db);
+@@ -374,7 +395,7 @@ describe('reflect', () => {
+       (db as unknown as { prepare: typeof db.prepare }).prepare = spy as unknown as typeof db.prepare;
+ 
+       const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
+-      await expect(reflect(db, { session_id: 'z2', transcript_path: p2, project: 'proj' },
++      await expect(reflect(db, { session_id: 'z2', transcript_path: p2, project: 'proj', cwd },
+         { extract: async () => [refCand], embed: async () => FIXED_VEC })).rejects.toThrow();
+ 
+       (db as unknown as { prepare: typeof db.prepare }).prepare = originalPrepare;
+@@ -384,5 +405,45 @@ describe('reflect', () => {
+       expect(decisionRow.superseded_by).toBeNull();
+       db.close();
+     });
++
++    it('negative — hallucinated citation: candidate cites a plausible but nonexistent ADR id: touch-only', async () => {
++      const db = freshDb();
++      const cwd = makeDecisions(['042']); // fixture does not contain ADR-999
++      const hallucinatedRefCand: MemoryCandidate = {
++        ...refCand, body: 'Supersede-insert dedup upgrade decision → ADR-999',
++      };
++      const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
++      await reflect(db, { session_id: 'aa1', transcript_path: p1, project: 'proj', cwd },
++        { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
++      const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
++
++      const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
++      const r2 = await reflect(db, { session_id: 'aa2', transcript_path: p2, project: 'proj', cwd },
++        { extract: async () => [hallucinatedRefCand], embed: async () => FIXED_VEC });
++
++      expect(r2.upgraded).toBe(0);
++      expect(r2.merged).toBe(1);
++      const decisionRow = db.prepare(`SELECT superseded_by FROM memories WHERE id = ?`).get(decisionId) as { superseded_by: string | null };
++      expect(decisionRow.superseded_by).toBeNull();
++      db.close();
++    });
++
++    it('negative — no doc-spine (opts.cwd omitted): fail-closed, touch-only despite a real-shaped citation', async () => {
++      const db = freshDb();
++      const p1 = makeTranscript(SIGNAL_TRANSCRIPT);
++      await reflect(db, { session_id: 'bb1', transcript_path: p1, project: 'proj' },
++        { extract: async () => [decisionCand], embed: async () => FIXED_VEC });
++      const decisionId = (db.prepare(`SELECT id FROM memories WHERE memory_type = 'decision'`).get() as { id: string }).id;
++
++      const p2 = makeTranscript(SIGNAL_TRANSCRIPT);
++      const r2 = await reflect(db, { session_id: 'bb2', transcript_path: p2, project: 'proj' }, // no cwd
++        { extract: async () => [refCand], embed: async () => FIXED_VEC });
++
++      expect(r2.upgraded).toBe(0);
++      expect(r2.merged).toBe(1);
++      const decisionRow = db.prepare(`SELECT superseded_by FROM memories WHERE id = ?`).get(decisionId) as { superseded_by: string | null };
++      expect(decisionRow.superseded_by).toBeNull();
++      db.close();
++    });
+   });
+ });
+diff --git a/src/capture/reflector.ts b/src/capture/reflector.ts
+index 4e89285..8fa5770 100644
+--- a/src/capture/reflector.ts
++++ b/src/capture/reflector.ts
+@@ -53,11 +53,15 @@ export interface ReflectResult {
+  * that row's `promotion_target` (broadened per design Decision 2). Everything
+  * else falls through to the ordinary touch-and-continue dedup path.
+  */
+-function isReferenceUpgrade(candidate: MemoryCandidate, matched: Memory): boolean {
+-  return candidate.memory_type === 'reference'
+-    && ADR_REF_RE.test(candidate.body)
+-    && matched.memory_type === 'decision'
+-    && matched.superseded_by == null;
++function isReferenceUpgrade(candidate: MemoryCandidate, matched: Memory, validIds: Set<string>): boolean {
++  if (candidate.memory_type !== 'reference'
++    || !ADR_REF_RE.test(candidate.body)
++    || matched.memory_type !== 'decision'
++    || matched.superseded_by != null) {
++    return false;
++  }
++  const id = (candidate.body.match(ADR_REF_RE) ?? [])[0]?.toUpperCase();
++  return !!id && validIds.has(id);
+ }
+ 
+ /**
+@@ -105,6 +109,7 @@ export async function reflect(
+   // available; fail-open to the raw condensed window text on any error.
+   let extractionText = window.text;
+   const compacted = vcc.compactWindowLines(window.rawLines, { timeoutMs: 10_000 });
++  const source: 'vcc' | 'generic' = compacted.ok && !!compacted.text ? 'vcc' : 'generic';
+   if (compacted.ok && compacted.text) {
+     extractionText = compacted.text;
+   } else if (!compacted.ok) {
+@@ -112,7 +117,8 @@ export async function reflect(
+   }
+ 
+   const decisions = readDecisionIndex(opts.cwd);
+-  const candidates = await extract(extractionText, { project: opts.project, decisions });
++  const validIds = new Set(decisions.map((d) => d.split(':')[0].trim().toUpperCase()));
++  const candidates = await extract(extractionText, { project: opts.project, decisions, source });
+ 
+   let inserted = 0;
+   let merged = 0;
+@@ -126,7 +132,7 @@ export async function reflect(
+     if (vec) {
+       const sim = findSimilarMemory(db, normalize(vec), { scope: c.scope, project: memProject, excludeSuperseded: true });
+       if (sim && sim.similarity >= cfg.dedup_cosine_threshold) {
+-        if (isReferenceUpgrade(c, sim.memory)) {
++        if (isReferenceUpgrade(c, sim.memory, validIds)) {
+           // Fix 1 — supersede-insert. The matched decision row is content-drifted:
+           // insert the reference pointer as its own content-addressed row, then
+           // mark the old decision row superseded. Both writes share one txn so a

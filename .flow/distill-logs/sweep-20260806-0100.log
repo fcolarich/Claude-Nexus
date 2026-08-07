@@ -1,0 +1,8 @@
+merge model: gemma3:12b
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout
+[llm] gemma3:12b call failed: The operation was aborted due to timeout

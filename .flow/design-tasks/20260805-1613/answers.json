@@ -1,0 +1,64 @@
+{
+  "answers": [
+    {
+      "question_id": "q-001",
+      "question": "What should drive grouping/priority order in the plan?",
+      "answer": "Value to active workflows: prioritize features that most improve day-to-day capture/recall quality right now, over pure risk-reduction or pure effort-to-value ranking.",
+      "source": "user"
+    },
+    {
+      "question_id": "q-002",
+      "question": "Should FEAT-004 and FEAT-023 be formally dropped?",
+      "answer": "Keep both in the document and in the plan. Do not pre-drop them — write an explicit analysis of whether the tool should do them or drop them, and let that analysis reach a recommendation inline in the doc.",
+      "source": "user"
+    },
+    {
+      "question_id": "q-003",
+      "question": "Should other features be flagged as misaligned/dropped in Fit Check?",
+      "answer": "No feature is excluded a priori. All 26 features get a fit analysis in the Fit Check section; the document decides per-feature whether to keep, defer, or drop, with reasoning.",
+      "source": "user"
+    },
+    {
+      "question_id": "q-004",
+      "question": "Where does FEAT-038 (constrained decoding) belong given it depends on local model serving?",
+      "answer": "Local Inference Infra, as a prerequisite-gated item under/after FEAT-039 (local model co-residency).",
+      "source": "user"
+    },
+    {
+      "question_id": "q-005",
+      "question": "Is FEAT-006 (memory scope parameter) actually implemented, satisfying FEAT-027's dependency?",
+      "answer": "Verified directly: _documents/features/feature-006-*.md has status: implemented. scope enum (global/shared/project) is a caller-settable parameter on nexus_remember, nexus_remember_batch, and a filter on nexus_search (confirmed via grep in mcp/server.ts per the feature note). FEAT-027 (per-skill scope) is additive work layered on top of this already-shipped scope system, not blocked on it.",
+      "source": "user"
+    },
+    {
+      "question_id": "q-006",
+      "question": "FEAT-025 and FEAT-030 (embedding pipeline efficiency) — which bucket?",
+      "answer": "Retrieval & Recall.",
+      "source": "user"
+    },
+    {
+      "question_id": "q-007",
+      "question": "FEAT-031 (cosine-similarity zero-shot classification) — which bucket?",
+      "answer": "Local Inference Infra (grouped by mechanism: embedding-based inference, cheaper-than-LLM).",
+      "source": "user"
+    },
+    {
+      "question_id": "q-008",
+      "question": "How should needs-research features be handled in the plan?",
+      "answer": "Inline: each needs-research feature gets a scoped research/spike step as the first step in its bucket's sequencing, before any implementation step — not pulled into a separate section.",
+      "source": "user"
+    },
+    {
+      "question_id": "q-009",
+      "question": "What determines cross-bucket sequencing priority?",
+      "answer": "Same driver as q-001: value to active workflows first. Within that, buckets touching known correctness/safety gaps (e.g. capture guardrails) should still be called out explicitly in the Sequencing Recommendation even if not ranked first, since the user wants an analysis, not just an ordering.",
+      "source": "todo"
+    },
+    {
+      "question_id": "q-adr-inconsistency",
+      "question": "FEAT-024 cites 'ADR-015' as the decision disabling vcc.compactFileInPlace(), but architecture.md's index maps the ID 'ADR-015' to a different, unrelated ADR (adr-20260730134500-2c, supersede-insert reference-upgrade). Resolved by direct file lookup.",
+      "answer": "Verified via grep: the actual decision lives in _documents/decisions/adr-015-disable-vcc-post-extraction-shrink-in-reflectorts.md (old sequential-numbering file), which is a separate file from the hash-ID file architecture.md's index currently labels 'ADR-015'. This is an ADR-numbering/index collision (doc hygiene issue), not a wrong claim in FEAT-024 — the underlying decision document exists and is correctly the basis for FEAT-024. Flag the index collision as a TODO for the doc-maintenance skills (add-adr numbering), separate from this implementation plan.",
+      "source": "todo"
+    }
+  ]
+}
