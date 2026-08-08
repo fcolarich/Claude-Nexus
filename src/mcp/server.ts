@@ -11,6 +11,7 @@ import { resolveProjectFromCwd } from '../core/project-root.js';
 import { buildBm25Corpus, rrfMerge } from '../core/links.js';
 import type { RankedResult } from '../core/links.js';
 import { generateEmbedding } from '../core/embeddings.js';
+import { extractIdentifiers, unionIdentifiers } from '../core/identifiers.js';
 import type { CrossRefResult, LinkType } from '../core/types.js';
 import { computeAtomId, computeHash } from '../indexer/parser.js';
 import type { Atom } from '../core/types.js';
@@ -756,9 +757,15 @@ server.tool(
       ? `${firstSentence} → ${artifact_ref}`
       : firstSentence;
 
+    // Same identifier guarantee as distill's merge/sanitize paths: this rewrites
+    // body to a thin pointer, so the full identifier set the original body named
+    // must be carried forward explicitly rather than re-derived from the (much
+    // shorter) pointer text alone.
+    const newIdentifiers = unionIdentifiers(memory.identifiers, extractIdentifiers(newBody));
+
     db.prepare(
-      `UPDATE memories SET body = ?, promoted_to = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(newBody, artifact_ref, id);
+      `UPDATE memories SET body = ?, promoted_to = ?, identifiers = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(newBody, artifact_ref, JSON.stringify(newIdentifiers), id);
 
     // D-005: re-embed the rewritten body — best-effort, failure does not fail the tool
     embedMemory(db, id).catch(() => {});

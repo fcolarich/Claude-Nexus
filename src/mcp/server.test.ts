@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { insertMemory, getMemory, type MemoryInput } from '../core/memories.js';
+import { extractIdentifiers, unionIdentifiers } from '../core/identifiers.js';
 import type Database from 'better-sqlite3';
 
 function freshDb(): Database.Database {
@@ -91,9 +92,11 @@ async function runMarkPromoted(
 		? `${firstSentence} → ${artifact_ref}`
 		: firstSentence;
 
+	const newIdentifiers = unionIdentifiers(memory.identifiers, extractIdentifiers(newBody));
+
 	db.prepare(
-		`UPDATE memories SET body = ?, promoted_to = ?, updated_at = datetime('now') WHERE id = ?`,
-	).run(newBody, artifact_ref, id);
+		`UPDATE memories SET body = ?, promoted_to = ?, identifiers = ?, updated_at = datetime('now') WHERE id = ?`,
+	).run(newBody, artifact_ref, JSON.stringify(newIdentifiers), id);
 
 	// D-005: re-embed the rewritten body — best-effort, failure does not fail
 	embedFn(id).catch(() => {});
@@ -230,6 +233,25 @@ describe('nexus_mark_promoted logic', () => {
 
 		const updated = getMemory(db, id);
 		expect(updated!.body).toBe('Use tabs for indentation. → ADR-063');
+		db.close();
+	});
+
+	it('preserves identifiers from the original body even though the pointer body drops them (ADR-20260808214308-a0 regression)', async () => {
+		const db = freshDb();
+		const { id } = insertMemory(db, memInput({
+			body: 'This is unrelated filler that becomes the pointer. The MERGE_COVERAGE_FLOOR in src/core/distill.ts is 0.72.',
+			promotion_target: 'adr',
+		}));
+
+		await runMarkPromoted(db, id, 'ADR-063');
+
+		const row = db.prepare(`SELECT body, identifiers FROM memories WHERE id = ?`).get(id) as { body: string; identifiers: string };
+		// The pointer body itself no longer names the identifiers...
+		expect(row.body).not.toContain('MERGE_COVERAGE_FLOOR');
+		// ...but the identifiers column still carries them forward.
+		const ids = JSON.parse(row.identifiers) as string[];
+		expect(ids).toContain('MERGE_COVERAGE_FLOOR');
+		expect(ids).toContain('src/core/distill.ts');
 		db.close();
 	});
 

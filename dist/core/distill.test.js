@@ -628,6 +628,23 @@ describe('distillMemories — sanitize bound (7)', () => {
         expect(outRow.body).toBe(longBodyB);
         db.close();
     });
+    it('sanitize preserves identifiers even when the tightened prose drops them (ADR-20260808214308-a0 regression)', async () => {
+        const db = freshDb();
+        const longBody = `GAMMA touches src/core/distill.ts and MERGE_COVERAGE_FLOOR. ${'padding text here. '.repeat(50)}`;
+        const inserted = insertMemory(db, { ...base, title: 'Oversized', body: longBody, project: 'proj-a' });
+        const seeded = db.prepare(`SELECT identifiers FROM memories WHERE id = ?`).get(inserted.id);
+        expect(JSON.parse(seeded.identifiers)).toEqual(expect.arrayContaining(['src/core/distill.ts', 'MERGE_COVERAGE_FLOOR']));
+        // Tightened prose reproduces neither identifier — the exact failure mode
+        // the audit found: a shorter rewrite that drops what the original named.
+        const spySanitize = async () => JSON.stringify({ title: 'Tight', body: 'short tightened body with nothing specific' });
+        const r = await distillMemories(db, { project: 'proj-a' }, fakeEmbed, spySanitize);
+        expect(r.sanitized).toBe(1);
+        const row = db.prepare(`SELECT identifiers FROM memories WHERE id = ?`).get(inserted.id);
+        const ids = JSON.parse(row.identifiers);
+        expect(ids).toContain('src/core/distill.ts');
+        expect(ids).toContain('MERGE_COVERAGE_FLOOR');
+        db.close();
+    });
 });
 describe('distillMemories — backward-compat regression (10, SC-6)', () => {
     it('unscoped distillMemories(db) on a small (<200) set preserves clustering/merge/sanitize/supersede/link bookkeeping unchanged, default scope resolves to "all", default limit does not alter the outcome', async () => {

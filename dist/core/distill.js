@@ -16,7 +16,7 @@ import { generateEmbedding } from './embeddings.js';
 import { callModel } from './llm.js';
 import { embedUnindexedMemories, insertMemory, embedMemory, normalize } from './memories.js';
 import { resolveProjectFromCwd } from './project-root.js';
-import { unionIdentifiers } from './identifiers.js';
+import { extractIdentifiers, unionIdentifiers } from './identifiers.js';
 // Below: unrelated. At/above the dedup threshold (0.86): consolidate's job.
 // Left at 0.70 deliberately. Raising it to 0.75 was measured against 1028 real
 // merges and would have dropped 48.5% of the gated pairs — half of all
@@ -487,8 +487,18 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
         const obj = firstJsonObject(await callFn(SANITIZE_PROMPT, `(${m.memory_type}) ${m.title}\n${fresh.body}`));
         if (!obj || typeof obj.body !== 'string' || obj.body.length >= fresh.body.length)
             continue;
-        db.prepare(`UPDATE memories SET title = ?, body = ?, updated_at = datetime('now') WHERE id = ?`)
-            .run(typeof obj.title === 'string' ? obj.title.slice(0, 120) : m.title, obj.body, m.id);
+        const newTitle = typeof obj.title === 'string' ? obj.title.slice(0, 120) : m.title;
+        // Sanitize rewrites body text, same as a merge — it must carry the same
+        // identifier guarantee. Union `m.identifiers` (captured at insert/backfill
+        // time, before this rewrite) with a fresh extraction of the tightened text,
+        // rather than overwriting: whatever the shortened prose still names is
+        // included, and nothing the pre-rewrite body named is ever dropped just
+        // because this pass shortened it. Fixes the two identifier losses found in
+        // the Phase 1 whole-population audit (ADR-20260808214308-a0) — both traced
+        // to this UPDATE not touching `identifiers`, not to the extractor itself.
+        const newIdentifiers = unionIdentifiers(m.identifiers, extractIdentifiers(`${newTitle}\n${obj.body}`));
+        db.prepare(`UPDATE memories SET title = ?, body = ?, identifiers = ?, updated_at = datetime('now') WHERE id = ?`)
+            .run(newTitle, obj.body, JSON.stringify(newIdentifiers), m.id);
         await embedMemory(db, m.id, embedFn);
         result.sanitized++;
     }
