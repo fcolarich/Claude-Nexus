@@ -62,6 +62,7 @@ export interface Memory {
     linked_at: string | null;
     load_at_init: number;
     distilled_at: string | null;
+    identifiers: string[];
 }
 export interface Session {
     session_id: string;

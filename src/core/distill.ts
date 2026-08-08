@@ -18,6 +18,7 @@ import { generateEmbedding } from './embeddings.js';
 import { callModel } from './llm.js';
 import { embedUnindexedMemories, insertMemory, embedMemory, normalize } from './memories.js';
 import { resolveProjectFromCwd } from './project-root.js';
+import { unionIdentifiers } from './identifiers.js';
 import type { Memory, MemoryType, DecayClass, AtomScope } from './types.js';
 
 // Below: unrelated. At/above the dedup threshold (0.86): consolidate's job.
@@ -199,7 +200,11 @@ function scopeLabel(scope: ResolvedScope): string {
 }
 
 function rowToMemory(r: Record<string, unknown>): Memory {
-  return { ...(r as unknown as Memory), tags: JSON.parse((r.tags as string) || '[]') };
+  return {
+    ...(r as unknown as Memory),
+    tags: JSON.parse((r.tags as string) || '[]'),
+    identifiers: JSON.parse((r.identifiers as string) || '[]'),
+  };
 }
 
 /**
@@ -462,6 +467,14 @@ export async function distillMemories(
       ? (obj.tags as unknown[]).filter(t => typeof t === 'string').map(t => (t as string).toLowerCase()).slice(0, 5)
       : [];
 
+    // Set-union in code — the model never carries identifiers across a merge.
+    // Sourced from each cluster member's own `identifiers` column (populated at
+    // insert time or by the Phase 1 backfill), not re-extracted from the LLM's
+    // merged prose: that would only recover what the model happened to keep,
+    // reproducing the exact loss this column exists to eliminate. See
+    // src/core/identifiers.ts and _documents/design-structured-memory.md (Phase 1).
+    const mergedIdentifiers = unionIdentifiers(...cluster.map(c => c.identifiers));
+
     const ins = insertMemory(db, {
       title: (obj.title as string).slice(0, 120),
       body: obj.body as string,
@@ -476,6 +489,7 @@ export async function distillMemories(
       tags,
       load_at_init: cluster.some(c => c.load_at_init === 1),
       promotion_target: 'none',
+      identifiers: mergedIdentifiers,
     });
     if (!ins.inserted) continue;
     await embedMemory(db, ins.id, embedFn);

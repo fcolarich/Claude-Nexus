@@ -27,6 +27,7 @@ describe('schema migrations', () => {
     expect(tableExists(db, 'memory_links')).toBe(true);
     expect(tableExists(db, 'memories_fts')).toBe(true);
     expect(columnExists(db, 'sessions', 'last_reflected_index')).toBe(true);
+    expect(columnExists(db, 'memories', 'identifiers')).toBe(true);
     db.close();
   });
 

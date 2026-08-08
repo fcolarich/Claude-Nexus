@@ -67,6 +67,7 @@ export interface Memory {
   linked_at: string | null;
   load_at_init: number;  // 0 | 1
   distilled_at: string | null;  // last distill run that examined this memory; NULL = never
+  identifiers: string[];  // code-like tokens, extracted deterministically (src/core/identifiers.ts)
 }
 
 export interface Session {

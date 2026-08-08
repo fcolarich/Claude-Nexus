@@ -57,6 +57,36 @@ describe('distillMemories', () => {
         db.close();
     });
 });
+describe('distillMemories — Phase 1: identifier set-union on merge', () => {
+    it('merged memory carries every source identifier even when the merge prose drops them', async () => {
+        const db = freshDb();
+        // Sources carry code-like identifiers in their bodies (auto-extracted at insert time).
+        insertMemory(db, { ...base, title: 'One', body: 'ALPHA uses src/core/distill.ts and MERGE_COVERAGE_FLOOR', confidence: 0.9 });
+        insertMemory(db, { ...base, title: 'Two', body: 'BETA also touches src/core/memories.ts and ADR-018', confidence: 0.7 });
+        // fakeMerge's prose ("ALPHA consolidated body") reproduces none of those identifiers —
+        // the exact failure mode this design eliminates structurally.
+        const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+        expect(r.created).toBe(1);
+        const merged = db.prepare(`SELECT identifiers FROM memories WHERE superseded_by IS NULL AND identifiers != '[]'`).get();
+        expect(merged).toBeDefined();
+        const ids = JSON.parse(merged.identifiers);
+        expect(ids).toContain('src/core/distill.ts');
+        expect(ids).toContain('MERGE_COVERAGE_FLOOR');
+        expect(ids).toContain('src/core/memories.ts');
+        expect(ids).toContain('ADR-018');
+        db.close();
+    });
+    it('supersedes originals but preserves their identifiers row (recoverable via rollback)', async () => {
+        const db = freshDb();
+        const a = insertMemory(db, { ...base, title: 'One', body: 'ALPHA first src/core/distill.ts', confidence: 0.9 });
+        insertMemory(db, { ...base, title: 'Two', body: 'BETA second src/core/memories.ts', confidence: 0.7 });
+        await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+        const original = db.prepare(`SELECT identifiers, superseded_by FROM memories WHERE id = ?`).get(a.id);
+        expect(original.superseded_by).not.toBeNull();
+        expect(JSON.parse(original.identifiers)).toContain('src/core/distill.ts');
+        db.close();
+    });
+});
 describe('distillMemories — scoped/limited pool + accounting', () => {
     it('pool never exceeds limit regardless of total rows (SC-3)', async () => {
         const db = freshDb();

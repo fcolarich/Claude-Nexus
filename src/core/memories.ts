@@ -8,6 +8,7 @@ import Database from 'better-sqlite3';
 import { createHash } from 'crypto';
 import type { Memory, MemoryType, DecayClass, ReviewStatus, AtomScope, PromotionTarget } from './types.js';
 import { generateEmbedding, ensureEmbeddingModelReady } from './embeddings.js';
+import { extractIdentifiers } from './identifiers.js';
 
 export interface MemoryInput {
   title: string;
@@ -23,6 +24,10 @@ export interface MemoryInput {
   tags: string[];
   promotion_target: PromotionTarget;
   load_at_init?: boolean;
+  // Pre-computed identifier set (e.g. a set-union across a merge's sources —
+  // src/core/distill.ts). When omitted, insertMemory extracts deterministically
+  // from title+body itself. Callers never generate this list with a model.
+  identifiers?: string[];
 }
 
 /** Content-addressed id — identical (type, body) collapses to one row. */
@@ -57,19 +62,25 @@ function rowToMemory(row: Record<string, unknown>): Memory {
   return {
     ...(row as unknown as Memory),
     tags: JSON.parse((row.tags as string) || '[]'),
+    identifiers: JSON.parse((row.identifiers as string) || '[]'),
   };
 }
 
 /** Insert a memory. Returns inserted=false if the content-addressed id already exists. */
 export function insertMemory(db: Database.Database, input: MemoryInput): { id: string; inserted: boolean } {
   const id = computeMemoryId(input.memory_type, input.body);
+  // Deterministic, code-only extraction — never a model. Callers that already
+  // computed a set-union (distill.ts, on merge) pass identifiers explicitly so
+  // that union is preserved rather than overwritten by a fresh extraction that
+  // only sees the merged body's own text.
+  const identifiers = input.identifiers ?? extractIdentifiers(`${input.title}\n${input.body}`);
   const res = db.prepare(`
     INSERT OR IGNORE INTO memories
       (id, title, body, memory_type, scope, project, confidence, decay_class,
-       review_status, promotion_target, source_session_id, discovered_from, tags, content_hash, load_at_init)
+       review_status, promotion_target, source_session_id, discovered_from, tags, content_hash, load_at_init, identifiers)
     VALUES
       (@id, @title, @body, @memory_type, @scope, @project, @confidence, @decay_class,
-       @review_status, @promotion_target, @source_session_id, @discovered_from, @tags, @content_hash, @load_at_init)
+       @review_status, @promotion_target, @source_session_id, @discovered_from, @tags, @content_hash, @load_at_init, @identifiers)
   `).run({
     id,
     title: input.title,
@@ -86,6 +97,7 @@ export function insertMemory(db: Database.Database, input: MemoryInput): { id: s
     tags: JSON.stringify(input.tags),
     content_hash: contentHash(input.body),
     load_at_init: input.load_at_init ? 1 : 0,
+    identifiers: JSON.stringify(identifiers),
   });
   return { id, inserted: res.changes > 0 };
 }

@@ -16,6 +16,7 @@ import { generateEmbedding } from './embeddings.js';
 import { callModel } from './llm.js';
 import { embedUnindexedMemories, insertMemory, embedMemory, normalize } from './memories.js';
 import { resolveProjectFromCwd } from './project-root.js';
+import { unionIdentifiers } from './identifiers.js';
 // Below: unrelated. At/above the dedup threshold (0.86): consolidate's job.
 // Left at 0.70 deliberately. Raising it to 0.75 was measured against 1028 real
 // merges and would have dropped 48.5% of the gated pairs — half of all
@@ -161,7 +162,11 @@ function scopeLabel(scope) {
     return scope.kind;
 }
 function rowToMemory(r) {
-    return { ...r, tags: JSON.parse(r.tags || '[]') };
+    return {
+        ...r,
+        tags: JSON.parse(r.tags || '[]'),
+        identifiers: JSON.parse(r.identifiers || '[]'),
+    };
 }
 /**
  * Double any backslash that does not begin a legal JSON escape.
@@ -427,6 +432,13 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
         const tags = Array.isArray(obj.tags)
             ? obj.tags.filter(t => typeof t === 'string').map(t => t.toLowerCase()).slice(0, 5)
             : [];
+        // Set-union in code — the model never carries identifiers across a merge.
+        // Sourced from each cluster member's own `identifiers` column (populated at
+        // insert time or by the Phase 1 backfill), not re-extracted from the LLM's
+        // merged prose: that would only recover what the model happened to keep,
+        // reproducing the exact loss this column exists to eliminate. See
+        // src/core/identifiers.ts and _documents/design-structured-memory.md (Phase 1).
+        const mergedIdentifiers = unionIdentifiers(...cluster.map(c => c.identifiers));
         const ins = insertMemory(db, {
             title: obj.title.slice(0, 120),
             body: obj.body,
@@ -441,6 +453,7 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
             tags,
             load_at_init: cluster.some(c => c.load_at_init === 1),
             promotion_target: 'none',
+            identifiers: mergedIdentifiers,
         });
         if (!ins.inserted)
             continue;

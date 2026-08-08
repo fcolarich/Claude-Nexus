@@ -5,6 +5,7 @@
  */
 import { createHash } from 'crypto';
 import { generateEmbedding, ensureEmbeddingModelReady } from './embeddings.js';
+import { extractIdentifiers } from './identifiers.js';
 /** Content-addressed id — identical (type, body) collapses to one row. */
 export function computeMemoryId(memory_type, body) {
     return createHash('sha256').update(`${memory_type}\n${body.trim()}`).digest('hex').slice(0, 16);
@@ -36,18 +37,24 @@ function rowToMemory(row) {
     return {
         ...row,
         tags: JSON.parse(row.tags || '[]'),
+        identifiers: JSON.parse(row.identifiers || '[]'),
     };
 }
 /** Insert a memory. Returns inserted=false if the content-addressed id already exists. */
 export function insertMemory(db, input) {
     const id = computeMemoryId(input.memory_type, input.body);
+    // Deterministic, code-only extraction — never a model. Callers that already
+    // computed a set-union (distill.ts, on merge) pass identifiers explicitly so
+    // that union is preserved rather than overwritten by a fresh extraction that
+    // only sees the merged body's own text.
+    const identifiers = input.identifiers ?? extractIdentifiers(`${input.title}\n${input.body}`);
     const res = db.prepare(`
     INSERT OR IGNORE INTO memories
       (id, title, body, memory_type, scope, project, confidence, decay_class,
-       review_status, promotion_target, source_session_id, discovered_from, tags, content_hash, load_at_init)
+       review_status, promotion_target, source_session_id, discovered_from, tags, content_hash, load_at_init, identifiers)
     VALUES
       (@id, @title, @body, @memory_type, @scope, @project, @confidence, @decay_class,
-       @review_status, @promotion_target, @source_session_id, @discovered_from, @tags, @content_hash, @load_at_init)
+       @review_status, @promotion_target, @source_session_id, @discovered_from, @tags, @content_hash, @load_at_init, @identifiers)
   `).run({
         id,
         title: input.title,
@@ -64,6 +71,7 @@ export function insertMemory(db, input) {
         tags: JSON.stringify(input.tags),
         content_hash: contentHash(input.body),
         load_at_init: input.load_at_init ? 1 : 0,
+        identifiers: JSON.stringify(identifiers),
     });
     return { id, inserted: res.changes > 0 };
 }

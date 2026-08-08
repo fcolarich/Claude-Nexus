@@ -54,7 +54,7 @@ const coverageFloor = Number(flag('--coverage-floor', 0.72));
 
 // A merge = a live memory that has originals pointing at it via superseded_by.
 const merges = db.prepare(`
-	SELECT m.id, m.rowid AS rowid, m.title, m.body, m.project, m.created_at,
+	SELECT m.id, m.rowid AS rowid, m.title, m.body, m.project, m.created_at, m.identifiers,
 	       (SELECT COUNT(*) FROM memories o WHERE o.superseded_by = m.id) AS folded
 	FROM memories m
 	WHERE m.superseded_by IS NULL
@@ -163,7 +163,21 @@ function distinctiveTokens(text) {
 	return [...out];
 }
 
-function retained(tok, hay) {
+// Phase 1 (_documents/design-structured-memory.md, design worktree): identifiers
+// live in their own column, set-unioned in code during merge, and are never
+// required to survive in the merged PROSE for the fact to still be retained.
+// A token present in the merge's own `identifiers` JSON array is retained
+// regardless of what the rewritten body says — that column is the structural
+// guarantee Phase 1 exists to add. Case-sensitive, matching src/core/identifiers.ts.
+function retainedAsIdentifier(tok, identifiersJson) {
+	if (!identifiersJson) return false;
+	let ids;
+	try { ids = JSON.parse(identifiersJson); } catch { return false; }
+	return Array.isArray(ids) && ids.includes(tok);
+}
+
+function retained(tok, hay, identifiersJson) {
+	if (retainedAsIdentifier(tok, identifiersJson)) return true;
 	const t = tok.toLowerCase();
 	if (hay.includes(t)) return true;
 	// A dotted/pathed identifier survives if its most specific segment does —
@@ -206,7 +220,7 @@ for (const m of merges) {
 	}
 
 	const hay = `${m.title}\n${m.body}`.toLowerCase();
-	const lost = [...tokens].filter(t => !retained(t, hay));
+	const lost = [...tokens].filter(t => !retained(t, hay, m.identifiers));
 
 	totalTokens += tokens.size;
 	totalLost += lost.length;

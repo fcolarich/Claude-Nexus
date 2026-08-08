@@ -60,6 +60,7 @@ const MIGRATIONS: Migration[] = [
   { version: 9, name: 'promotion-classification', up: migratePromotionClassification },
   { version: 10, name: 'vcc-shrunk-at', up: migrateVccShrunkAt },
   { version: 11, name: 'distill-cursor', up: migrateDistillCursor },
+  { version: 12, name: 'memory-identifiers', up: migrateMemoryIdentifiers },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -534,6 +535,20 @@ function migrateVccShrunkAt(db: Database.Database): void {
 function migrateDistillCursor(db: Database.Database): void {
   try { db.exec(`ALTER TABLE memories ADD COLUMN distilled_at TEXT`); } catch {}
   db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_distilled_at ON memories(distilled_at)`);
+}
+
+// ── Migration 12: memory identifiers ─────────────────────────────────
+// First-class carrier for code-like identifiers (file paths, script names,
+// config keys, CLI flags, CONST_NAMES, versions — see src/core/identifiers.ts),
+// extracted deterministically in code, never by a model. Phase 1 of
+// _documents/design-structured-memory.md: consolidation set-unions this column
+// across a merge's sources instead of relying on the merged prose to carry
+// every identifier verbatim, which measured 16.7% loss (adr-018, source-1.md
+// in the design-doc worktree). JSON array, default '[]' so pre-migration rows
+// read as "not yet backfilled" rather than NULL.
+
+function migrateMemoryIdentifiers(db: Database.Database): void {
+  try { db.exec(`ALTER TABLE memories ADD COLUMN identifiers TEXT DEFAULT '[]'`); } catch {}
 }
 
 // ── Migration 4: import legacy memory atoms ──────────────────────────
