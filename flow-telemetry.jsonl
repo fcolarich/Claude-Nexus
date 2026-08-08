@@ -1,0 +1,2 @@
+{"ts": "2026-08-07T21:13:26Z", "type": "sentinel:bash_risk", "risk_class": "embedded-shell-escape", "tool": "Bash", "tier": "ask", "action": "blocked", "session_id": "3bf6da9f-b7f7-418e-8d33-03de59dbeddb"}
+{"ts": "2026-08-07T21:13:30Z", "type": "sentinel:bash_risk", "risk_class": "embedded-shell-escape", "tool": "Bash", "tier": "ask", "action": "blocked", "session_id": "3bf6da9f-b7f7-418e-8d33-03de59dbeddb"}

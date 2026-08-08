@@ -22,3 +22,4 @@
 | [ADR-015](decisions/adr-20260730134500-2c-supersede-insert-reference-upgrade-exception-in-re.md) | Supersede-insert reference-upgrade exception in reflect() dedup | 2026-07-30 | accepted |
 | [ADR-016](decisions/adr-20260802190639-f8-unattended-nightly-distill-sweep-gates-on-gpu-vram.md) | Unattended nightly distill sweep gates on GPU VRAM and a wall-clock deadline, paired with a pre-sweep snapshot/rollback anchor | 2026-08-02 | accepted |
 | [ADR-017](decisions/adr-20260802200851-8e-capture-is-gated-on-session-origin-and-content-too.md) | Capture is gated on session origin, and content-tool output is scrubbed from the window | 2026-08-02 | accepted |
+| [ADR-018](decisions/adr-20260808002920-51-hard-timeout-the-claude-agent-sdk-call-path-check.md) | Hard-timeout the claude-agent-sdk call path; check-merge-model gate disqualifies non-answering models | 2026-08-08 | accepted |

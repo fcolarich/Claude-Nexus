@@ -81,6 +81,17 @@ export declare function buildEligibleQuery(scope: ResolvedScope, limit: number, 
  */
 export declare function countEligible(db: Database.Database, scope: ResolvedScope, since?: string): number;
 /**
+ * Reject text showing signs of a mangled escape sequence.
+ *
+ * Some ambiguity is irreducible: in `C:\temp`, `\t` IS a legal JSON tab escape,
+ * so a model that fails to double its backslashes yields `C:<TAB>emp` and no
+ * parser can tell that from an intended tab. What we CAN say is that a merge body
+ * is prose — control characters and bidi marks never belong in one — so their
+ * presence means an escape was misread. Rejecting costs a cluster the cursor will
+ * re-offer; accepting writes corruption over originals that are then superseded.
+ */
+export declare function hasEscapeDamage(text: string): boolean;
+/**
  * Read a memory's already-stored embedding straight from memories_vec by
  * SQLite rowid — no schema change, no Ollama call. Returns null on any miss
  * (no row yet, or memories_vec/sqlite-vec unavailable) so callers fall back

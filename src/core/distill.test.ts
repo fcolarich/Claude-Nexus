@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { openDatabase, initializeSchema } from './database.js';
 import { insertMemory, embedMemory, type MemoryInput } from './memories.js';
-import { distillMemories, buildEligibleQuery, countEligible, cursorClause, coverageShortfall, resolveScope, type ResolvedScope } from './distill.js';
+import { distillMemories, buildEligibleQuery, countEligible, cursorClause, coverageShortfall, hasEscapeDamage, resolveScope, type ResolvedScope } from './distill.js';
 
 function freshDb() {
   const db = openDatabase(':memory:');
@@ -492,6 +492,83 @@ describe('distillMemories — backend failure does not burn the cursor', () => {
 
     // Only the merge attempts up to the abort threshold — no sanitize calls after.
     expect(calls).toBeLessThanOrEqual(5);
+    db.close();
+  });
+});
+
+describe('distillMemories — merge responses containing code', () => {
+  it('parses a fenced response whose body carries regex and Windows-path backslashes', async () => {
+    const db = freshDb();
+    insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+
+    // `\s` and `\c` are NOT legal JSON escapes (only \" \\ \/ \b \f \n \r \t \uXXXX
+    // are). Models emit them verbatim whenever the memory is about a regex or a
+    // Windows path, which is most of the low-confidence tail. Strict JSON.parse
+    // rejects the whole object, silently discarding an otherwise good merge.
+    const codeMerge = async () =>
+      '```json\n{"title": "Merged", "body": "ALPHA matches [SerializeField]\\s+ under C:\\Fran\\claude", ' +
+      '"memory_type": "convention", "scope": "project", "decay_class": "stable", "tags": []}\n```';
+
+    const r = await distillMemories(db, undefined, fakeEmbed, codeMerge);
+
+    expect(r.clusters).toBe(1);
+    expect(r.created).toBe(1);   // would be 0 before the escape repair
+    expect(r.merged).toBe(2);
+
+    const merged = db.prepare(
+      `SELECT body FROM memories WHERE title = 'Merged'`
+    ).get() as { body: string } | undefined;
+    expect(merged).toBeTruthy();
+    // The identifiers survive the repair rather than being mangled.
+    expect(merged!.body).toContain('[SerializeField]');
+    expect(merged!.body).toContain('C:');
+    db.close();
+  });
+
+  it('rejects a merge whose text carries mangled-escape damage', async () => {
+    const db = freshDb();
+    insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+
+    // What constrained JSON decoding produced on 2026-08-08: the model could not
+    // legally escape C:\Fran_Unity\… so it emitted \t and \n, which parse cleanly
+    // into control characters. Valid JSON, corrupted content.
+    const damaged = async () => JSON.stringify({
+      title: 'Merged', body: 'ALPHA docs live in C:\tran_Unity\nity-workflow-optimization now',
+      memory_type: 'convention', scope: 'project', decay_class: 'stable', tags: [],
+    });
+
+    const r = await distillMemories(db, undefined, fakeEmbed, damaged);
+
+    expect(r.created).toBe(0);
+    expect(r.merged).toBe(0);
+    // Both originals survive — corruption must never supersede good data.
+    const live = db.prepare(`SELECT COUNT(*) c FROM memories WHERE superseded_by IS NULL`).get() as { c: number };
+    expect(live.c).toBe(2);
+    db.close();
+  });
+
+  it('hasEscapeDamage accepts ordinary prose and flags control/bidi characters', () => {
+    expect(hasEscapeDamage('Use tabs for indentation; see C:\\Fran_Unity\\unity-workflow.')).toBe(false);
+    expect(hasEscapeDamage('Multi-line\nbodies are fine.')).toBe(false);   // \n is legitimate prose
+    expect(hasEscapeDamage('C:\tran_Unity')).toBe(true);                    // tab from a mangled \t
+    expect(hasEscapeDamage('C:\u202Bran_unity')).toBe(true);                // bidi mark
+  });
+
+  it('still rejects genuinely unparseable output', async () => {
+    const db = freshDb();
+    insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+
+    const prose = async () => 'These two memories are unrelated, so I will not merge them.';
+    const r = await distillMemories(db, undefined, fakeEmbed, prose);
+
+    expect(r.created).toBe(0);
+    expect(r.merged).toBe(0);
+    // Sources handed back, not consumed.
+    const live = db.prepare(`SELECT COUNT(*) c FROM memories WHERE superseded_by IS NULL`).get() as { c: number };
+    expect(live.c).toBe(2);
     db.close();
   });
 });

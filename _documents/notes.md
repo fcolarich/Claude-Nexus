@@ -9,3 +9,4 @@
 | [NOTE-002](notes/note-002-mcp-tool-surface-audit-2026-07-21.md) | MCP tool surface audit — 2026-07-21 | 2026-07-21 | open |
 | [NOTE-001](notes/note-001-low-help-rate-demotions-reuse-ddr-005-stale-diagno.md) | Low-help-rate demotions reuse DDR-005 stale-diagnostics surfacing pattern | 2026-07-22 | open |
 | [NOTE-003](notes/note-20260730134513-3b-preference-preservation-addendum-to-extraction-sys.md) | Preference-preservation addendum to extraction SYSTEM_PROMPT | 2026-07-30 | open |
+| [NOTE-004](notes/note-20260808002947-32-gemma312b-evaluated-as-nightly-distill-merge-model.md) | gemma3:12b evaluated as nightly distill merge model -- not viable | 2026-08-08 | open |

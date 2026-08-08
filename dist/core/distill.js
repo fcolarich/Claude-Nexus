@@ -10,6 +10,7 @@
  * a local model is a reasonable choice here. Uses the configured extraction
  * model via callModel().
  */
+import { appendFileSync } from 'node:fs';
 import { getNexusConfig } from './config.js';
 import { generateEmbedding } from './embeddings.js';
 import { callModel } from './llm.js';
@@ -162,6 +163,35 @@ function scopeLabel(scope) {
 function rowToMemory(r) {
     return { ...r, tags: JSON.parse(r.tags || '[]') };
 }
+/**
+ * Double any backslash that does not begin a legal JSON escape.
+ *
+ * Memories about code carry regexes and Windows paths — `\s+`, `\d`, `C:\Fran\…`.
+ * Models reproduce those backslashes literally, and JSON allows only
+ * \" \\ \/ \b \f \n \r \t \uXXXX, so an otherwise perfect merge fails to parse.
+ * Observed repeatedly on the low-confidence tail, where nearly every memory is
+ * code-related. Applied only as a last resort, after strict parsing has failed.
+ */
+function repairJsonEscapes(s) {
+    // `u` is only a legal escape when 4 hex digits follow. Treating a bare `\u` as
+    // valid — as the first version of this did — leaves `C:\Fran_Unity\unity-…`
+    // unparseable, because `\unit` is not a Unicode escape. Requiring the hex is
+    // what makes Windows paths and regexes survive.
+    return s.replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\');
+}
+/**
+ * Reject text showing signs of a mangled escape sequence.
+ *
+ * Some ambiguity is irreducible: in `C:\temp`, `\t` IS a legal JSON tab escape,
+ * so a model that fails to double its backslashes yields `C:<TAB>emp` and no
+ * parser can tell that from an intended tab. What we CAN say is that a merge body
+ * is prose — control characters and bidi marks never belong in one — so their
+ * presence means an escape was misread. Rejecting costs a cluster the cursor will
+ * re-offer; accepting writes corruption over originals that are then superseded.
+ */
+export function hasEscapeDamage(text) {
+    return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u200e\u200f\u202a-\u202e\u2066-\u2069]|\t/.test(text);
+}
 function firstJsonObject(raw) {
     if (!raw?.trim())
         return null;
@@ -177,7 +207,12 @@ function firstJsonObject(raw) {
             parsed = JSON.parse(m[0]);
         }
         catch {
-            return null;
+            try {
+                parsed = JSON.parse(repairJsonEscapes(m[0]));
+            }
+            catch {
+                return null;
+            }
         }
     }
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
@@ -338,8 +373,39 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
         const listing = cluster
             .map((c, i) => `[${i + 1}] (${c.memory_type}) ${c.title}\n${c.body}`)
             .join('\n\n');
-        const obj = firstJsonObject(await callFn(mergePrompt(cluster.length), listing));
-        if (!obj || typeof obj.title !== 'string' || typeof obj.body !== 'string') {
+        const raw = await callFn(mergePrompt(cluster.length), listing);
+        const obj = firstJsonObject(raw);
+        if (!obj || typeof obj.title !== 'string' || typeof obj.body !== 'string'
+            || hasEscapeDamage(`${obj.title}\n${obj.body}`)) {
+            // Log the unusable response, not just the fact of failure. A silent skip
+            // here is indistinguishable from a dead backend, an over-long response, a
+            // JSON-shaped reply with the wrong field types, and an empty string — all
+            // of which have been guessed at rather than observed.
+            const why = !raw ? 'empty response (backend down or timed out)'
+                : !obj ? `no JSON object in ${raw.length} chars`
+                    : `JSON present but title/body not strings (title=${typeof obj.title}, body=${typeof obj.body})`;
+            console.warn(`[distill] unusable merge response for cluster of ${cluster.length}: ${why}` +
+                (raw ? ` | first 200: ${raw.slice(0, 200).replace(/\s+/g, ' ')}` : ''));
+            // A 200-char preview repeatedly proved too little to diagnose these — the
+            // defect kept sitting past the cutoff. Dump the whole response plus the
+            // exact JSON.parse error so the failure can be read rather than guessed at.
+            if (raw && process.env.NEXUS_DUMP_UNPARSEABLE) {
+                const m = raw.match(/\{[\s\S]*\}/);
+                let parseError = 'no {...} span found';
+                if (m) {
+                    try {
+                        JSON.parse(m[0]);
+                        parseError = 'strict parse OK (failed the type check instead)';
+                    }
+                    catch (e) {
+                        parseError = e.message;
+                    }
+                }
+                try {
+                    appendFileSync(process.env.NEXUS_DUMP_UNPARSEABLE, `\n===== cluster of ${cluster.length} | ${why}\n----- parse error: ${parseError}\n${raw}\n`);
+                }
+                catch { /* diagnostics must never break the sweep */ }
+            }
             // Give the candidates back: an unusable response means they were never
             // really examined, so they must stay eligible for a later run.
             for (const c of cluster)
