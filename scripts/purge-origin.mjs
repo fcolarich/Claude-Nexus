@@ -58,6 +58,8 @@ const rows = db.prepare(`
 	WHERE superseded_by IS NULL AND source_session_id IS NOT NULL
 `).all();
 
+const sessionCwdStmt = db.prepare(`SELECT cwd FROM sessions WHERE session_id = ?`);
+
 const doomed = [];
 const unresolved = [];
 const sessionVerdicts = new Map();
@@ -66,7 +68,13 @@ for (const r of rows) {
 	let verdict = sessionVerdicts.get(r.source_session_id);
 	if (verdict === undefined) {
 		const path = transcriptFor(r.project, r.source_session_id);
-		verdict = path ? classifyOrigin(path, cfg, env) : null;
+		// Missing cwd must never resolve to something isNonProjectCwd could
+		// match (e.g. '' resolves to this script's own process.cwd()) — that
+		// would violate the fail-closed principle. 'unknown-cwd' matches
+		// task-003's reflector.ts fallback: it can never equal a homedir or
+		// filesystem root.
+		const sessionCwd = sessionCwdStmt.get(r.source_session_id)?.cwd ?? 'unknown-cwd';
+		verdict = path ? classifyOrigin(path, sessionCwd, cfg, env) : null;
 		sessionVerdicts.set(r.source_session_id, verdict);
 	}
 	if (verdict === null) unresolved.push(r);

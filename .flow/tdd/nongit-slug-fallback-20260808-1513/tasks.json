@@ -1,0 +1,61 @@
+{
+  "feature": "nongit-slug-fallback",
+  "branch": "feature/nongit-slug-fallback",
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Add origin.test.ts coverage for non-project-cwd exclusion",
+      "description": "In src/capture/origin.test.ts, add test cases for the new non-project-cwd check being added to classifyOrigin(): (1) cwd equal to os.homedir() returns { excluded: true, reason: 'non-project-cwd:<cwd>' }; (2) cwd is a Windows drive root (e.g. 'C:/') and POSIX root ('/') both return excluded:true with the same reason shape; (3) a real project directory cwd (e.g. 'C:/Fran/claude-nexus', 'C:/Fran/RumbleMoney') returns excluded:false -- regression test proving the denylist doesn't over-match; (4) mocking os.homedir() to throw results in classifyOrigin() returning NOT_EXCLUDED (excluded:false), not a thrown exception -- fail-open. Update every existing classifyOrigin(...) call in this file to the new signature classifyOrigin(transcriptPath, cwd, cfg, env?) -- cwd is a new required positional parameter inserted immediately after transcriptPath -- by passing a representative real-project cwd string, without changing any existing test's assertions or intent (scheduled-task denylist, command-name denylist, NEXUS_NO_CAPTURE opt-out tests must keep passing as-is, just recompiling against the new signature). This task will not compile or pass until origin.ts implements the new signature (task-002) -- that is expected, this is the TDD red step.",
+      "files": ["src/capture/origin.test.ts"],
+      "depends_on": [],
+      "estimated_tokens": 3200,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-002",
+      "title": "Implement non-project-cwd exclusion in classifyOrigin()",
+      "description": "In src/capture/origin.ts: add cwd as a new required positional parameter to classifyOrigin(transcriptPath, cwd, cfg, env?), inserted immediately after transcriptPath -- existing scheduled-task/command-name checks and the NEXUS_NO_CAPTURE fast path are unchanged and must still run first. Add a new internal pure function isNonProjectCwd(cwd: string, homedir: string): boolean, not exported unless origin.test.ts needs direct access, with no I/O: normalize cwd via path.resolve(), return true if normalized === path.parse(normalized).root (covers Windows drive roots and POSIX root via Node's platform-correct root semantics), OR if it matches path.resolve(homedir) after trailing-separator stripping on both sides, using .toLowerCase() comparison only when process.platform === 'win32'. In classifyOrigin(), after the existing checks find nothing excluded, call os.homedir() inside a try/catch; on throw, fail open -- return the existing NOT_EXCLUDED value exactly as today (no call to isNonProjectCwd). On success, call isNonProjectCwd(cwd, homedir); if true, return { excluded: true, reason: 'non-project-cwd:' + cwd }, matching the OriginVerdict shape and the existing reason-string convention ('scheduled-task', 'command:<name>'). Run src/capture/origin.test.ts to green all cases from task-001 without altering their assertions.",
+      "files": ["src/capture/origin.ts"],
+      "depends_on": ["task-001"],
+      "estimated_tokens": 4200,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "medium"
+    },
+    {
+      "id": "task-003",
+      "title": "Thread session cwd into reflector.ts's classifyOrigin() call",
+      "description": "In src/capture/reflector.ts's reflect(), update the existing classifyOrigin(transcriptPath, cfg, process.env) call to the new 4-argument signature classifyOrigin(transcriptPath, sessionCwd, cfg, process.env), sourcing sessionCwd from the active session context already available in reflect(). No change to the existing skip/log behavior on verdict.excluded -- it already logs the reason and returns; the new 'non-project-cwd:<cwd>' reason flows through that same unchanged path. No new logic beyond the added argument.",
+      "files": ["src/capture/reflector.ts"],
+      "depends_on": ["task-002"],
+      "estimated_tokens": 1600,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-004",
+      "title": "Thread session cwd into purge-origin.mjs's classifyOrigin() call",
+      "description": "In scripts/purge-origin.mjs's retroactive pass, update the existing classifyOrigin(transcriptPath, cfg, process.env) call to the new 4-argument signature classifyOrigin(transcriptPath, session.cwd, cfg, process.env), using the cwd already present on each session record read from nexus.db. Do not modify the surrounding dry-run/--apply/VACUUM INTO snapshot logic -- this task only threads the new parameter through so the retroactive pass classifies identically to the live reflect() path (no drift). Since this is plain JS with no compiler enforcement of the signature, double-check the argument order matches origin.ts's classifyOrigin(transcriptPath, cwd, cfg, env?) exactly.",
+      "files": ["scripts/purge-origin.mjs"],
+      "depends_on": ["task-002"],
+      "estimated_tokens": 1800,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "medium"
+    },
+    {
+      "id": "task-005",
+      "title": "Document non-git fallback and known custom-parent-folder gap in file-map.md",
+      "description": "In _documents/file-map.md's project-root.ts row, append a note stating that non-git projects fall back to raw-cwd slugging with no subdirectory unification, and that this is an accepted limitation given project policy that real projects use git -- reference this feature's design doc (.flow/tdd/nongit-slug-fallback-20260808-1513/design.md) for the rationale. In the same edit, add a short cross-reference noting that C:/Fran-style custom-parent-folder noise (a cwd that is neither the OS home dir nor a filesystem/drive root) is a known, explicitly out-of-scope gap not caught by the new non-project-cwd check, per the design doc's Non-goals and Key Questions -- documented here as a known gap only, no follow-up feature filed (lower-ceremony option; the design doc already fully documents the gap). Do not edit CLAUDE.md's Conventions section -- architecture.md's Decision specifies file-map.md only, to avoid duplicating a single-file behavioral note as a cross-cutting convention.",
+      "files": ["_documents/file-map.md"],
+      "depends_on": [],
+      "estimated_tokens": 1100,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    }
+  ]
+}

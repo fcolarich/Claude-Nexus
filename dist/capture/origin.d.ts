@@ -19,5 +19,5 @@ export interface ExcludeConfig {
     commands: string[];
     scheduled_tasks: string[];
 }
-export declare function classifyOrigin(transcriptPath: string, cfg: ExcludeConfig, env?: NodeJS.ProcessEnv): OriginVerdict;
+export declare function classifyOrigin(transcriptPath: string, cwd: string, cfg: ExcludeConfig, env?: NodeJS.ProcessEnv): OriginVerdict;
 //# sourceMappingURL=origin.d.ts.map

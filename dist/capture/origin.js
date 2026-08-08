@@ -12,6 +12,8 @@
  * retroactive pass, so historical and going-forward rules cannot drift apart.
  */
 import { readFileSync, existsSync } from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 const NOT_EXCLUDED = { excluded: false, reason: null };
 /**
  * Origin markers live in the opening turns, but "opening" must be counted in
@@ -31,7 +33,25 @@ const normalize = (s) => s.replace(/^\//, '').toLowerCase();
 /** Commands arrive plugin-namespaced (`plugin:command`); the denylist may hold
  *  either form, so compare on the trailing segment. */
 const bareName = (s) => normalize(s).split(':').pop() ?? '';
-export function classifyOrigin(transcriptPath, cfg, env = process.env) {
+/**
+ * Pure, no I/O. Separated from classifyOrigin's os.homedir() call site so the
+ * fallible part (homedir resolution) can be try/caught independently and this
+ * comparison logic stays directly unit-testable.
+ */
+function isNonProjectCwd(cwd, homedir) {
+    const normalized = path.resolve(cwd);
+    if (normalized === path.parse(normalized).root)
+        return true;
+    const stripTrailingSep = (s) => s.replace(/[\\/]+$/, '');
+    let a = stripTrailingSep(normalized);
+    let b = stripTrailingSep(path.resolve(homedir));
+    if (process.platform === 'win32') {
+        a = a.toLowerCase();
+        b = b.toLowerCase();
+    }
+    return a === b;
+}
+export function classifyOrigin(transcriptPath, cwd, cfg, env = process.env) {
     // Explicit opt-out wins and needs no transcript, so a wrapper script can
     // silence capture for anything (CI, manual bulk runs) without config edits.
     const optOut = env.NEXUS_NO_CAPTURE;
@@ -66,6 +86,18 @@ export function classifyOrigin(transcriptPath, cfg, env = process.env) {
         if (commands.includes(bareName(observed))) {
             return { excluded: true, reason: `command:/${observed}` };
         }
+    }
+    let homedir;
+    try {
+        homedir = os.homedir();
+    }
+    catch {
+        // Fail OPEN, matching the transcript-read precedent above: this new check
+        // must never be the reason a real memory is silently lost.
+        return NOT_EXCLUDED;
+    }
+    if (isNonProjectCwd(cwd, homedir)) {
+        return { excluded: true, reason: `non-project-cwd:${cwd}` };
     }
     return NOT_EXCLUDED;
 }

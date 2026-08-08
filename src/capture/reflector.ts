@@ -103,7 +103,11 @@ export async function reflect(
   // transcript is read, so an excluded session costs nothing. Deliberately does
   // NOT advance a cursor: if the denylist later changes, the session becomes
   // eligible again from the top.
-  const origin = classifyOrigin(opts.transcript_path, getNexusConfig().exclude);
+  // classifyOrigin's cwd param is a required string; opts.cwd is optional (the
+  // indexer may not always supply it). Fall back to a placeholder that cannot
+  // equal a real homedir or filesystem root, so isNonProjectCwd's comparison
+  // fails open (no false exclusion) rather than throwing on undefined.
+  const origin = classifyOrigin(opts.transcript_path, opts.cwd ?? 'unknown-cwd', getNexusConfig().exclude);
   if (origin.excluded) {
     return {
       session_id: opts.session_id, project: opts.project, newLines: 0,

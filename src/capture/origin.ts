@@ -13,6 +13,8 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 export interface OriginVerdict {
   excluded: boolean;
@@ -48,8 +50,28 @@ const normalize = (s: string) => s.replace(/^\//, '').toLowerCase();
  *  either form, so compare on the trailing segment. */
 const bareName = (s: string) => normalize(s).split(':').pop() ?? '';
 
+/**
+ * Pure, no I/O. Separated from classifyOrigin's os.homedir() call site so the
+ * fallible part (homedir resolution) can be try/caught independently and this
+ * comparison logic stays directly unit-testable.
+ */
+function isNonProjectCwd(cwd: string, homedir: string): boolean {
+  const normalized = path.resolve(cwd);
+  if (normalized === path.parse(normalized).root) return true;
+
+  const stripTrailingSep = (s: string) => s.replace(/[\\/]+$/, '');
+  let a = stripTrailingSep(normalized);
+  let b = stripTrailingSep(path.resolve(homedir));
+  if (process.platform === 'win32') {
+    a = a.toLowerCase();
+    b = b.toLowerCase();
+  }
+  return a === b;
+}
+
 export function classifyOrigin(
   transcriptPath: string,
+  cwd: string,
   cfg: ExcludeConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): OriginVerdict {
@@ -88,6 +110,18 @@ export function classifyOrigin(
     if (commands.includes(bareName(observed))) {
       return { excluded: true, reason: `command:/${observed}` };
     }
+  }
+
+  let homedir: string;
+  try {
+    homedir = os.homedir();
+  } catch {
+    // Fail OPEN, matching the transcript-read precedent above: this new check
+    // must never be the reason a real memory is silently lost.
+    return NOT_EXCLUDED;
+  }
+  if (isNonProjectCwd(cwd, homedir)) {
+    return { excluded: true, reason: `non-project-cwd:${cwd}` };
   }
 
   return NOT_EXCLUDED;
