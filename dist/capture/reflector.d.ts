@@ -12,6 +12,7 @@
 import Database from 'better-sqlite3';
 import { type Extractor } from './extract.js';
 import { compactWindowLines, compactFileInPlace } from './vcc-bridge.js';
+import { redactSecrets } from './secrets.js';
 export interface ReflectOptions {
     session_id: string;
     transcript_path: string;
@@ -25,6 +26,7 @@ export interface ReflectDeps {
         compactWindowLines: typeof compactWindowLines;
         compactFileInPlace: typeof compactFileInPlace;
     };
+    redact?: typeof redactSecrets;
 }
 export interface ReflectResult {
     session_id: string;
@@ -36,6 +38,8 @@ export interface ReflectResult {
     upgraded: number;
     skipped: boolean;
     excluded_reason?: string | null;
+    redactions?: number;
+    redaction_kinds?: string[];
 }
 /**
  * Reflect over a session transcript and write any new memories.

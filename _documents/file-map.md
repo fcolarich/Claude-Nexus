@@ -32,6 +32,8 @@ Maintained via the `update-file-map` skill.
 | `src/capture/export.ts` | Exports memories as markdown mirror files; prunes stale project export buckets with no live memories |
 | `src/capture/project-migrate.ts` | Merges project buckets fragmented by pre-fix slug bugs or subdirectory-per-project sessions onto their git-root-resolved canonical slug; dedupes via consolidateMemories, re-exports (ADR-013) |
 | `src/capture/prompt-runner.ts` | UserPromptSubmit hook — embeds prompt, injects relevance-floored recall (top 3-5, per-session dedup) |
+| `src/capture/secrets.ts` | Secret detection and in-place redaction — pure, dependency-free |
+| `src/capture/secrets.fixtures.ts` | Shared positive/negative corpus for `secrets.test.ts` and `reflector.test.ts` |
 | `extraction_models.yaml` | Runtime config: embedding model, extraction model, recall budget, capture thresholds |
 | `package.json` | Project manifest, scripts, dependencies |
 | `scripts/review-distill.mjs` | Read-only reviewer for `nexus_distill` output — shows each merged memory next to the originals it superseded, via `memories.superseded_by`. Run with `npm run review-distill -- <project-slug> [limit]`. |

@@ -18,6 +18,21 @@ import { classifyOrigin } from './origin.js';
 import { extractMemories, ADR_REF_RE } from './extract.js';
 import { readDecisionIndex } from './docspine.js';
 import { compactWindowLines, compactFileInPlace } from './vcc-bridge.js';
+import { redactSecrets, redactCandidate } from './secrets.js';
+/**
+ * Fail-open wrapper around an injected `redactSecrets`-shaped function
+ * (D-009). Never throws — on catch, returns the input text unmodified and
+ * logs only the error, never the text or any matched span.
+ */
+function safeRedact(fn, text, mode) {
+    try {
+        return fn(text, mode);
+    }
+    catch (err) {
+        console.error('[claude-nexus] secret redaction failed, text passed through unmodified:', err);
+        return { text, redactions: [] };
+    }
+}
 /**
  * Fix 1 — ADR-reference demotion. A `reference` candidate carrying a real
  * ADR/DDR id supersedes an earlier `decision` row it duplicates, regardless of
@@ -43,6 +58,7 @@ export async function reflect(db, opts, deps = {}) {
     const embed = deps.embed ?? generateEmbedding;
     const vcc = deps.vcc ?? { compactWindowLines, compactFileInPlace };
     const cfg = getNexusConfig().capture;
+    const allRedactions = [];
     // Origin gate. Runs before the session row is created and before the
     // transcript is read, so an excluded session costs nothing. Deliberately does
     // NOT advance a cursor: if the denylist later changes, the session becomes
@@ -82,9 +98,27 @@ export async function reflect(db, opts, deps = {}) {
     else if (!compacted.ok) {
         console.error('[claude-nexus] vcc pre-extraction compaction failed, using raw window text:', compacted.error);
     }
+    const gate1 = safeRedact(deps.redact ?? redactSecrets, extractionText, 'strict');
+    extractionText = gate1.text;
+    allRedactions.push(...gate1.redactions);
     const decisions = readDecisionIndex(opts.cwd);
     const validIds = new Set(decisions.map((d) => d.split(':')[0].trim().toUpperCase()));
-    const candidates = await extract(extractionText, { project: opts.project, decisions, source });
+    const rawCandidates = await extract(extractionText, { project: opts.project, decisions, source });
+    // Gate 2 (D-012): rewrite the candidate array before embed()/findSimilarMemory()/
+    // insertMemory() consume it, so hashing, embedding, dedup and insert all see
+    // redacted text. Per-candidate try/catch (D-009) — one pathological candidate
+    // does not disable redaction for its siblings.
+    const candidates = rawCandidates.map((c) => {
+        try {
+            const { candidate, redactions } = redactCandidate(c, deps.redact ?? redactSecrets);
+            allRedactions.push(...redactions);
+            return candidate;
+        }
+        catch (err) {
+            console.error('[claude-nexus] secret redaction failed, candidate passed through unmodified:', err);
+            return c;
+        }
+    });
     let inserted = 0;
     let merged = 0;
     let upgraded = 0;
@@ -168,6 +202,10 @@ export async function reflect(db, opts, deps = {}) {
         }
     }
     advanceCursor(window.totalLines);
+    if (allRedactions.length > 0) {
+        const kinds = [...new Set(allRedactions)].sort();
+        console.log(`[claude-nexus] redacted ${allRedactions.length} secret span(s): ${kinds.join(', ')}`);
+    }
     // Post-extraction inline shrink — DISABLED 2026-07-24. compactFileInPlace()
     // was overwriting live raw JSONL transcripts in place with vcc_compact's
     // rendered summary, and a review found real information loss in that
@@ -192,6 +230,8 @@ export async function reflect(db, opts, deps = {}) {
         merged,
         upgraded,
         skipped: false,
+        redactions: allRedactions.length,
+        redaction_kinds: [...new Set(allRedactions)].sort(),
     };
 }
 //# sourceMappingURL=reflector.js.map
