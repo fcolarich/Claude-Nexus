@@ -257,7 +257,7 @@ describe('consolidateMemories', () => {
 			`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`
 		).get() as { sql: string }).sql;
 		expect(checkValues(linksSql, 'link_type')).toEqual(
-			['references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related'].sort()
+			['references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related', 'same_as', 'supersedes'].sort()
 		);
 
 		// diagnostics: type CHECK contains exactly the 5 known values (order-independent).

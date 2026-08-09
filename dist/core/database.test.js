@@ -22,6 +22,27 @@ describe('schema migrations', () => {
         expect(tableExists(db, 'memories_fts')).toBe(true);
         expect(columnExists(db, 'sessions', 'last_reflected_index')).toBe(true);
         expect(columnExists(db, 'memories', 'identifiers')).toBe(true);
+        expect(tableExists(db, 'claims')).toBe(true);
+        db.close();
+    });
+    it('migration v13: claims table has the design-doc schema', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        for (const col of [
+            'id', 'memory_id', 'source_memory_id', 'fact', 'claim_type', 'identifiers',
+            'confidence', 'valid_from', 'valid_until', 'recorded_at', 'expired_at', 'created_at',
+        ]) {
+            expect(columnExists(db, 'claims', col)).toBe(true);
+        }
+        db.close();
+    });
+    it('migration v13: memory_links accepts same_as and supersedes link types', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(() => db.prepare(`INSERT INTO memory_links (source_id, target_id, link_type, confidence) VALUES ('a', 'b', 'same_as', 0.9)`).run()).not.toThrow();
+        expect(() => db.prepare(`INSERT INTO memory_links (source_id, target_id, link_type, confidence) VALUES ('a', 'c', 'supersedes', 1.0)`).run()).not.toThrow();
+        // Existing link types must still work after the CHECK-constraint recreate.
+        expect(() => db.prepare(`INSERT INTO memory_links (source_id, target_id, link_type, confidence) VALUES ('a', 'd', 'contradicts', 1.0)`).run()).not.toThrow();
         db.close();
     });
     it('migration 6: sessions.cwd column exists', () => {

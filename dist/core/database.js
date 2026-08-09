@@ -41,6 +41,7 @@ const MIGRATIONS = [
     { version: 10, name: 'vcc-shrunk-at', up: migrateVccShrunkAt },
     { version: 11, name: 'distill-cursor', up: migrateDistillCursor },
     { version: 12, name: 'memory-identifiers', up: migrateMemoryIdentifiers },
+    { version: 13, name: 'claims-table', up: migrateClaimsTable },
 ];
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 function getSchemaVersion(db) {
@@ -549,6 +550,74 @@ function migrateMemoryIdentifiers(db) {
         db.exec(`ALTER TABLE memories ADD COLUMN identifiers TEXT DEFAULT '[]'`);
     }
     catch { }
+}
+// ── Migration 13: claims table + edge taxonomy ───────────────────────
+// Phase 2 of _documents/design-structured-memory.md (design worktree). Claims
+// are the unit of consolidation truth beneath a memory; memory stays the unit
+// of retrieval (no FTS/vec changes here — see the design doc). Claim text is
+// immutable once written: consolidation may only ADD, LINK, or MARK INVALID
+// (`valid_until`/`expired_at`), never rewrite `fact`.
+//
+// memory_links.link_type CHECK is extended with `same_as` (Neo4j-style
+// pending-review dedup edge) and `supersedes` (directional, claim-graph-only —
+// replaces Graphiti's fact-rewrite-on-invalidation, which this design
+// explicitly rejects; see DDR-20260808153555-7a). SQLite has no ALTER-CHECK,
+// so the table is recreated — same pattern as migrateRemoveTaskSupport /
+// migrateCorpusExpansion above.
+function migrateClaimsTable(db) {
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS claims (
+      id                TEXT PRIMARY KEY,
+      memory_id         TEXT NOT NULL,
+      source_memory_id  TEXT NOT NULL,
+      fact              TEXT NOT NULL,
+      claim_type        TEXT NOT NULL,
+      identifiers       TEXT NOT NULL DEFAULT '[]',
+      confidence        REAL NOT NULL DEFAULT 0.6,
+      valid_from        TEXT NOT NULL DEFAULT (datetime('now')),
+      valid_until       TEXT,
+      recorded_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      expired_at        TEXT,
+      created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_claims_memory ON claims(memory_id);
+    CREATE INDEX IF NOT EXISTS idx_claims_source_memory ON claims(source_memory_id);
+    CREATE INDEX IF NOT EXISTS idx_claims_type ON claims(claim_type);
+    CREATE INDEX IF NOT EXISTS idx_claims_valid_until ON claims(valid_until);
+  `);
+    const schemaRow = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`).get();
+    if (!schemaRow)
+        return;
+    if (schemaRow.sql.includes("'same_as'"))
+        return; // already migrated
+    db.pragma('foreign_keys = OFF');
+    try {
+        db.transaction(() => {
+            db.exec(`
+        CREATE TABLE memory_links_new (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_id   TEXT NOT NULL,
+          target_id   TEXT NOT NULL,
+          link_type   TEXT NOT NULL CHECK(link_type IN (
+            'references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related',
+            'same_as', 'supersedes'
+          )),
+          confidence  REAL NOT NULL DEFAULT 1.0,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(source_id, target_id, link_type)
+        );
+        INSERT INTO memory_links_new (id, source_id, target_id, link_type, confidence, created_at)
+          SELECT id, source_id, target_id, link_type, confidence, created_at FROM memory_links;
+        DROP TABLE memory_links;
+        ALTER TABLE memory_links_new RENAME TO memory_links;
+        CREATE INDEX IF NOT EXISTS idx_memory_links_source ON memory_links(source_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_id);
+      `);
+        })();
+    }
+    finally {
+        db.pragma('foreign_keys = ON');
+    }
 }
 // ── Migration 4: import legacy memory atoms ──────────────────────────
 // One-time copy of v1 knowledge atoms (memory/feedback/architecture) into the

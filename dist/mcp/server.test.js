@@ -192,7 +192,7 @@ describe('nexus_mark_promoted logic', () => {
     it('preserves identifiers from the original body even though the pointer body drops them (ADR-20260808214308-a0 regression)', async () => {
         const db = freshDb();
         const { id } = insertMemory(db, memInput({
-            body: 'The MERGE_COVERAGE_FLOOR in src/core/distill.ts is 0.72. This is unrelated filler that becomes the pointer.',
+            body: 'This is unrelated filler that becomes the pointer. The MERGE_COVERAGE_FLOOR in src/core/distill.ts is 0.72.',
             promotion_target: 'adr',
         }));
         await runMarkPromoted(db, id, 'ADR-063');

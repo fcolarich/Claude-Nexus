@@ -201,7 +201,7 @@ describe('consolidateMemories', () => {
         }
         // memory_links: link_type CHECK contains exactly the 7 known values (order-independent).
         const linksSql = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`).get().sql;
-        expect(checkValues(linksSql, 'link_type')).toEqual(['references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related'].sort());
+        expect(checkValues(linksSql, 'link_type')).toEqual(['references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related', 'same_as', 'supersedes'].sort());
         // diagnostics: type CHECK contains exactly the 5 known values (order-independent).
         const diagSql = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='diagnostics'`).get().sql;
         expect(checkValues(diagSql, 'type')).toEqual(['broken_reference', 'missing_frontmatter', 'duplicate', 'orphan', 'stale'].sort());
