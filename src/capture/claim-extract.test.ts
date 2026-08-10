@@ -50,6 +50,14 @@ describe('claimExtractPrompt', () => {
 		const prompt = claimExtractPrompt();
 		expect(prompt).not.toContain('did not mention');
 	});
+
+	it('instructs the model to keep contrastive/causal clause pairs as one claim, not split them', () => {
+		// Regression for the fragmentation found by inspecting real output: "requires X
+		// but guarantees Y" split into two claims loses the trade-off the sentence states.
+		const prompt = claimExtractPrompt();
+		expect(prompt).toMatch(/\bbut\b/);
+		expect(prompt.toLowerCase()).toContain('trade-off');
+	});
 });
 
 describe('extractClaimsForMemory', () => {

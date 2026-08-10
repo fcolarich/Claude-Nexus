@@ -13,8 +13,11 @@
  * max 2 retries, REJECT on final failure — never a partial write, sources
  * (the memory) stay untouched.
  *
- * Claim body authoring is generative (Haiku); claim_type is DERIVED from the
- * parent memory_type, never asked of the model; identifiers are extracted
+ * Claim body authoring is generative (model call injected via `callFn`, same
+ * pattern as distill.ts's mergePrompt — use whatever model distillation uses,
+ * not necessarily Haiku; the design doc's "Haiku extraction" label names the
+ * mechanism class, not a hard model requirement). claim_type is DERIVED from
+ * the parent memory_type, never asked of the model; identifiers are extracted
  * deterministically per claim (src/core/identifiers.ts), never model-generated.
  * No response_format/constrained decoding (q-007 — corrupted 91 memories,
  * rejected).
@@ -30,6 +33,8 @@ const MAX_RETRIES = 2;
 export const claimExtractPrompt = (missing?: string[]) => `You decompose a memory into atomic claims.
 
 A claim is ONE verifiable, self-contained fact — semantically equivalent to a single sentence or predicate, carrying its subject, predicate, and value. It is NOT a sub-sentence subject-predicate-object triplet, and it is NOT the whole memory body. Write each claim so it stands alone with enough context to be understood without the others.
+
+When two clauses are joined by a contrastive or causal connective — but, however, although, because, since, therefore, which means, at the cost of, in exchange for, unless — keep them together as ONE claim. The trade-off or cause-and-effect relationship IS the fact; splitting it loses the thing worth keeping. Example: "Planning offline requires full knowledge upfront but guarantees no wasted effort on wrong paths" is ONE claim, not two. Only split when clauses state genuinely independent, freestanding facts — separate items in a list, separate conditions, separate steps.
 ${missing?.length ? `\nYour previous attempt did not mention these identifiers anywhere in the claims: ${missing.join(', ')}. Revise so the claim set covers every one of them.\n` : ''}
 Output STRICT JSON ONLY, an array of objects: [{"fact": "..."}]
 No prose or fences outside the JSON.`;
