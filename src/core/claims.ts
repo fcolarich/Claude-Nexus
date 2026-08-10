@@ -12,6 +12,8 @@ import Database from 'better-sqlite3';
 import { createHash } from 'crypto';
 import type { Claim, MemoryType } from './types.js';
 import { extractIdentifiers } from './identifiers.js';
+import { generateEmbedding } from './embeddings.js';
+import { normalize, vecToBlob } from './memories.js';
 
 export interface ClaimInput {
 	memory_id: string;
@@ -95,4 +97,30 @@ export function markClaimInvalid(db: Database.Database, id: string, supersededBy
 		).run(supersededByClaimId, id);
 	}
 	return true;
+}
+
+/**
+ * Generate + store a normalized embedding for one claim in claims_vec — used
+ * EXCLUSIVELY by the dedup cascade (src/core/claim-dedup.ts), never by
+ * recall.ts. Mirrors src/core/memories.ts's embedMemory. Returns false if the
+ * claim doesn't exist or the embedding backend is unavailable.
+ */
+export async function embedClaim(
+	db: Database.Database,
+	id: string,
+	embedFn: (text: string) => Promise<Float32Array | null> = generateEmbedding,
+): Promise<boolean> {
+	const row = db.prepare(`SELECT rowid, fact FROM claims WHERE id = ?`).get(id) as { rowid: number; fact: string } | undefined;
+	if (!row) return false;
+
+	const vec = await embedFn(row.fact);
+	if (!vec) return false;
+
+	try {
+		db.prepare(`DELETE FROM claims_vec WHERE rowid = ?`).run(row.rowid);
+		db.prepare(`INSERT INTO claims_vec(rowid, embedding) VALUES (${row.rowid}, ?)`).run(vecToBlob(normalize(vec)));
+		return true;
+	} catch {
+		return false; // claims_vec absent (sqlite-vec not loaded)
+	}
 }

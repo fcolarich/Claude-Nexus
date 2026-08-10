@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { openDatabase, initializeSchema } from './database.js';
-import { computeClaimId, insertClaim, getClaim, listClaimsForMemory, markClaimInvalid, type ClaimInput } from './claims.js';
+import { computeClaimId, insertClaim, getClaim, listClaimsForMemory, markClaimInvalid, embedClaim, type ClaimInput } from './claims.js';
 
 function freshDb() {
 	const db = openDatabase(':memory:');
@@ -135,6 +135,36 @@ describe('markClaimInvalid', () => {
 		const second = markClaimInvalid(db, id);
 		expect(second).toBe(false);
 		expect(getClaim(db, id)!.valid_until).toBe(first);
+		db.close();
+	});
+});
+
+describe('embedClaim', () => {
+	const fakeEmbed = async (_text: string) => new Float32Array(1024).fill(0.1);
+
+	it('stores a normalized vector in claims_vec, keyed by rowid', async () => {
+		const db = freshDb();
+		const { id } = insertClaim(db, { ...base, memory_id: 'm1', source_memory_id: 'm1', fact: 'a claim to embed' });
+
+		const ok = await embedClaim(db, id, fakeEmbed);
+		expect(ok).toBe(true);
+
+		const row = db.prepare(`SELECT c.rowid FROM claims c WHERE c.id = ?`).get(id) as { rowid: number };
+		const vec = db.prepare(`SELECT embedding FROM claims_vec WHERE rowid = ?`).get(row.rowid);
+		expect(vec).toBeDefined();
+		db.close();
+	});
+
+	it('returns false for an id that does not exist', async () => {
+		const db = freshDb();
+		expect(await embedClaim(db, 'nonexistent', fakeEmbed)).toBe(false);
+		db.close();
+	});
+
+	it('returns false when the embed function yields null (embedding backend unavailable)', async () => {
+		const db = freshDb();
+		const { id } = insertClaim(db, { ...base, memory_id: 'm1', source_memory_id: 'm1', fact: 'a claim' });
+		expect(await embedClaim(db, id, async () => null)).toBe(false);
 		db.close();
 	});
 });

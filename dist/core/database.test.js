@@ -36,6 +36,12 @@ describe('schema migrations', () => {
         }
         db.close();
     });
+    it('migration v14: claims_vec table exists for the dedup cascade only', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(tableExists(db, 'claims_vec')).toBe(true);
+        db.close();
+    });
     it('migration v13: memory_links accepts same_as and supersedes link types', () => {
         const db = openDatabase(':memory:');
         initializeSchema(db);

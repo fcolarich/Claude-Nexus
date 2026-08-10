@@ -6,12 +6,15 @@
  * see the design doc's immutability rule); between flag and auto-merge ->
  * `same_as` pending-review edge; below flag -> a new, distinct claim.
  *
- * Deviation from source-33's Neo4j pattern, stated plainly: Neo4j's combined
- * score is `embedding*0.7 + fuzzy*0.3`, but the design doc explicitly keeps
- * Phase 2 without claim-level embeddings ("Phase 2 keeps memories_vec
- * unchanged... no claim embeddings are generated in Phase 2"). Similarity
- * here is therefore fuzzy-string only. Claim embeddings, and a blended
- * score, are a Phase 3 consideration if the retrieval fork goes claim-level.
+ * Claim embeddings (claims_vec, migration v14) are scoped EXCLUSIVELY to this
+ * dedup cascade — never queried by recall.ts/nexus_search. "Memory stays the
+ * unit of retrieval through Phase 2" (design doc) constrains the query-return
+ * interface, not internal consolidation-time signals, so blending an
+ * embedding score into dedup does not pre-decide the Phase 3 claim-vs-memory
+ * retrieval fork. combinedSimilarity() implements Neo4j Agent Memory's blend
+ * (source-33): `embedding*0.7 + fuzzy*0.3`, falling back to fuzzy-only when
+ * no embedding is available (e.g. embedding backend down — fails open rather
+ * than blocking dedup).
  */
 import Database from 'better-sqlite3';
 import type { MemoryType } from './types.js';
@@ -26,6 +29,17 @@ export declare function classifyDedupBand(similarity: number, thresholds?: {
  * for claim dedup in Phase 2 (no claim embeddings exist yet).
  */
 export declare function fuzzyStringSimilarity(a: string, b: string): number;
+/**
+ * Blend an embedding-cosine score with a fuzzy-string score per Neo4j Agent
+ * Memory's pattern (source-33). When no embedding score is available (claim
+ * not yet embedded, or the embedding backend is down), falls back to
+ * fuzzy-only rather than blocking dedup on an unrelated capability.
+ */
+export declare function combinedSimilarity(embeddingSim: number | null, fuzzySim: number): number;
+/** Read a claim's stored embedding straight from claims_vec by rowid. Null on any miss. */
+export declare function loadStoredClaimVector(db: Database.Database, rowid: number): Float32Array | null;
+/** Cosine similarity between two claims' stored (unit-normalized) vectors, or null if either is missing. */
+export declare function claimCosineSimilarity(db: Database.Database, claimIdA: string, claimIdB: string): number | null;
 export interface DedupQueryClaim {
     id: string;
     memory_id: string;

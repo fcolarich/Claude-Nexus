@@ -39,4 +39,11 @@ export declare function listClaimsForMemory(db: Database.Database, memory_id: st
  * Idempotent: returns false (no-op) if the claim doesn't exist or is already invalid.
  */
 export declare function markClaimInvalid(db: Database.Database, id: string, supersededByClaimId?: string): boolean;
+/**
+ * Generate + store a normalized embedding for one claim in claims_vec — used
+ * EXCLUSIVELY by the dedup cascade (src/core/claim-dedup.ts), never by
+ * recall.ts. Mirrors src/core/memories.ts's embedMemory. Returns false if the
+ * claim doesn't exist or the embedding backend is unavailable.
+ */
+export declare function embedClaim(db: Database.Database, id: string, embedFn?: (text: string) => Promise<Float32Array | null>): Promise<boolean>;
 //# sourceMappingURL=claims.d.ts.map

@@ -9,6 +9,8 @@
  */
 import { createHash } from 'crypto';
 import { extractIdentifiers } from './identifiers.js';
+import { generateEmbedding } from './embeddings.js';
+import { normalize, vecToBlob } from './memories.js';
 /** Content-addressed id — identical (claim_type, fact) collapses to one row. */
 export function computeClaimId(claim_type, fact) {
     return createHash('sha256').update(`${claim_type}\n${fact.trim()}`).digest('hex').slice(0, 16);
@@ -67,5 +69,27 @@ export function markClaimInvalid(db, id, supersededByClaimId) {
         db.prepare(`INSERT OR IGNORE INTO memory_links (source_id, target_id, link_type, confidence) VALUES (?, ?, 'supersedes', 1.0)`).run(supersededByClaimId, id);
     }
     return true;
+}
+/**
+ * Generate + store a normalized embedding for one claim in claims_vec — used
+ * EXCLUSIVELY by the dedup cascade (src/core/claim-dedup.ts), never by
+ * recall.ts. Mirrors src/core/memories.ts's embedMemory. Returns false if the
+ * claim doesn't exist or the embedding backend is unavailable.
+ */
+export async function embedClaim(db, id, embedFn = generateEmbedding) {
+    const row = db.prepare(`SELECT rowid, fact FROM claims WHERE id = ?`).get(id);
+    if (!row)
+        return false;
+    const vec = await embedFn(row.fact);
+    if (!vec)
+        return false;
+    try {
+        db.prepare(`DELETE FROM claims_vec WHERE rowid = ?`).run(row.rowid);
+        db.prepare(`INSERT INTO claims_vec(rowid, embedding) VALUES (${row.rowid}, ?)`).run(vecToBlob(normalize(vec)));
+        return true;
+    }
+    catch {
+        return false; // claims_vec absent (sqlite-vec not loaded)
+    }
 }
 //# sourceMappingURL=claims.js.map

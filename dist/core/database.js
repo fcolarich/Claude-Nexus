@@ -42,6 +42,7 @@ const MIGRATIONS = [
     { version: 11, name: 'distill-cursor', up: migrateDistillCursor },
     { version: 12, name: 'memory-identifiers', up: migrateMemoryIdentifiers },
     { version: 13, name: 'claims-table', up: migrateClaimsTable },
+    { version: 14, name: 'claims-vec-dedup-only', up: migrateClaimsVec },
 ];
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 function getSchemaVersion(db) {
@@ -617,6 +618,27 @@ function migrateClaimsTable(db) {
     }
     finally {
         db.pragma('foreign_keys = ON');
+    }
+}
+// ── Migration 14: claims_vec (dedup cascade ONLY) ────────────────────
+// Deliberately narrow scope: this table exists to give the dedup cascade
+// (src/core/claim-dedup.ts) a semantic-similarity signal beyond fuzzy string
+// matching. It is NEVER queried by recall.ts / nexus_search — "memory stays
+// the unit of retrieval through Phase 2" (design doc) constrains the
+// query-return interface, not internal consolidation-time signals, so this
+// does not pre-decide the Phase 3 claim-vs-memory retrieval fork. Same
+// vec0/1024-dim/drop-on-delete pattern as memories_vec.
+function migrateClaimsVec(db) {
+    try {
+        db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS claims_vec USING vec0(embedding float[1024])`);
+        db.exec(`
+      CREATE TRIGGER IF NOT EXISTS claims_vec_ad AFTER DELETE ON claims BEGIN
+        DELETE FROM claims_vec WHERE rowid = old.rowid;
+      END;
+    `);
+    }
+    catch (err) {
+        console.warn('[claude-nexus] Could not create claims_vec table — claim dedup embeddings disabled:', err.message);
     }
 }
 // ── Migration 4: import legacy memory atoms ──────────────────────────

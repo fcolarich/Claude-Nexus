@@ -1,13 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { openDatabase, initializeSchema } from './database.js';
 import { insertMemory } from './memories.js';
-import { insertClaim } from './claims.js';
-import { classifyDedupBand, fuzzyStringSimilarity, findDedupCandidates } from './claim-dedup.js';
+import { insertClaim, embedClaim } from './claims.js';
+import { classifyDedupBand, fuzzyStringSimilarity, findDedupCandidates, combinedSimilarity, loadStoredClaimVector, claimCosineSimilarity } from './claim-dedup.js';
 function freshDb() {
     const db = openDatabase(':memory:');
     initializeSchema(db);
     return db;
 }
+const baseMem = {
+    memory_type: 'decision', scope: 'project', project: 'p', confidence: 0.8,
+    decay_class: 'stable', review_status: 'approved',
+    source_session_id: null, discovered_from: null, tags: [], promotion_target: 'none',
+};
 describe('classifyDedupBand', () => {
     // Defaults per DDR-20260808153555-7a / source-33: start conservative (0.98/0.92),
     // relax only after validating quality on the real corpus.
@@ -48,6 +53,49 @@ describe('fuzzyStringSimilarity', () => {
     it('handles empty strings without throwing', () => {
         expect(fuzzyStringSimilarity('', '')).toBe(1.0);
         expect(fuzzyStringSimilarity('something', '')).toBe(0);
+    });
+});
+describe('combinedSimilarity', () => {
+    // Neo4j Agent Memory's blend (source-33): embedding*0.7 + fuzzy*0.3.
+    it('blends embedding and fuzzy scores 0.7/0.3', () => {
+        expect(combinedSimilarity(1.0, 0.0)).toBeCloseTo(0.7, 5);
+        expect(combinedSimilarity(0.0, 1.0)).toBeCloseTo(0.3, 5);
+        expect(combinedSimilarity(0.8, 0.5)).toBeCloseTo(0.8 * 0.7 + 0.5 * 0.3, 5);
+    });
+    it('falls back to fuzzy-only when no embedding score is available (embeddings absent)', () => {
+        expect(combinedSimilarity(null, 0.6)).toBe(0.6);
+    });
+});
+describe('claimCosineSimilarity / loadStoredClaimVector', () => {
+    it('returns the cosine similarity between two embedded claims', async () => {
+        const db = freshDb();
+        const m1 = insertMemory(db, { ...baseMem, title: 'M1', body: 'body one' });
+        const { id: a } = insertClaim(db, { memory_id: m1.id, source_memory_id: m1.id, fact: 'claim A', claim_type: 'decision', confidence: 0.7 });
+        const { id: b } = insertClaim(db, { memory_id: m1.id, source_memory_id: m1.id, fact: 'claim B', claim_type: 'decision', confidence: 0.7 });
+        const vecA = new Float32Array(1024);
+        vecA[0] = 1;
+        const vecB = new Float32Array(1024);
+        vecB[0] = 1;
+        await embedClaim(db, a, async () => vecA);
+        await embedClaim(db, b, async () => vecB);
+        expect(claimCosineSimilarity(db, a, b)).toBeCloseTo(1.0, 5);
+        db.close();
+    });
+    it('returns null when either claim has no stored vector', () => {
+        const db = freshDb();
+        const m1 = insertMemory(db, { ...baseMem, title: 'M1', body: 'body one' });
+        const { id: a } = insertClaim(db, { memory_id: m1.id, source_memory_id: m1.id, fact: 'claim A', claim_type: 'decision', confidence: 0.7 });
+        const { id: b } = insertClaim(db, { memory_id: m1.id, source_memory_id: m1.id, fact: 'claim B', claim_type: 'decision', confidence: 0.7 });
+        expect(claimCosineSimilarity(db, a, b)).toBeNull();
+        db.close();
+    });
+    it('loadStoredClaimVector returns null for a claim with no stored embedding', () => {
+        const db = freshDb();
+        const m1 = insertMemory(db, { ...baseMem, title: 'M1', body: 'body one' });
+        const { id } = insertClaim(db, { memory_id: m1.id, source_memory_id: m1.id, fact: 'claim', claim_type: 'decision', confidence: 0.7 });
+        const rowid = db.prepare(`SELECT rowid FROM claims WHERE id = ?`).get(id).rowid;
+        expect(loadStoredClaimVector(db, rowid)).toBeNull();
+        db.close();
     });
 });
 describe('findDedupCandidates', () => {

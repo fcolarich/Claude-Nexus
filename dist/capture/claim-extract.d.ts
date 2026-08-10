@@ -13,8 +13,11 @@
  * max 2 retries, REJECT on final failure — never a partial write, sources
  * (the memory) stay untouched.
  *
- * Claim body authoring is generative (Haiku); claim_type is DERIVED from the
- * parent memory_type, never asked of the model; identifiers are extracted
+ * Claim body authoring is generative (model call injected via `callFn`, same
+ * pattern as distill.ts's mergePrompt — use whatever model distillation uses,
+ * not necessarily Haiku; the design doc's "Haiku extraction" label names the
+ * mechanism class, not a hard model requirement). claim_type is DERIVED from
+ * the parent memory_type, never asked of the model; identifiers are extracted
  * deterministically per claim (src/core/identifiers.ts), never model-generated.
  * No response_format/constrained decoding (q-007 — corrupted 91 memories,
  * rejected).

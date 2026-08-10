@@ -6,12 +6,15 @@
  * see the design doc's immutability rule); between flag and auto-merge ->
  * `same_as` pending-review edge; below flag -> a new, distinct claim.
  *
- * Deviation from source-33's Neo4j pattern, stated plainly: Neo4j's combined
- * score is `embedding*0.7 + fuzzy*0.3`, but the design doc explicitly keeps
- * Phase 2 without claim-level embeddings ("Phase 2 keeps memories_vec
- * unchanged... no claim embeddings are generated in Phase 2"). Similarity
- * here is therefore fuzzy-string only. Claim embeddings, and a blended
- * score, are a Phase 3 consideration if the retrieval fork goes claim-level.
+ * Claim embeddings (claims_vec, migration v14) are scoped EXCLUSIVELY to this
+ * dedup cascade — never queried by recall.ts/nexus_search. "Memory stays the
+ * unit of retrieval through Phase 2" (design doc) constrains the query-return
+ * interface, not internal consolidation-time signals, so blending an
+ * embedding score into dedup does not pre-decide the Phase 3 claim-vs-memory
+ * retrieval fork. combinedSimilarity() implements Neo4j Agent Memory's blend
+ * (source-33): `embedding*0.7 + fuzzy*0.3`, falling back to fuzzy-only when
+ * no embedding is available (e.g. embedding backend down — fails open rather
+ * than blocking dedup).
  */
 
 import Database from 'better-sqlite3';
@@ -58,6 +61,48 @@ export function fuzzyStringSimilarity(a: string, b: string): number {
 	let intersection = 0;
 	for (const bg of Array.from(setA)) if (setB.has(bg)) intersection++;
 	return (2 * intersection) / (setA.size + setB.size);
+}
+
+const EMBEDDING_WEIGHT = 0.7;
+const FUZZY_WEIGHT = 0.3;
+
+/**
+ * Blend an embedding-cosine score with a fuzzy-string score per Neo4j Agent
+ * Memory's pattern (source-33). When no embedding score is available (claim
+ * not yet embedded, or the embedding backend is down), falls back to
+ * fuzzy-only rather than blocking dedup on an unrelated capability.
+ */
+export function combinedSimilarity(embeddingSim: number | null, fuzzySim: number): number {
+	if (embeddingSim === null) return fuzzySim;
+	return embeddingSim * EMBEDDING_WEIGHT + fuzzySim * FUZZY_WEIGHT;
+}
+
+/** Read a claim's stored embedding straight from claims_vec by rowid. Null on any miss. */
+export function loadStoredClaimVector(db: Database.Database, rowid: number): Float32Array | null {
+	let row: { embedding: Buffer } | undefined;
+	try {
+		row = db.prepare(`SELECT embedding FROM claims_vec WHERE rowid = ?`).get(rowid) as { embedding: Buffer } | undefined;
+	} catch {
+		return null; // claims_vec absent (sqlite-vec not loaded)
+	}
+	if (!row?.embedding) return null;
+	return new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / Float32Array.BYTES_PER_ELEMENT);
+}
+
+/** Cosine similarity between two claims' stored (unit-normalized) vectors, or null if either is missing. */
+export function claimCosineSimilarity(db: Database.Database, claimIdA: string, claimIdB: string): number | null {
+	const rowidOf = (id: string) => (db.prepare(`SELECT rowid FROM claims WHERE id = ?`).get(id) as { rowid: number } | undefined)?.rowid;
+	const rowidA = rowidOf(claimIdA);
+	const rowidB = rowidOf(claimIdB);
+	if (rowidA === undefined || rowidB === undefined) return null;
+
+	const vecA = loadStoredClaimVector(db, rowidA);
+	const vecB = loadStoredClaimVector(db, rowidB);
+	if (!vecA || !vecB || vecA.length !== vecB.length) return null;
+
+	let dot = 0;
+	for (let i = 0; i < vecA.length; i++) dot += vecA[i] * vecB[i];
+	return dot;
 }
 
 export interface DedupQueryClaim {
