@@ -23,10 +23,12 @@ import {
   getSharedKnowledge,
   getProjectContext,
   listSessions,
+  searchSession,
   getDiagnostics,
   getStats,
   listAtoms,
 } from '../core/search.js';
+import type { SessionSearchResult } from '../core/search.js';
 import { recallMemories } from '../core/recall.js';
 import { verifyMemory, recordFeedback, insertMemory, embedMemory, rememberBatch, getMemory } from '../core/memories.js';
 import type { MemoryType, DecayClass } from '../core/types.js';
@@ -258,6 +260,50 @@ server.tool(
   }
 );
 
+// ── nexus_search_session ─────────────────────────────────────────────
+
+/**
+ * Render a SessionSearchResult as tool-response text: source line, one
+ * bullet per snippet (line number + occurrences + text), and clear
+ * no-matches/session-not-found/no-content messages.
+ */
+function renderSessionSearch(r: SessionSearchResult): string {
+  if (r.status === 'session-not-found') {
+    return r.detail ?? `No session found for session_id "${r.sessionId}"`;
+  }
+  if (r.status === 'no-content') {
+    return r.detail ?? `No content available for session ${r.sessionId}.`;
+  }
+  if (r.status === 'no-matches') {
+    const searched = r.sourcesChecked.length > 0 ? r.sourcesChecked.join(', ') : 'nothing';
+    return `No matches for "${r.query}" in session ${r.sessionId}. Searched: ${searched}.`;
+  }
+
+  // status === 'ok'
+  const lines = r.matches.map(m => `- line ${m.line} (${m.occurrences} occurrence${m.occurrences === 1 ? '' : 's'}): ${m.snippet}`);
+  const truncNote = r.truncated ? `\n(truncated — ${r.totalMatches} total matches, showing ${r.matches.length})` : '';
+  return `Source: ${r.source} (${r.totalMatches} match${r.totalMatches === 1 ? '' : 'es'})\n\n${lines.join('\n')}${truncNote}`;
+}
+
+server.tool(
+  'nexus_search_session',
+  'Search a session\'s content for a plain-text query. Compacted-summary-first with automatic fallback to the full transcript if the compacted summary is absent, missing on disk, or has zero matches. Returns matching lines with context snippets — use to find where something was discussed within a specific session.',
+  {
+    session_id:  z.string().describe('Session id to search within (see nexus_sessions)'),
+    query:       z.string().min(1).describe('Plain-text substring to search for (case-insensitive, no regex)'),
+    max_matches: z.coerce.number().min(1).max(50).optional().describe('Max matches to return (default 20)'),
+  },
+  async ({ session_id, query, max_matches }) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      return { content: [{ type: 'text', text: 'Error: query must not be empty.' }] };
+    }
+
+    const result = searchSession(db, session_id, trimmed, { maxMatches: max_matches });
+    return { content: [{ type: 'text', text: renderSessionSearch(result) }] };
+  }
+);
+
 // ── nexus_health ─────────────────────────────────────────────────────
 
 server.tool(
@@ -441,7 +487,8 @@ server.tool(
 **Memories:** ${stats.totalMemories} (${stats.embeddedMemories} embedded) — review: ${reviewSummary}
 **Links:** ${stats.totalLinks}
 **Sessions:** ${stats.totalSessions}
-**Diagnostics:** ${stats.totalDiagnostics}`;
+**Diagnostics:** ${stats.totalDiagnostics}
+**Session searches:** ${stats.totalSessionSearches} total (compacted: ${stats.sessionSearchesBySource.compacted}, full: ${stats.sessionSearchesBySource.full}, none: ${stats.sessionSearchesBySource.none})`;
 
     return { content: [{ type: 'text', text }] };
   }

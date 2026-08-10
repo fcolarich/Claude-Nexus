@@ -1,7 +1,10 @@
 import Database from 'better-sqlite3';
+import { existsSync, readFileSync } from 'fs';
 import type { Atom, AtomLink, SearchResult, Diagnostic, Session, Memory } from './types.js';
 import { generateEmbedding } from './embeddings.js';
 import { rrfFuse } from './rrf.js';
+import { grepText, type GrepMatch, type GrepOptions } from './text-search.js';
+import { readTranscriptWindow } from '../capture/transcript.js';
 
 export interface MemorySearchResult {
   memory: Memory;
@@ -529,6 +532,184 @@ export function listSessions(
   return db.prepare(sql).all(...params) as Session[];
 }
 
+// Session, widened with vcc_shrunk_path (migration v12). Not yet on the
+// shared Session interface in types.ts — kept local to this module rather
+// than editing types.ts outside this task's scope.
+export type SessionWithVccPath = Session & { vcc_shrunk_path: string | null };
+
+/**
+ * Look up a single session by id. Returns undefined on a miss — an unknown
+ * session_id is an expected, common case the caller branches on, not an error.
+ */
+export function getSessionById(db: Database.Database, sessionId: string): SessionWithVccPath | undefined {
+  return db.prepare(`SELECT * FROM sessions WHERE session_id = ?`).get(sessionId) as SessionWithVccPath | undefined;
+}
+
+/**
+ * Record one session-content-search event. A plain, unguarded INSERT — no
+ * try/catch here. The fail-open guard for search logging lives at the call
+ * site in searchSession, so a constraint violation (e.g. a bad `source`)
+ * propagates as a real throw from this thin wrapper.
+ */
+export function logSessionSearch(
+  db: Database.Database,
+  params: { sessionId: string; query: string; source: 'compacted' | 'full' | 'none'; matchCount: number }
+): void {
+  db.prepare(`
+    INSERT INTO session_search_log (session_id, query, source, match_count)
+    VALUES (?, ?, ?, ?)
+  `).run(params.sessionId, params.query, params.source, params.matchCount);
+}
+
+export type SessionSearchSource = 'compacted' | 'full' | 'none';
+
+export interface SessionSearchResult {
+  status: 'ok' | 'no-matches' | 'session-not-found' | 'no-content';
+  sessionId: string;
+  query: string;
+  source: SessionSearchSource;
+  sourcesChecked: string[];
+  matches: GrepMatch[];
+  totalMatches: number;
+  truncated: boolean;
+  detail?: string;
+}
+
+/**
+ * Compacted-first session content search with fallback to the full transcript.
+ * Never throws — an outer try/catch produces a safe 'no-content' fallback on
+ * any unexpected internal error. Logs exactly once, at the end, from a single
+ * fail-open call site covering every terminal path (see architecture.md).
+ */
+export function searchSession(
+  db: Database.Database,
+  sessionId: string,
+  query: string,
+  opts?: GrepOptions
+): SessionSearchResult {
+  let result: SessionSearchResult;
+
+  try {
+    const session = getSessionById(db, sessionId);
+    if (!session) {
+      result = {
+        status: 'session-not-found',
+        sessionId,
+        query,
+        source: 'none',
+        sourcesChecked: [],
+        matches: [],
+        totalMatches: 0,
+        truncated: false,
+        detail: `No session found for session_id "${sessionId}"`,
+      };
+      logSearchFailOpen(db, sessionId, query, result);
+      return result;
+    }
+
+    const sourcesChecked: string[] = [];
+
+    // 1. Compacted summary, if present on disk.
+    if (session.vcc_shrunk_path && existsSync(session.vcc_shrunk_path)) {
+      sourcesChecked.push('compacted summary');
+      const compactedText = readFileSync(session.vcc_shrunk_path, 'utf8');
+      const grep = grepText(compactedText, query, opts);
+      if (grep.totalMatches >= 1) {
+        result = {
+          status: 'ok',
+          sessionId,
+          query,
+          source: 'compacted',
+          sourcesChecked,
+          matches: grep.matches,
+          totalMatches: grep.totalMatches,
+          truncated: grep.truncated,
+        };
+        logSearchFailOpen(db, sessionId, query, result);
+        return result;
+      }
+    }
+
+    // 2. Fallback: full transcript.
+    let fullText = '';
+    if (session.jsonl_path) {
+      sourcesChecked.push('full transcript');
+      fullText = readTranscriptWindow(session.jsonl_path, 0).text;
+    }
+
+    if (!fullText) {
+      result = {
+        status: 'no-content',
+        sessionId,
+        query,
+        source: 'none',
+        sourcesChecked,
+        matches: [],
+        totalMatches: 0,
+        truncated: false,
+        detail: session.jsonl_path
+          ? `No readable content at jsonl_path "${session.jsonl_path}"`
+          : 'Session has no jsonl_path',
+      };
+      logSearchFailOpen(db, sessionId, query, result);
+      return result;
+    }
+
+    const grep = grepText(fullText, query, opts);
+    if (grep.totalMatches >= 1) {
+      result = {
+        status: 'ok',
+        sessionId,
+        query,
+        source: 'full',
+        sourcesChecked,
+        matches: grep.matches,
+        totalMatches: grep.totalMatches,
+        truncated: grep.truncated,
+      };
+      logSearchFailOpen(db, sessionId, query, result);
+      return result;
+    }
+
+    // 3. Zero matches in every source actually checked.
+    result = {
+      status: 'no-matches',
+      sessionId,
+      query,
+      source: 'none',
+      sourcesChecked,
+      matches: [],
+      totalMatches: 0,
+      truncated: false,
+    };
+    logSearchFailOpen(db, sessionId, query, result);
+    return result;
+  } catch (err) {
+    result = {
+      status: 'no-content',
+      sessionId,
+      query,
+      source: 'none',
+      sourcesChecked: [],
+      matches: [],
+      totalMatches: 0,
+      truncated: false,
+      detail: `Unexpected error: ${(err as Error).message}`,
+    };
+    logSearchFailOpen(db, sessionId, query, result);
+    return result;
+  }
+}
+
+/** Fail-open log write: swallow failures, stderr only, never stdout (stdio transport). */
+function logSearchFailOpen(db: Database.Database, sessionId: string, query: string, result: SessionSearchResult): void {
+  try {
+    logSessionSearch(db, { sessionId, query, source: result.source, matchCount: result.totalMatches });
+  } catch (err) {
+    console.error('[searchSession] logSessionSearch failed:', (err as Error).message);
+  }
+}
+
 /**
  * Count rows in a table, returning 0 if the table does not exist
  * (e.g. *_vec tables when sqlite-vec failed to load).
@@ -561,21 +742,34 @@ export function getStats(db: Database.Database): {
   totalSessions: number;
   totalDiagnostics: number;
   diagnosticsByType: Record<string, number>;
+  totalSessionSearches: number;
+  sessionSearchesBySource: Record<'compacted' | 'full' | 'none', number>;
 } {
   const totalAtoms = (db.prepare(`SELECT COUNT(*) as c FROM atoms`).get() as { c: number }).c;
   const totalLinks = (db.prepare(`SELECT COUNT(*) as c FROM atom_links`).get() as { c: number }).c;
   const totalSessions = (db.prepare(`SELECT COUNT(*) as c FROM sessions`).get() as { c: number }).c;
   const totalDiagnostics = (db.prepare(`SELECT COUNT(*) as c FROM diagnostics`).get() as { c: number }).c;
+  const totalSessionSearches = (db.prepare(`SELECT COUNT(*) as c FROM session_search_log`).get() as { c: number }).c;
 
   const byType = db.prepare(`SELECT atom_type, COUNT(*) as c FROM atoms GROUP BY atom_type`).all() as { atom_type: string; c: number }[];
   const byScope = db.prepare(`SELECT scope, COUNT(*) as c FROM atoms GROUP BY scope`).all() as { scope: string; c: number }[];
   const byProject = db.prepare(`SELECT COALESCE(project, 'global') as project, COUNT(*) as c FROM atoms GROUP BY project`).all() as { project: string; c: number }[];
   const diagByType = db.prepare(`SELECT type, COUNT(*) as c FROM diagnostics GROUP BY type`).all() as { type: string; c: number }[];
+  const searchBySource = db.prepare(`SELECT source, COUNT(*) as c FROM session_search_log GROUP BY source`).all() as { source: string; c: number }[];
 
   const totalMemories = countTable(db, 'memories');
   const memReview = totalMemories > 0
     ? db.prepare(`SELECT review_status, COUNT(*) as c FROM memories GROUP BY review_status`).all() as { review_status: string; c: number }[]
     : [];
+
+  // GROUP BY only returns rows for sources that have ≥1 entry — zero-fill
+  // all 3 keys before merging so unused sources still report 0, not undefined.
+  const sessionSearchesBySource: Record<'compacted' | 'full' | 'none', number> = { compacted: 0, full: 0, none: 0 };
+  for (const row of searchBySource) {
+    if (row.source === 'compacted' || row.source === 'full' || row.source === 'none') {
+      sessionSearchesBySource[row.source] = row.c;
+    }
+  }
 
   return {
     totalAtoms,
@@ -590,5 +784,7 @@ export function getStats(db: Database.Database): {
     totalSessions,
     totalDiagnostics,
     diagnosticsByType: Object.fromEntries(diagByType.map(r => [r.type, r.c])),
+    totalSessionSearches,
+    sessionSearchesBySource,
   };
 }

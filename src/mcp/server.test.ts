@@ -5,9 +5,13 @@
  * :memory: DB seeded via insertMemory/getMemory — no server import, no real DB.
  * Mirrors the precedent in src/core/memories.test.ts.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { insertMemory, getMemory, type MemoryInput } from '../core/memories.js';
+import { searchSession, getStats, type SessionSearchResult } from '../core/search.js';
 import type Database from 'better-sqlite3';
 import type { Session } from '../core/types.js';
 
@@ -383,5 +387,209 @@ describe('nexus_sessions transcript_path field', () => {
 		const session = baseSession({ jsonl_path: '' });
 		const text = formatSessionsList([session]);
 		expect(text).toContain('transcript_path: (none)');
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Tests: nexus_search_session
+//
+// Mirrors this file's established convention (see nexus_sessions above):
+// McpServer exposes no public accessor for registered tool handlers, and
+// server.ts opens a real db + connects stdio transport as an import-time
+// side effect, so importing server.ts here is unsafe. `renderSessionSearch`
+// and the query-trim/reject handler logic are duplicated locally, mirroring
+// the module-local functions in ../mcp/server.ts. Keep both in sync.
+// ─────────────────────────────────────────────────────────────────────
+
+/** Mirrors the module-local renderSessionSearch in ../mcp/server.ts. */
+function renderSessionSearch(r: SessionSearchResult): string {
+	if (r.status === 'session-not-found') {
+		return r.detail ?? `No session found for session_id "${r.sessionId}"`;
+	}
+	if (r.status === 'no-content') {
+		return r.detail ?? `No content available for session ${r.sessionId}.`;
+	}
+	if (r.status === 'no-matches') {
+		const searched = r.sourcesChecked.length > 0 ? r.sourcesChecked.join(', ') : 'nothing';
+		return `No matches for "${r.query}" in session ${r.sessionId}. Searched: ${searched}.`;
+	}
+
+	// status === 'ok'
+	const lines = r.matches.map(m => `- line ${m.line} (${m.occurrences} occurrence${m.occurrences === 1 ? '' : 's'}): ${m.snippet}`);
+	const truncNote = r.truncated ? `\n(truncated — ${r.totalMatches} total matches, showing ${r.matches.length})` : '';
+	return `Source: ${r.source} (${r.totalMatches} match${r.totalMatches === 1 ? '' : 'es'})\n\n${lines.join('\n')}${truncNote}`;
+}
+
+/** Mirrors the nexus_search_session handler in ../mcp/server.ts. */
+function runSearchSessionHandler(
+	db: Database.Database,
+	sessionId: string,
+	query: string,
+	maxMatches?: number,
+): string {
+	const trimmed = query.trim();
+	if (!trimmed) {
+		return 'Error: query must not be empty.';
+	}
+	const result = searchSession(db, sessionId, trimmed, { maxMatches });
+	return renderSessionSearch(result);
+}
+
+describe('nexus_search_session handler', () => {
+	let tmpDir: string;
+
+	function freshSearchDb(): Database.Database {
+		const db = openDatabase(':memory:') as unknown as Database.Database;
+		initializeSchema(db);
+		return db;
+	}
+
+	function insertSession(db: Database.Database, o: { id: string; jsonlPath?: string | null; vccShrunkPath?: string | null }) {
+		db.prepare(`
+			INSERT INTO sessions (session_id, project, jsonl_path, vcc_shrunk_path)
+			VALUES (?, ?, ?, ?)
+		`).run(o.id, 'test-proj', o.jsonlPath ?? null, o.vccShrunkPath ?? null);
+	}
+
+	function countLogRows(db: Database.Database, sessionId: string): number {
+		return (db.prepare(`SELECT COUNT(*) as c FROM session_search_log WHERE session_id = ?`).get(sessionId) as { c: number }).c;
+	}
+
+	beforeEach(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), 'nexus-search-session-tool-'));
+	});
+
+	afterEach(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it('matches-found: renders source, match count, and a bullet per snippet', () => {
+		const db = freshSearchDb();
+		const jsonlPath = join(tmpDir, 'tool-1.jsonl');
+		writeFileSync(jsonlPath, JSON.stringify({ type: 'user', message: { role: 'user', content: 'find the needle please' } }) + '\n', 'utf8');
+		insertSession(db, { id: 'tool-1', jsonlPath, vccShrunkPath: null });
+
+		const text = runSearchSessionHandler(db, 'tool-1', 'needle');
+
+		expect(text).toContain('Source: full');
+		expect(text).toMatch(/- line \d+ \(\d+ occurrence/);
+		expect(text).toContain('needle');
+		db.close();
+	});
+
+	it('no-matches: renders the "No matches" message naming both sources checked', () => {
+		const db = freshSearchDb();
+		const compactedPath = join(tmpDir, 'tool-2.compacted.txt');
+		writeFileSync(compactedPath, 'nothing relevant here', 'utf8');
+		const jsonlPath = join(tmpDir, 'tool-2.jsonl');
+		writeFileSync(jsonlPath, JSON.stringify({ type: 'user', message: { role: 'user', content: 'still nothing relevant' } }) + '\n', 'utf8');
+		insertSession(db, { id: 'tool-2', jsonlPath, vccShrunkPath: compactedPath });
+
+		const text = runSearchSessionHandler(db, 'tool-2', 'needle');
+
+		expect(text).toBe('No matches for "needle" in session tool-2. Searched: compacted summary, full transcript.');
+		db.close();
+	});
+
+	it('session-not-found: renders a clear not-found message', () => {
+		const db = freshSearchDb();
+
+		const text = runSearchSessionHandler(db, 'ghost-session', 'anything');
+
+		expect(text).toMatch(/no session found/i);
+		expect(text).toContain('ghost-session');
+		db.close();
+	});
+
+	it('empty-query-rejection: rejects a whitespace-only query without calling searchSession', () => {
+		const db = freshSearchDb();
+		insertSession(db, { id: 'tool-3', jsonlPath: '', vccShrunkPath: null });
+
+		const text = runSearchSessionHandler(db, 'tool-3', '   ');
+
+		expect(text).toBe('Error: query must not be empty.');
+		// searchSession always logs on every terminal path -- zero rows proves it was never invoked.
+		expect(countLogRows(db, 'tool-3')).toBe(0);
+		db.close();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Tests: nexus_stats — session-search counts line
+//
+// Mirrors this file's established convention (see nexus_sessions,
+// nexus_search_session above): McpServer exposes no public accessor for
+// registered tool handlers, so the handler's text-formatting logic is
+// duplicated locally. Keep in sync with the handler in ../mcp/server.ts.
+// ─────────────────────────────────────────────────────────────────────
+
+/** Mirrors the nexus_stats handler's text-formatting logic in ../mcp/server.ts. */
+function formatStats(stats: ReturnType<typeof getStats>): string {
+	const reviewSummary = Object.entries(stats.memoriesByReview).map(([s, c]) => `${s}(${c})`).join(', ') || 'none';
+
+	return `# Nexus Stats
+
+**Total Atoms:** ${stats.totalAtoms} (${stats.embeddedAtoms} embedded)
+**By Type:** ${Object.entries(stats.atomsByType).map(([t, c]) => `${t}(${c})`).join(', ')}
+**By Scope:** ${Object.entries(stats.atomsByScope).map(([s, c]) => `${s}(${c})`).join(', ')}
+**By Project:** ${Object.entries(stats.atomsByProject).map(([p, c]) => `${p}(${c})`).join(', ')}
+**Memories:** ${stats.totalMemories} (${stats.embeddedMemories} embedded) — review: ${reviewSummary}
+**Links:** ${stats.totalLinks}
+**Sessions:** ${stats.totalSessions}
+**Diagnostics:** ${stats.totalDiagnostics}
+**Session searches:** ${stats.totalSessionSearches} total (compacted: ${stats.sessionSearchesBySource.compacted}, full: ${stats.sessionSearchesBySource.full}, none: ${stats.sessionSearchesBySource.none})`;
+}
+
+describe('nexus_stats session-search counts line', () => {
+	function freshStatsDb(): Database.Database {
+		const db = openDatabase(':memory:') as unknown as Database.Database;
+		initializeSchema(db);
+		return db;
+	}
+
+	function insertLogRow(db: Database.Database, source: 'compacted' | 'full' | 'none', n = 1) {
+		for (let i = 0; i < n; i++) {
+			db.prepare(`INSERT INTO session_search_log (session_id, query, source, match_count) VALUES (?, ?, ?, ?)`)
+				.run('s1', 'needle', source, 0);
+		}
+	}
+
+	it('renders the Session searches line with per-source counts given seeded rows across all 3 sources', () => {
+		const db = freshStatsDb();
+		insertLogRow(db, 'compacted', 2);
+		insertLogRow(db, 'full', 3);
+		insertLogRow(db, 'none', 1);
+
+		const text = formatStats(getStats(db));
+
+		expect(text).toContain('**Session searches:** 6 total (compacted: 2, full: 3, none: 1)');
+		db.close();
+	});
+
+	it('zero-fills all 3 source keys as 0 when session_search_log is empty', () => {
+		const db = freshStatsDb();
+
+		const text = formatStats(getStats(db));
+
+		expect(text).toContain('**Session searches:** 0 total (compacted: 0, full: 0, none: 0)');
+		db.close();
+	});
+
+	it('leaves every pre-existing rendered line unchanged (regression)', () => {
+		const db = freshStatsDb();
+		insertLogRow(db, 'full', 1);
+
+		const text = formatStats(getStats(db));
+
+		expect(text).toContain('# Nexus Stats');
+		expect(text).toMatch(/\*\*Total Atoms:\*\* \d+ \(\d+ embedded\)/);
+		expect(text).toMatch(/\*\*By Type:\*\*/);
+		expect(text).toMatch(/\*\*By Scope:\*\*/);
+		expect(text).toMatch(/\*\*By Project:\*\*/);
+		expect(text).toMatch(/\*\*Memories:\*\* \d+ \(\d+ embedded\) — review: /);
+		expect(text).toMatch(/\*\*Links:\*\* \d+/);
+		expect(text).toMatch(/\*\*Sessions:\*\* \d+/);
+		expect(text).toMatch(/\*\*Diagnostics:\*\* \d+/);
+		db.close();
 	});
 });
