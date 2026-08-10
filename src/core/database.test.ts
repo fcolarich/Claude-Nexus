@@ -45,6 +45,13 @@ describe('schema migrations', () => {
     db.close();
   });
 
+  it('migration v15: memories.claims_extracted_at cursor column exists', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    expect(columnExists(db, 'memories', 'claims_extracted_at')).toBe(true);
+    db.close();
+  });
+
   it('migration v14: claims_vec table exists for the dedup cascade only', () => {
     const db = openDatabase(':memory:');
     initializeSchema(db);

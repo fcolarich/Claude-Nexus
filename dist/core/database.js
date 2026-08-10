@@ -43,6 +43,7 @@ const MIGRATIONS = [
     { version: 12, name: 'memory-identifiers', up: migrateMemoryIdentifiers },
     { version: 13, name: 'claims-table', up: migrateClaimsTable },
     { version: 14, name: 'claims-vec-dedup-only', up: migrateClaimsVec },
+    { version: 15, name: 'claims-extraction-cursor', up: migrateClaimsExtractionCursor },
 ];
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 function getSchemaVersion(db) {
@@ -628,6 +629,20 @@ function migrateClaimsTable(db) {
 // query-return interface, not internal consolidation-time signals, so this
 // does not pre-decide the Phase 3 claim-vs-memory retrieval fork. Same
 // vec0/1024-dim/drop-on-delete pattern as memories_vec.
+// ── Migration 15: claims extraction cursor ───────────────────────────
+// Mirrors migrateDistillCursor's distilled_at pattern exactly: a memory is a
+// candidate for claim decomposition only while claims_extracted_at IS NULL
+// (optionally `OR < :since`). Stamped BEFORE work (crash safety) and
+// un-stamped only on genuine backend failure — never on a rejected
+// extraction, which stamps normally so a full sweep terminates instead of
+// retrying the same ~1.7% baseline reject rate forever.
+function migrateClaimsExtractionCursor(db) {
+    try {
+        db.exec(`ALTER TABLE memories ADD COLUMN claims_extracted_at TEXT`);
+    }
+    catch { }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_claims_extracted_at ON memories(claims_extracted_at)`);
+}
 function migrateClaimsVec(db) {
     try {
         db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS claims_vec USING vec0(embedding float[1024])`);
