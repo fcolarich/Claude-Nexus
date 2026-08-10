@@ -1,0 +1,83 @@
+{
+  "feature": "nexus_search_session — compacted-first session content search",
+  "branch": "feature/compacted-first-search",
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Implement grepText pure text-search matcher",
+      "description": "Implement `grepText(text, query, opts?)` in new file src/core/text-search.ts per architecture's interface: GrepOptions (maxMatches default 20, contextLines default 1, maxSnippetChars default 400), GrepMatch (line, occurrences, snippet), GrepResult (matches, totalMatches, truncated). Case-insensitive plain-substring only, no regex (ReDoS avoidance). Line-anchored snippets: matching line + N context lines each side, char-trim centered on first hit, multi-hit-per-line collapses into one GrepMatch with occurrences count. Pure -- no fs/db/other-core-module imports. TDD: write tests first for no-match, single-match, same-line multi-hit collapse, cap+truncated flag, first/last-line context boundaries, long-line char-trim, case-insensitivity, empty text/query.",
+      "files": ["src/core/text-search.ts", "src/core/text-search.test.ts"],
+      "depends_on": [],
+      "estimated_tokens": 3500,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-002",
+      "title": "Add migration v13: session_search_log table",
+      "description": "Add migration v13 to src/core/database.ts: new entry `{ version: 13, name: 'session-search-log', up: migrateSessionSearchLog }` appended to the MIGRATIONS array (currently 12 entries, ends at 'vcc-shrunk-path'). Define migrateSessionSearchLog(db) following the simple new-table pattern (e.g. migrateProjectAliases): `CREATE TABLE IF NOT EXISTS session_search_log (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, query TEXT NOT NULL, source TEXT NOT NULL CHECK(source IN ('compacted','full','none')), match_count INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))` plus `CREATE INDEX IF NOT EXISTS idx_session_search_log_session ON session_search_log(session_id, created_at DESC)`. Do not hardcode LATEST_SCHEMA_VERSION (it derives from array length). No existing table touched. TDD: fresh db migrates to schema_version 13; table+CHECK+index exist; rerun on already-migrated db is a no-op; existing tables/data untouched.",
+      "files": ["src/core/database.ts", "src/core/database.test.ts"],
+      "depends_on": [],
+      "estimated_tokens": 3500,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "high"
+    },
+    {
+      "id": "task-003",
+      "title": "Add getSessionById and logSessionSearch to search.ts",
+      "description": "Add two exports to src/core/search.ts, adjacent to listSessions (~line 512), same db.prepare().get()/.all() style: `getSessionById(db, sessionId): SessionRow | undefined` (SELECT narrowed to SessionRow shape -- session_id, project_slug, jsonl_path, vcc_shrunk_path, started_at, last_seen_at, remaining sessions columns; .get(sessionId); undefined on miss, no throw, no transaction). `logSessionSearch(db, { sessionId, query, source, matchCount })` -- single plain INSERT into session_search_log, no internal try/catch (per architecture, the fail-open guard lives at the call site in searchSession, not here -- this is a thin faithful wrapper). TDD against a real temp db migrated to v13: getSessionById found/not-found; logSessionSearch inserts correct row; logSessionSearch throws (not swallows) on a CHECK-constraint violation, proving no hidden swallowing.",
+      "files": ["src/core/search.ts", "src/core/search.test.ts"],
+      "depends_on": ["task-002"],
+      "estimated_tokens": 4000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-004",
+      "title": "Implement searchSession orchestrator (compacted-first, fallback, fail-open)",
+      "description": "Add `searchSession(db, sessionId, query, opts?): SessionSearchResult` to src/core/search.ts. Orchestration: (1) getSessionById lookup, not found -> status 'session-not-found', source 'none'. (2) vcc_shrunk_path set + fs.existsSync true -> fs.readFileSync(path,'utf8') (plain text, no JSONL parsing) -> grepText; >=1 match -> status 'ok', source 'compacted'. (3) else/zero-match -> fall back to readTranscriptWindow(session.jsonl_path, 0).text (existing primitive in src/capture/transcript.ts; returns {text:''} rather than throwing when file missing) -> grepText; >=1 match -> status 'ok', source 'full', sourcesChecked includes both sources actually attempted. (4) zero matches in both checked sources -> status 'no-matches', source 'none'. (5) no readable content (no jsonl_path / empty text / unexpected read error) -> status 'no-content', detail set. (6) logSessionSearch called exactly once at a single end-of-function call site covering all terminal paths, wrapped in its own try/catch swallowing write failures (fail-open, stderr only, never stdout). (7) function itself never throws to caller. Build incrementally, one commit per branch. TDD first, real temp db (migrated v13) + real temp fixture files for compacted/full paths, covering all 6 scenarios above plus log-write-failure fail-open.",
+      "files": ["src/core/search.ts", "src/core/search.test.ts"],
+      "depends_on": ["task-001", "task-003"],
+      "estimated_tokens": 6500,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "medium"
+    },
+    {
+      "id": "task-005",
+      "title": "Extend getStats() with session-search counts",
+      "description": "Extend getStats(db) in src/core/search.ts (current impl lines 551-594) with two additive fields: `totalSessionSearches: number` (SELECT COUNT(*) FROM session_search_log) and `sessionSearchesBySource: {compacted, full, none}` (SELECT source, COUNT(*) FROM session_search_log GROUP BY source, explicitly zero-filling all 3 keys before merge since GROUP BY omits sources with 0 rows). Do not rename/retype/reorder/remove any existing key. TDD: zero-row db -> all 3 keys present and 0; rows across all 3 sources -> correct per-source counts; explicit regression test asserting every pre-existing Stats key/type (totalAtoms, embeddedAtoms, atomsByType, atomsByScope, atomsByProject, totalMemories, embeddedMemories, memoriesByReview, totalLinks, totalSessions, totalDiagnostics, diagnosticsByType) is unchanged.",
+      "files": ["src/core/search.ts", "src/core/search.test.ts"],
+      "depends_on": ["task-004"],
+      "estimated_tokens": 3000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-006",
+      "title": "Register nexus_search_session MCP tool",
+      "description": "In src/mcp/server.ts: add getSessionById and searchSession to the existing named-import block from ../core/search.js (line 17-29) -- do NOT import logSessionSearch, it's called internally by searchSession only. Register tool `nexus_search_session` via server.tool(name, description, zodShape, handler), following nexus_sessions (line 234-259) as the closest sibling pattern. inputSchema: session_id (required string), query (required non-empty-after-trim string), max_matches (optional number 1-50, default 20). Handler: trim query, reject empty with clear text (no throw, don't call searchSession) -> searchSession(db, session_id, query, {maxMatches}) -> { content: [{ type: 'text', text: renderSessionSearch(r) }] }. Add module-local `renderSessionSearch(r: SessionSearchResult): string`: source line, one bullet per snippet (line number + occurrences + text), and clear no-matches/session-not-found/no-content messages per architecture's data-flow section (e.g. 'No matches for \"<query>\" in session <id>. Searched: compacted summary, full transcript.'). TDD first, call the registered handler directly: matches-found, no-matches, session-not-found, empty-query-rejection cases.",
+      "files": ["src/mcp/server.ts", "src/mcp/server.test.ts"],
+      "depends_on": ["task-004"],
+      "estimated_tokens": 4500,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "high"
+    },
+    {
+      "id": "task-007",
+      "title": "Extend nexus_stats output with session-search counts",
+      "description": "In src/mcp/server.ts, extend the existing nexus_stats handler (line 426-448, calls getStats(db), template-string ending '**Diagnostics:** ${stats.totalDiagnostics}' at line 444): append one line `**Session searches:** N total (compacted: X, full: Y, none: Z)` using stats.totalSessionSearches and stats.sessionSearchesBySource. No other handler change. TDD: extend existing nexus_stats test asserting the new line's numbers given seeded session_search_log rows across sources, and that all pre-existing rendered lines are unchanged.",
+      "files": ["src/mcp/server.ts", "src/mcp/server.test.ts"],
+      "depends_on": ["task-005", "task-006"],
+      "estimated_tokens": 2500,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    }
+  ]
+}

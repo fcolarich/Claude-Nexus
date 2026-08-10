@@ -61,6 +61,7 @@ const MIGRATIONS: Migration[] = [
   { version: 10, name: 'vcc-shrunk-at', up: migrateVccShrunkAt },
   { version: 11, name: 'distill-cursor', up: migrateDistillCursor },
   { version: 12, name: 'vcc-shrunk-path', up: migrateVccShrunkPath },
+  { version: 13, name: 'session-search-log', up: migrateSessionSearchLog },
 ];
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
@@ -398,6 +399,20 @@ function migrateProjectAliases(db: Database.Database): void {
       canonical_slug TEXT NOT NULL,
       created_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
+  `);
+}
+
+function migrateSessionSearchLog(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_search_log (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id   TEXT NOT NULL,
+      query        TEXT NOT NULL,
+      source       TEXT NOT NULL CHECK(source IN ('compacted', 'full', 'none')),
+      match_count  INTEGER NOT NULL,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_search_log_session ON session_search_log(session_id, created_at DESC);
   `);
 }
 

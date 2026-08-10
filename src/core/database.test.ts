@@ -328,4 +328,68 @@ describe('schema migrations', () => {
 
     db.close();
   });
+
+  it('migration v13: brings a fresh DB to schema_version 13 with session_search_log table', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+    expect(LATEST_SCHEMA_VERSION).toBe(13);
+    expect(tableExists(db, 'session_search_log')).toBe(true);
+    db.close();
+  });
+
+  it('migration v13: session_search_log accepts a valid row and rejects an invalid source', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+
+    expect(() => {
+      db.prepare(`
+        INSERT INTO session_search_log (session_id, query, source, match_count)
+        VALUES ('sess-1', 'needle', 'compacted', 3)
+      `).run();
+    }).not.toThrow();
+
+    expect(() => {
+      db.prepare(`
+        INSERT INTO session_search_log (session_id, query, source, match_count)
+        VALUES ('sess-1', 'needle', 'bogus', 0)
+      `).run();
+    }).toThrow();
+
+    db.close();
+  });
+
+  it('migration v13: idx_session_search_log_session index exists', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    const idx = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_session_search_log_session'`).get();
+    expect(idx).toBeTruthy();
+    db.close();
+  });
+
+  it('migration v13: running initializeSchema twice is idempotent (no throw, table queryable, no duplicate schema_version rows)', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    const afterFirst = (db.prepare(`SELECT COUNT(*) AS c FROM schema_version`).get() as { c: number }).c;
+    expect(() => initializeSchema(db)).not.toThrow();
+    const afterSecond = (db.prepare(`SELECT COUNT(*) AS c FROM schema_version`).get() as { c: number }).c;
+    expect(afterSecond).toBe(afterFirst);
+    expect(db.prepare(`SELECT * FROM session_search_log LIMIT 0`).all()).toEqual([]);
+    db.close();
+  });
+
+  it('migration v13: does not touch existing tables/data (sessions row survives)', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    db.prepare(`
+      INSERT INTO sessions (session_id, project, jsonl_path)
+      VALUES ('test-v13-preserve', 'proj', '/tmp/test.jsonl')
+    `).run();
+
+    const before = (db.prepare(`SELECT COUNT(*) AS c FROM sessions`).get() as { c: number }).c;
+    initializeSchema(db);
+    const after = (db.prepare(`SELECT COUNT(*) AS c FROM sessions`).get() as { c: number }).c;
+    expect(after).toBe(before);
+    db.close();
+  });
 });
