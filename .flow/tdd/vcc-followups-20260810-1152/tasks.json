@@ -1,0 +1,116 @@
+{
+  "feature": "VCC follow-ups (transcript_path exposure + parallel-file auto-compact)",
+  "branch": "feature/vcc-followups",
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Write failing test: transcript_path in nexus_sessions output",
+      "description": "Add (or create) test(s) in src/mcp/server.test.ts asserting the nexus_sessions tool's text output includes a transcript_path field per session, sourced from Session.jsonl_path with zero additional DB reads. Cover both a populated jsonl_path case (transcript_path: <path>) and a null/empty jsonl_path case (transcript_path: (none), per the stable-emission rule). Test must fail against current server.ts, which does not yet emit this field. If src/mcp/server.test.ts does not already exist, create it colocated with server.ts, scoped only to this nexus_sessions assertion — do not attempt to backfill coverage for unrelated handlers.",
+      "files": ["src/mcp/server.test.ts"],
+      "depends_on": [],
+      "estimated_tokens": 3000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-002",
+      "title": "Implement transcript_path field in nexus_sessions formatter",
+      "description": "In the nexus_sessions tool handler's per-session formatter in src/mcp/server.ts (around line 248-256; verify exact location via Read), add transcript_path: s.jsonl_path to the emitted line for every session, using the literal (none) when jsonl_path is null/empty. No new DB read — listSessions() already does SELECT * so jsonl_path is already on the Session row. No signature change to the handler or to listSessions(). Make task-001's tests pass and no others fail.",
+      "files": ["src/mcp/server.ts"],
+      "depends_on": ["task-001"],
+      "estimated_tokens": 2500,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-003",
+      "title": "Write failing test: migration v12 adds sessions.vcc_shrunk_path",
+      "description": "Add test(s) in src/core/database.test.ts mirroring the existing v10 (migrateVccShrunkAt / 'vcc-shrunk-at') test pattern: assert that after running migrations, the sessions table has a vcc_shrunk_path column (TEXT, nullable, default NULL), and that running migrations twice is idempotent (no throw on duplicate column). Test must fail against current database.ts, which does not yet register this migration.",
+      "files": ["src/core/database.test.ts"],
+      "depends_on": [],
+      "estimated_tokens": 2500,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-004",
+      "title": "Implement migration v12 'vcc-shrunk-path'",
+      "description": "Add migrateVccShrunkPath(db) to src/core/database.ts: ALTER TABLE sessions ADD COLUMN vcc_shrunk_path TEXT, wrapped in the same try/catch-swallow-on-duplicate-column shape as migrateVccShrunkAt (v10) / migrateDistillCursor (v11). Register it as schema_version 12, name 'vcc-shrunk-path', following the existing numbered-migration registration pattern (around database.ts:61-62; verify via Read). Make task-003's tests pass. Do not modify any other migration function or registration entry.",
+      "files": ["src/core/database.ts"],
+      "depends_on": ["task-003"],
+      "estimated_tokens": 3000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "high"
+    },
+    {
+      "id": "task-005",
+      "title": "Write failing tests: parallelShrunkPath + compactToParallelFile success path",
+      "description": "Add tests to src/capture/vcc-bridge.test.ts: (1) parallelShrunkPath(jsonlPath) returns `${jsonlPath}.vcc-shrunk.jsonl` (pure function, no I/O); (2) compactToParallelFile(jsonlPath, opts) success path — mock the module's spawnSync boundary to succeed, assert the sibling file `${jsonlPath}.vcc-shrunk.jsonl` is written, the source file's bytes are unchanged from a pre-read buffer, and the function returns { ok: true, path: parallelShrunkPath(jsonlPath) }. Use a temp directory / temp source file fixture, not a real transcript. Tests must fail against current vcc-bridge.ts, where these exports do not yet exist.",
+      "files": ["src/capture/vcc-bridge.test.ts"],
+      "depends_on": [],
+      "estimated_tokens": 4000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-006",
+      "title": "Implement compactToParallelFile success path, parallelShrunkPath, ParallelCompactResult",
+      "description": "In src/capture/vcc-bridge.ts add: export const VCC_SHRUNK_SUFFIX = '.vcc-shrunk.jsonl'; export function parallelShrunkPath(jsonlPath) returning `${jsonlPath}${VCC_SHRUNK_SUFFIX}`; export type ParallelCompactResult = CompactResult & { path?: string }; export function compactToParallelFile(jsonlPath, opts?: { timeoutMs?: number }) reusing compactFileInPlace's existing runCli/temp-file flow (around vcc-bridge.ts:138-163; verify via Read) but renaming the temp output to parallelShrunkPath(jsonlPath) instead of jsonlPath on success, returning { ok: true, path }. There is deliberately no destination parameter on this function. Do not modify CompactResult, compactWindowLines, or compactFileInPlace signatures or behavior. Make task-005's tests pass.",
+      "files": ["src/capture/vcc-bridge.ts"],
+      "depends_on": ["task-005"],
+      "estimated_tokens": 5500,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "high"
+    },
+    {
+      "id": "task-007",
+      "title": "Write failing tests: compactToParallelFile failure/safety path",
+      "description": "Extend src/capture/vcc-bridge.test.ts: mock the module's spawnSync boundary to force a non-zero exit, and separately to throw, from compactToParallelFile; spy on fs.renameSync and assert across both the success test (task-005) and these forced-failure runs that renameSync is never called with any argument whose path.resolve() equals jsonlPath; assert on forced failure that the source file is byte-identical to a pre-read buffer, that no `${jsonlPath}.vcc-shrunk.jsonl` file exists afterward, and that the function returns { ok: false, error, path: undefined }. This is the regression test proving the ADR-015 'structurally incapable of targeting jsonlPath' hard constraint. Tests must fail against current vcc-bridge.ts, which has no guard or failure handling yet.",
+      "files": ["src/capture/vcc-bridge.test.ts"],
+      "depends_on": ["task-006"],
+      "estimated_tokens": 4000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-008",
+      "title": "Implement CompactTargetGuard and failure-path handling in compactToParallelFile",
+      "description": "In src/capture/vcc-bridge.ts add an internal (not exported) function assertNotSource(target, jsonlPath) that throws when path.resolve(target) === path.resolve(jsonlPath), called immediately before the single renameSync in compactToParallelFile. Wrap the CLI-invocation/rename flow in try/catch: on any failure (non-zero exit, throw, or assertNotSource tripping), best-effort unlink the temp file inside its own nested try/catch, and return { ok: false, error } with no path — never call renameSync in the failure branch. Make task-007's tests pass without breaking task-005/006's success-path tests.",
+      "files": ["src/capture/vcc-bridge.ts"],
+      "depends_on": ["task-007"],
+      "estimated_tokens": 4500,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "high"
+    },
+    {
+      "id": "task-009",
+      "title": "Write failing tests: reflect() parallel-compact trigger",
+      "description": "Add tests to src/capture/reflector.test.ts covering the new end-of-reflect() trigger: (a) an unprocessed window whose Buffer.byteLength(rawLines.join('\\n'), 'utf-8') exceeds the exported VCC_PARALLEL_COMPACT_BYTES calls compactToParallelFile (mocked) and results in sessions.vcc_shrunk_path being updated to the returned path; (b) a window at or under the threshold makes no compactToParallelFile call and leaves vcc_shrunk_path untouched; (c) a forced compactToParallelFile failure leaves vcc_shrunk_path NULL, logs via console.error, and does not throw or otherwise change reflect()'s normal return value. Also assert the existing vcc_shrunk_at-focused tests adjacent to the disabled compactFileInPlace block still pass unmodified, as a regression guard that reflector.ts:274-288 was not touched. Tests must fail against current reflector.ts, where the trigger does not exist yet.",
+      "files": ["src/capture/reflector.test.ts"],
+      "depends_on": ["task-004", "task-008"],
+      "estimated_tokens": 5000,
+      "complexity": "simple",
+      "constraints": [],
+      "risk": "low"
+    },
+    {
+      "id": "task-010",
+      "title": "Implement end-of-reflect() parallel-compact trigger",
+      "description": "In src/capture/reflector.ts export const VCC_PARALLEL_COMPACT_BYTES = 200_000 and define a local VCC_PARALLEL_COMPACT_TIMEOUT_MS = 15_000. Append the trigger as the final block of reflect() — after memory persistence, the redaction-logging block, and advanceCursor, and strictly after the disabled compactFileInPlace block (lines 274-288), which must remain byte-for-byte untouched (no reordering, no comment edits). Wrap the trigger in its own try/catch that only console.error's on failure and never throws or changes reflect()'s return value. Logic: skip if rawLines is empty, or opts.transcript_path is falsy, or byte length <= VCC_PARALLEL_COMPACT_BYTES; otherwise call compactToParallelFile(opts.transcript_path, { timeoutMs: VCC_PARALLEL_COMPACT_TIMEOUT_MS }); on { ok: true, path } run UPDATE sessions SET vcc_shrunk_path = ? WHERE session_id = ?; on failure, console.error only, no UPDATE (leave any prior value untouched, do not reset to NULL). Make task-009's tests pass, confirm the full existing reflector.test.ts suite stays green, then run the full npm test suite to confirm zero regressions repo-wide.",
+      "files": ["src/capture/reflector.ts"],
+      "depends_on": ["task-009"],
+      "estimated_tokens": 6000,
+      "complexity": "complex",
+      "constraints": [],
+      "risk": "high"
+    }
+  ]
+}

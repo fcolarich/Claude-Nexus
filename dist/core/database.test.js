@@ -199,6 +199,33 @@ describe('schema migrations', () => {
         expect(db.prepare(`SELECT distilled_at FROM memories LIMIT 0`).all()).toEqual([]);
         db.close();
     });
+    it('migration v12: vcc_shrunk_path column exists after initializeSchema', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(columnExists(db, 'sessions', 'vcc_shrunk_path')).toBe(true);
+        expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+        db.close();
+    });
+    it('migration v12: vcc_shrunk_path defaults to NULL for existing rows', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        db.prepare(`
+      INSERT INTO sessions (session_id, project, jsonl_path)
+      VALUES ('test-vcc-shrunk-path-default', 'proj', '/tmp/test.jsonl')
+    `).run();
+        const row = db.prepare(`SELECT vcc_shrunk_path FROM sessions WHERE session_id = 'test-vcc-shrunk-path-default'`).get();
+        expect(row.vcc_shrunk_path).toBeNull();
+        db.close();
+    });
+    it('migration v12: running initializeSchema twice is idempotent (no throw, column queryable)', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(() => initializeSchema(db)).not.toThrow();
+        expect(columnExists(db, 'sessions', 'vcc_shrunk_path')).toBe(true);
+        const row = db.prepare(`SELECT vcc_shrunk_path FROM sessions LIMIT 0`).all();
+        expect(row).toEqual([]);
+        db.close();
+    });
     it('migration v7 removes task support while preserving corpus-expansion columns', () => {
         const db = openDatabase(':memory:');
         // Seed a v6-shaped atoms table: has linked_at + project_doc + task columns,

@@ -40,6 +40,7 @@ const MIGRATIONS = [
     { version: 9, name: 'promotion-classification', up: migratePromotionClassification },
     { version: 10, name: 'vcc-shrunk-at', up: migrateVccShrunkAt },
     { version: 11, name: 'distill-cursor', up: migrateDistillCursor },
+    { version: 12, name: 'vcc-shrunk-path', up: migrateVccShrunkPath },
 ];
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 function getSchemaVersion(db) {
@@ -533,6 +534,16 @@ function migrateDistillCursor(db) {
     }
     catch { }
     db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_distilled_at ON memories(distilled_at)`);
+}
+// ── Migration 12: vcc_shrunk_path ────────────────────────────────────
+// Filesystem path to a parallel-compacted copy of the session JSONL, written
+// alongside the original rather than in place (see vcc-bridge.ts
+// compactToParallelFile). NULL = no parallel-compacted copy exists yet.
+function migrateVccShrunkPath(db) {
+    try {
+        db.exec(`ALTER TABLE sessions ADD COLUMN vcc_shrunk_path TEXT`);
+    }
+    catch { }
 }
 // ── Migration 4: import legacy memory atoms ──────────────────────────
 // One-time copy of v1 knowledge atoms (memory/feedback/architecture) into the

@@ -255,4 +255,61 @@ describe('nexus_mark_promoted logic', () => {
         db.close();
     });
 });
+// ─────────────────────────────────────────────────────────────────────
+// Tests: nexus_sessions — transcript_path field
+//
+// Approach A (see file header): mirrors the exact formatting logic from
+// the nexus_sessions handler rather than importing server.ts (McpServer
+// exposes no public accessor for registered tool handlers). Keep this
+// function's body in sync with the handler in ../mcp/server.ts.
+// ─────────────────────────────────────────────────────────────────────
+/** Minimal valid Session fixture — override individual fields per test. */
+function baseSession(overrides = {}) {
+    return {
+        session_id: 's1',
+        project: 'test-project',
+        git_branch: null,
+        slug: null,
+        jsonl_path: '/tmp/session.jsonl',
+        started_at: null,
+        last_active: null,
+        status: 'idle',
+        input_tokens: 0,
+        output_tokens: 0,
+        estimated_cost: 0,
+        subagent_count: 0,
+        summary: null,
+        message_count: 0,
+        title: null,
+        custom_title: null,
+        is_cowork: null,
+        workspace_id: null,
+        participant_id: null,
+        last_reflected_index: 0,
+        cwd: null,
+        ...overrides,
+    };
+}
+/** Mirrors the current nexus_sessions handler's text-formatting logic (server.ts). */
+function formatSessionsList(sessions) {
+    const lines = sessions.slice(0, 20).map(s => {
+        const branch = s.git_branch ? ` (${s.git_branch})` : '';
+        const date = s.last_active ? new Date(s.last_active).toLocaleDateString() : 'unknown';
+        const transcriptPath = s.jsonl_path ? s.jsonl_path : '(none)';
+        return `- **[${s.status}]** ${s.project}${branch} — ${date}, ${s.message_count} msgs, ${s.subagent_count} subagents\n  transcript_path: ${transcriptPath}${s.summary ? `\n  ${s.summary.slice(0, 120)}` : ''}`;
+    });
+    return `# Sessions (${sessions.length} total)\n\n${lines.join('\n')}`;
+}
+describe('nexus_sessions transcript_path field', () => {
+    it('includes transcript_path: <path> for a session with a populated jsonl_path', () => {
+        const session = baseSession({ jsonl_path: '/tmp/sess-populated.jsonl' });
+        const text = formatSessionsList([session]);
+        expect(text).toContain('transcript_path: /tmp/sess-populated.jsonl');
+    });
+    it('emits the literal transcript_path: (none) for an empty jsonl_path, never omitting the key', () => {
+        const session = baseSession({ jsonl_path: '' });
+        const text = formatSessionsList([session]);
+        expect(text).toContain('transcript_path: (none)');
+    });
+});
 //# sourceMappingURL=server.test.js.map

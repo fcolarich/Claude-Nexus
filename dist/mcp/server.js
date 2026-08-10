@@ -159,7 +159,8 @@ server.tool('nexus_sessions', 'List Claude Code sessions with their status, proj
     const lines = sessions.slice(0, 20).map(s => {
         const branch = s.git_branch ? ` (${s.git_branch})` : '';
         const date = s.last_active ? new Date(s.last_active).toLocaleDateString() : 'unknown';
-        return `- **[${s.status}]** ${s.project}${branch} — ${date}, ${s.message_count} msgs, ${s.subagent_count} subagents${s.summary ? `\n  ${s.summary.slice(0, 120)}` : ''}`;
+        const transcriptPath = s.jsonl_path ? s.jsonl_path : '(none)';
+        return `- **[${s.status}]** ${s.project}${branch} — ${date}, ${s.message_count} msgs, ${s.subagent_count} subagents\n  transcript_path: ${transcriptPath}${s.summary ? `\n  ${s.summary.slice(0, 120)}` : ''}`;
     });
     return {
         content: [{ type: 'text', text: `# Sessions (${sessions.length} total)\n\n${lines.join('\n')}` }],
