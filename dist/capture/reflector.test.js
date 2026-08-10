@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { openDatabase, initializeSchema } from '../core/database.js';
 import { reflect } from './reflector.js';
+import * as reflectorModule from './reflector.js';
 import { SECRET_SAMPLES, BENIGN_SAMPLES, SECRET_WINDOW_TEXT } from './secrets.fixtures.js';
 function makeTranscript(entries) {
     const dir = mkdtempSync(join(tmpdir(), 'nexus-rx-'));
@@ -236,6 +237,85 @@ describe('reflect', () => {
         expect(r.skipped).toBe(true);
         expect(shrinkCalled).toBe(false);
         db.close();
+    });
+    describe('end-of-reflect() parallel-compact trigger (VCC_PARALLEL_COMPACT_BYTES)', () => {
+        // Fallback mirrors task-010's planned literal (200_000). Read dynamically off
+        // the module namespace so this suite is RED (undefined threshold, no export
+        // yet) without crashing, and self-corrects to the real value once task-010
+        // lands — per impl-spec: "exceeds the exported VCC_PARALLEL_COMPACT_BYTES".
+        const THRESHOLD = reflectorModule
+            .VCC_PARALLEL_COMPACT_BYTES ?? 200_000;
+        // Comfortably over any plausible threshold regardless of JSON-escaping overhead.
+        const BIG_TEXT = 'a'.repeat(THRESHOLD + 50_000);
+        const bigTranscript = () => [...SIGNAL_TRANSCRIPT, userMsg(BIG_TEXT), asstMsg([{ type: 'text', text: 'ok' }])];
+        function fakeVccWith(compactToParallelFile) {
+            return {
+                compactWindowLines: () => ({ ok: true, text: 'compacted' }),
+                compactFileInPlace: () => ({ ok: true, text: 'shrunk' }),
+                compactToParallelFile,
+            };
+        }
+        it('calls compactToParallelFile and updates sessions.vcc_shrunk_path when the window exceeds the threshold', async () => {
+            const db = freshDb();
+            const p = makeTranscript(bigTranscript());
+            let called = false;
+            let calledWith;
+            const fakeVcc = fakeVccWith((jsonlPath) => {
+                called = true;
+                calledWith = jsonlPath;
+                return { ok: true, path: '/tmp/session-big.vcc-shrunk.jsonl' };
+            });
+            const r = await reflect(db, { session_id: 'vcc-big', transcript_path: p, project: 'proj' }, { extract: async () => [candA], embed: async (t) => vecFromText(t), vcc: fakeVcc });
+            expect(r.skipped).toBe(false);
+            expect(called).toBe(true);
+            expect(calledWith).toBe(p);
+            const row = db.prepare(`SELECT vcc_shrunk_path FROM sessions WHERE session_id = 'vcc-big'`)
+                .get();
+            expect(row.vcc_shrunk_path).toBe('/tmp/session-big.vcc-shrunk.jsonl');
+            db.close();
+        });
+        it('does not call compactToParallelFile and leaves vcc_shrunk_path untouched when the window is at or under the threshold', async () => {
+            const db = freshDb();
+            const p = makeTranscript(SIGNAL_TRANSCRIPT);
+            let called = false;
+            const fakeVcc = fakeVccWith(() => {
+                called = true;
+                return { ok: true, path: '/tmp/should-not-be-called.jsonl' };
+            });
+            await reflect(db, { session_id: 'vcc-small', transcript_path: p, project: 'proj' }, { extract: async () => [candA], embed: async (t) => vecFromText(t), vcc: fakeVcc });
+            expect(called).toBe(false);
+            const row = db.prepare(`SELECT vcc_shrunk_path FROM sessions WHERE session_id = 'vcc-small'`)
+                .get();
+            expect(row.vcc_shrunk_path).toBeNull();
+            db.close();
+        });
+        it('on a forced compactToParallelFile failure, leaves vcc_shrunk_path NULL, logs via console.error, and does not throw or change the normal return value', async () => {
+            const db = freshDb();
+            const p = makeTranscript(bigTranscript());
+            const fakeVcc = fakeVccWith(() => ({ ok: false, error: 'boom — forced compactToParallelFile failure' }));
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+            let r;
+            let escaped;
+            try {
+                r = await reflect(db, { session_id: 'vcc-fail', transcript_path: p, project: 'proj' }, { extract: async () => [candA], embed: async (t) => vecFromText(t), vcc: fakeVcc });
+                expect(escaped).toBeUndefined();
+                expect(r).toBeDefined();
+                expect(r.skipped).toBe(false);
+                expect(r.inserted).toBe(1);
+                expect(errorSpy).toHaveBeenCalled();
+                const row = db.prepare(`SELECT vcc_shrunk_path FROM sessions WHERE session_id = 'vcc-fail'`)
+                    .get();
+                expect(row.vcc_shrunk_path).toBeNull();
+            }
+            catch (err) {
+                escaped = err;
+                throw err;
+            }
+            finally {
+                errorSpy.mockRestore();
+                db.close();
+            }
+        });
     });
     describe('Gate 1 — pre-extraction secret redaction (D-005)', () => {
         // Strict-mode kinds per architecture.md's SECRET_PATTERNS table (mode: 'strict').

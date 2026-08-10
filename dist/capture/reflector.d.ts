@@ -11,7 +11,7 @@
  */
 import Database from 'better-sqlite3';
 import { type Extractor } from './extract.js';
-import { compactWindowLines, compactFileInPlace } from './vcc-bridge.js';
+import { compactWindowLines, compactFileInPlace, compactToParallelFile } from './vcc-bridge.js';
 import { redactSecrets } from './secrets.js';
 export interface ReflectOptions {
     session_id: string;
@@ -25,9 +25,14 @@ export interface ReflectDeps {
     vcc?: {
         compactWindowLines: typeof compactWindowLines;
         compactFileInPlace: typeof compactFileInPlace;
+        compactToParallelFile?: typeof compactToParallelFile;
     };
     redact?: typeof redactSecrets;
 }
+/** Threshold (bytes) above which reflect() triggers an end-of-run parallel-file
+ * compaction of the whole transcript, independent of the pre-extraction window
+ * compaction above. */
+export declare const VCC_PARALLEL_COMPACT_BYTES = 200000;
 export interface ReflectResult {
     session_id: string;
     project: string | null;

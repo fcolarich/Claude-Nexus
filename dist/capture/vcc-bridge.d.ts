@@ -10,6 +10,11 @@ export interface CompactResult {
     postTokens?: number;
     error?: string;
 }
+/** Suffix used for the sibling shrunk-file written by compactToParallelFile. */
+export declare const VCC_SHRUNK_SUFFIX = ".vcc-shrunk.jsonl";
+export type ParallelCompactResult = CompactResult & {
+    path?: string;
+};
 /** Compacts a raw JSONL window (array of raw line strings, not yet joined) via a
  * throwaway temp input file. Used by the pre-extraction call site — the window is
  * a slice of the transcript, not the whole file, so it cannot be run through the
@@ -21,4 +26,13 @@ export declare function compactWindowLines(rawLines: string[], opts?: CompactOpt
  * the cold-session backfill's TS-callable counterpart (none needed — backfill is
  * pure Python, see ColdSessionBackfill). */
 export declare function compactFileInPlace(jsonlPath: string, opts?: CompactOptions): CompactResult;
+/** Returns the sibling shrunk-file path for jsonlPath. Pure — no I/O. */
+export declare function parallelShrunkPath(jsonlPath: string): string;
+/** Compacts a whole JSONL file to a sibling `.vcc-shrunk.jsonl` file, never touching
+ * jsonlPath itself. Reuses compactFileInPlace's runCli/temp-file flow, but renames
+ * the temp output to parallelShrunkPath(jsonlPath) instead of over jsonlPath. There
+ * is deliberately no destination parameter — the sibling path is always derived. */
+export declare function compactToParallelFile(jsonlPath: string, opts?: {
+    timeoutMs?: number;
+}): ParallelCompactResult;
 //# sourceMappingURL=vcc-bridge.d.ts.map

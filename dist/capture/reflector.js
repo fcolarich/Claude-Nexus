@@ -17,8 +17,13 @@ import { readTranscriptWindow } from './transcript.js';
 import { classifyOrigin } from './origin.js';
 import { extractMemories, ADR_REF_RE } from './extract.js';
 import { readDecisionIndex } from './docspine.js';
-import { compactWindowLines, compactFileInPlace } from './vcc-bridge.js';
+import { compactWindowLines, compactFileInPlace, compactToParallelFile } from './vcc-bridge.js';
 import { redactSecrets, redactCandidate } from './secrets.js';
+/** Threshold (bytes) above which reflect() triggers an end-of-run parallel-file
+ * compaction of the whole transcript, independent of the pre-extraction window
+ * compaction above. */
+export const VCC_PARALLEL_COMPACT_BYTES = 200_000;
+const VCC_PARALLEL_COMPACT_TIMEOUT_MS = 15_000;
 /**
  * Fail-open wrapper around an injected `redactSecrets`-shaped function
  * (D-009). Never throws — on catch, returns the input text unmodified and
@@ -56,7 +61,7 @@ function isReferenceUpgrade(candidate, matched, validIds) {
 export async function reflect(db, opts, deps = {}) {
     const extract = deps.extract ?? extractMemories;
     const embed = deps.embed ?? generateEmbedding;
-    const vcc = deps.vcc ?? { compactWindowLines, compactFileInPlace };
+    const vcc = deps.vcc ?? { compactWindowLines, compactFileInPlace, compactToParallelFile };
     const cfg = getNexusConfig().capture;
     const allRedactions = [];
     // Origin gate. Runs before the session row is created and before the
@@ -225,6 +230,26 @@ export async function reflect(db, opts, deps = {}) {
     // } else {
     //   console.error('[claude-nexus] vcc post-extraction shrink failed, vcc_shrunk_at left unset:', shrink.error);
     // }
+    // End-of-reflect() parallel-compact trigger. Fail-open: never throws, never
+    // changes reflect()'s return value. On failure, leaves vcc_shrunk_path at
+    // whatever value it already had (a failed re-compaction must not erase a
+    // previously valid shrunk-copy pointer from an earlier successful run).
+    try {
+        const rawBytes = Buffer.byteLength(window.rawLines.join('\n'), 'utf-8');
+        if (window.rawLines.length > 0 && opts.transcript_path && rawBytes > VCC_PARALLEL_COMPACT_BYTES) {
+            const parallel = vcc.compactToParallelFile?.(opts.transcript_path, { timeoutMs: VCC_PARALLEL_COMPACT_TIMEOUT_MS });
+            if (parallel?.ok && parallel.path) {
+                db.prepare(`UPDATE sessions SET vcc_shrunk_path = ? WHERE session_id = ?`)
+                    .run(parallel.path, opts.session_id);
+            }
+            else if (parallel && !parallel.ok) {
+                console.error('[claude-nexus] vcc parallel-file compaction failed, vcc_shrunk_path left untouched:', parallel.error);
+            }
+        }
+    }
+    catch (err) {
+        console.error('[claude-nexus] vcc parallel-file compaction trigger threw, vcc_shrunk_path left untouched:', err);
+    }
     return {
         session_id: opts.session_id,
         project: opts.project,

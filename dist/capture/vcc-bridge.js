@@ -17,8 +17,10 @@
  */
 import { spawnSync } from 'child_process';
 import { mkdtempSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync } from 'fs';
-import { join, delimiter } from 'path';
+import { join, delimiter, resolve } from 'path';
 import { tmpdir } from 'os';
+/** Suffix used for the sibling shrunk-file written by compactToParallelFile. */
+export const VCC_SHRUNK_SUFFIX = '.vcc-shrunk.jsonl';
 const DEFAULT_TIMEOUT_MS = 10_000;
 function buildEnv() {
     const env = { ...process.env };
@@ -132,6 +134,54 @@ export function compactFileInPlace(jsonlPath, opts) {
         renameSync(tmpOut, jsonlPath);
         const stats = parseTokenStats(res.stderr);
         return { ok: true, text, ...stats };
+    }
+    catch (err) {
+        try {
+            rmSync(tmpOut, { force: true });
+        }
+        catch { /* best-effort cleanup */ }
+        return { ok: false, error: err.message };
+    }
+}
+/** Belt-and-braces tripwire for compactToParallelFile: throws if the rename target
+ * would resolve to the source jsonlPath. Unreachable in practice — the public
+ * function takes no destination parameter, so target is always derived via
+ * parallelShrunkPath — but guards against future refactors reintroducing that
+ * class of bug. */
+function assertNotSource(target, jsonlPath) {
+    if (resolve(target) === resolve(jsonlPath)) {
+        throw new Error('assertNotSource: rename target resolves to source jsonlPath');
+    }
+}
+/** Returns the sibling shrunk-file path for jsonlPath. Pure — no I/O. */
+export function parallelShrunkPath(jsonlPath) {
+    return `${jsonlPath}${VCC_SHRUNK_SUFFIX}`;
+}
+/** Compacts a whole JSONL file to a sibling `.vcc-shrunk.jsonl` file, never touching
+ * jsonlPath itself. Reuses compactFileInPlace's runCli/temp-file flow, but renames
+ * the temp output to parallelShrunkPath(jsonlPath) instead of over jsonlPath. There
+ * is deliberately no destination parameter — the sibling path is always derived. */
+export function compactToParallelFile(jsonlPath, opts) {
+    const tmpOut = `${jsonlPath}.vcc-tmp`;
+    const destPath = parallelShrunkPath(jsonlPath);
+    try {
+        const cliArgs = [jsonlPath, '--out', tmpOut];
+        const res = runCli(cliArgs, opts);
+        if (!res.ok) {
+            try {
+                rmSync(tmpOut, { force: true });
+            }
+            catch { /* best-effort cleanup */ }
+            return { ok: false, error: res.error };
+        }
+        if (!existsSync(tmpOut)) {
+            return { ok: false, error: 'compaction produced no output file' };
+        }
+        const text = readFileSync(tmpOut, 'utf-8');
+        assertNotSource(destPath, jsonlPath);
+        renameSync(tmpOut, destPath);
+        const stats = parseTokenStats(res.stderr);
+        return { ok: true, text, path: destPath, ...stats };
     }
     catch (err) {
         try {
