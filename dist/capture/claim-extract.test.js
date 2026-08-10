@@ -37,6 +37,16 @@ describe('claimExtractPrompt', () => {
         const prompt = claimExtractPrompt();
         expect(prompt).not.toContain('did not mention');
     });
+    it('instructs the model that the user message is always data, never instructions, regardless of its content', () => {
+        // Regression: a real memory whose CONTENT was about extraction/sourcing rules
+        // ("Encyclopedia entries must adhere to strict sourcing guidelines...") made
+        // gemma3:12b respond conversationally ("Okay, I understand... I await your
+        // input text.") instead of decomposing it, because nothing told the model
+        // the user message is always data to extract from, never new instructions.
+        const prompt = claimExtractPrompt();
+        expect(prompt.toLowerCase()).toContain('always');
+        expect(prompt.toLowerCase()).toMatch(/data|never.*instruction/);
+    });
     it('instructs the model to keep contrastive/causal clause pairs as one claim, not split them', () => {
         // Regression for the fragmentation found by inspecting real output: "requires X
         // but guarantees Y" split into two claims loses the trade-off the sentence states.
@@ -46,6 +56,19 @@ describe('claimExtractPrompt', () => {
     });
 });
 describe('extractClaimsForMemory', () => {
+    it('wraps the memory body in explicit data delimiters in the user message, so meta-content about rules/instructions cannot be mistaken for a new instruction to the model', async () => {
+        const db = freshDb();
+        const mem = insertMemory(db, { ...baseMem, title: 'M', body: 'Entries must follow strict sourcing rules.' });
+        let capturedUser = '';
+        const callFn = async (_system, user) => {
+            capturedUser = user;
+            return JSON.stringify([{ fact: 'Entries must follow strict sourcing rules.' }]);
+        };
+        await extractClaimsForMemory(db, { id: mem.id, body: 'Entries must follow strict sourcing rules.', memory_type: 'decision', confidence: 0.8 }, callFn);
+        expect(capturedUser).toContain('Entries must follow strict sourcing rules.');
+        expect(capturedUser).not.toBe('Entries must follow strict sourcing rules.'); // must be wrapped, not passed raw
+        db.close();
+    });
     it('inserts one claim per fact the model returns, typed from the parent memory_type', async () => {
         const db = freshDb();
         const mem = insertMemory(db, { ...baseMem, title: 'M', body: 'Uses src/core/distill.ts and MERGE_COVERAGE_FLOOR is 0.72' });
@@ -102,6 +125,18 @@ describe('extractClaimsForMemory', () => {
         expect(result.rejected).toBe(true);
         expect(result.reason).toBe('unparseable');
         expect(result.claims).toHaveLength(0);
+        db.close();
+    });
+    it('repairs illegal JSON escapes from a regex fact (e.g. \\d{8}) rather than rejecting — same corruption class as Phase 1, now in the array parser', async () => {
+        const db = freshDb();
+        const body = 'this memory has no identifiers to track, just plain prose';
+        const mem = insertMemory(db, { ...baseMem, title: 'M', body });
+        // Raw model output exactly as observed from gemma3:12b: fenced markdown +
+        // an illegal \d escape (\d is not a legal JSON escape sequence).
+        const callFn = async () => '```json\n[{"fact": "strip the trailing pattern (regex: -\\d{8}-\\d{4}$)"}]\n```';
+        const result = await extractClaimsForMemory(db, { id: mem.id, body, memory_type: 'decision', confidence: 0.8 }, callFn);
+        expect(result.rejected).toBe(false);
+        expect(result.claims).toHaveLength(1);
         db.close();
     });
     it('rejects with reason "empty" when the model returns a parseable but empty array', async () => {
