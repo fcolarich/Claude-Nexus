@@ -110,6 +110,7 @@ describe('extractClaimsForMemory', () => {
 
 		const result = await extractClaimsForMemory(db, { id: mem.id, body: 'Uses src/core/distill.ts and MERGE_COVERAGE_FLOOR', memory_type: 'decision', confidence: 0.8 }, callFn);
 		expect(result.rejected).toBe(true);
+		expect(result.reason).toBe('missing-identifiers');
 		expect(result.claims).toHaveLength(0);
 		expect(listClaimsForMemory(db, mem.id)).toHaveLength(0);
 		db.close();
@@ -122,7 +123,19 @@ describe('extractClaimsForMemory', () => {
 
 		const result = await extractClaimsForMemory(db, { id: mem.id, body: 'plain prose', memory_type: 'decision', confidence: 0.8 }, callFn);
 		expect(result.rejected).toBe(true);
+		expect(result.reason).toBe('unparseable');
 		expect(result.claims).toHaveLength(0);
+		db.close();
+	});
+
+	it('rejects with reason "empty" when the model returns a parseable but empty array', async () => {
+		const db = freshDb();
+		const mem = insertMemory(db, { ...baseMem, title: 'M', body: 'plain prose' });
+		const callFn = async () => '[]';
+
+		const result = await extractClaimsForMemory(db, { id: mem.id, body: 'plain prose', memory_type: 'decision', confidence: 0.8 }, callFn);
+		expect(result.rejected).toBe(true);
+		expect(result.reason).toBe('empty');
 		db.close();
 	});
 });

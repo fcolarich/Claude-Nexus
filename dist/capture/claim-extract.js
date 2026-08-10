@@ -76,17 +76,17 @@ export async function extractClaimsForMemory(db, memory, callFn) {
         const raw = await callFn(claimExtractPrompt(attempt > 0 ? missing : undefined), memory.body);
         const arr = firstJsonArray(raw);
         if (!arr)
-            return { claims: [], rejected: true };
+            return { claims: [], rejected: true, reason: 'unparseable' };
         facts = arr
             .filter((item) => typeof item === 'object' && item !== null && typeof item.fact === 'string')
             .map((item) => item.fact);
         if (facts.length === 0)
-            return { claims: [], rejected: true };
+            return { claims: [], rejected: true, reason: 'empty' };
         missing = missingIdentifiers(memory.body, facts);
         if (missing.length === 0)
             break;
         if (attempt === MAX_RETRIES)
-            return { claims: [], rejected: true };
+            return { claims: [], rejected: true, reason: 'missing-identifiers' };
     }
     const inserted = [];
     for (const fact of facts) {

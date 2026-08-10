@@ -44,6 +44,7 @@ export interface ClaimExtractResult {
         fact: string;
     }[];
     rejected: boolean;
+    reason?: 'unparseable' | 'empty' | 'missing-identifiers';
 }
 /**
  * Extract claims for one memory, verify identifier coverage, retry with the

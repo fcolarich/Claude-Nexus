@@ -46,6 +46,7 @@ const insertMirror = workDb.prepare(`
 for (const r of rows) insertMirror.run(r);
 
 const ollamaCall = async (system, user) => {
+	try {
 	const res = await fetch('http://127.0.0.1:11434/v1/chat/completions', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -61,18 +62,24 @@ const ollamaCall = async (system, user) => {
 	if (!res.ok) return '';
 	const data = await res.json();
 	return data?.choices?.[0]?.message?.content ?? '';
+	} catch (err) {
+		console.warn(`[ollama] call failed: ${err.message}`);
+		return "";
+	}
 };
 
 let totalClaims = 0;
 let rejected = 0;
 let totalSourceIdentifiers = 0;
 let totalCoveredIdentifiers = 0;
+const rejectReasons = {};
 
 for (const m of rows) {
 	const result = await extractClaimsForMemory(workDb, m, ollamaCall);
 	if (result.rejected) {
 		rejected++;
-		console.log(`REJECT [${m.memory_type}] ${m.title}`);
+		rejectReasons[result.reason] = (rejectReasons[result.reason] ?? 0) + 1;
+		console.log(`REJECT [${result.reason}] [${m.memory_type}] ${m.title}`);
 		continue;
 	}
 	totalClaims += result.claims.length;
@@ -86,6 +93,7 @@ for (const m of rows) {
 
 console.log(`\nsample: ${rows.length} memories`);
 console.log(`  claims: ${totalClaims} total, ${(totalClaims / Math.max(1, rows.length - rejected)).toFixed(1)} avg per accepted memory`);
-console.log(`  rejected: ${rejected}/${rows.length} (${((rejected / rows.length) * 100).toFixed(1)}%)`);
+console.log(`  rejected: ${rejected}/${rows.length} (${((rejected / rows.length) * 100).toFixed(1)}%) -- ${JSON.stringify(rejectReasons)}`);
+console.log(`  projected corpus claims (extrapolated * 4550 memories): ${Math.round((totalClaims / Math.max(1, rows.length - rejected)) * 4550)}`);
 console.log(`  identifier coverage: ${totalCoveredIdentifiers}/${totalSourceIdentifiers} (${totalSourceIdentifiers ? ((totalCoveredIdentifiers / totalSourceIdentifiers) * 100).toFixed(1) : '0'}%)`);
 workDb.close();

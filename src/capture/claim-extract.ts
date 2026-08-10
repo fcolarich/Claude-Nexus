@@ -72,6 +72,7 @@ export interface ClaimExtractSourceMemory {
 export interface ClaimExtractResult {
 	claims: { id: string; claim_type: MemoryType; fact: string }[];
 	rejected: boolean;
+	reason?: 'unparseable' | 'empty' | 'missing-identifiers';
 }
 
 /**
@@ -91,16 +92,16 @@ export async function extractClaimsForMemory(
 	for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
 		const raw = await callFn(claimExtractPrompt(attempt > 0 ? missing : undefined), memory.body);
 		const arr = firstJsonArray(raw);
-		if (!arr) return { claims: [], rejected: true };
+		if (!arr) return { claims: [], rejected: true, reason: 'unparseable' };
 
 		facts = arr
 			.filter((item): item is { fact: string } => typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).fact === 'string')
 			.map((item) => item.fact);
-		if (facts.length === 0) return { claims: [], rejected: true };
+		if (facts.length === 0) return { claims: [], rejected: true, reason: 'empty' };
 
 		missing = missingIdentifiers(memory.body, facts);
 		if (missing.length === 0) break;
-		if (attempt === MAX_RETRIES) return { claims: [], rejected: true };
+		if (attempt === MAX_RETRIES) return { claims: [], rejected: true, reason: 'missing-identifiers' };
 	}
 
 	const inserted: { id: string; claim_type: MemoryType; fact: string }[] = [];
