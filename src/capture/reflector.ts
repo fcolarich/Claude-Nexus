@@ -57,6 +57,7 @@ export interface ReflectResult {
   inserted: number;
   merged: number;
   upgraded: number;
+  touchedIds: string[]; // every memory id inserted/reconfirmed/superseded this run — for scoped export
   skipped: boolean;     // Observer gate skipped the LLM call
   excluded_reason?: string | null;   // set when the origin gate refused the session
   redactions?: number;               // raw redacted-span count across both gates (D-007/D-008)
@@ -121,7 +122,7 @@ export async function reflect(
   if (origin.excluded) {
     return {
       session_id: opts.session_id, project: opts.project, newLines: 0,
-      extracted: 0, inserted: 0, merged: 0, upgraded: 0, skipped: true,
+      extracted: 0, inserted: 0, merged: 0, upgraded: 0, touchedIds: [], skipped: true,
       excluded_reason: origin.reason,
     };
   }
@@ -150,7 +151,7 @@ export async function reflect(
   // Observer gate — nothing worth an LLM call. Advance past these lines anyway.
   if (window.newLines === 0 || !window.hasSignal) {
     advanceCursor(window.totalLines);
-    return { session_id: opts.session_id, project: opts.project, newLines: window.newLines, extracted: 0, inserted: 0, merged: 0, upgraded: 0, skipped: true };
+    return { session_id: opts.session_id, project: opts.project, newLines: window.newLines, extracted: 0, inserted: 0, merged: 0, upgraded: 0, touchedIds: [], skipped: true };
   }
 
   // Pre-extraction compaction — feed the Haiku extractor compacted text when
@@ -190,6 +191,7 @@ export async function reflect(
   let inserted = 0;
   let merged = 0;
   let upgraded = 0;
+  const touchedIds: string[] = [];
 
   for (const c of candidates) {
     const memProject = c.scope === 'project' ? opts.project : null;
@@ -235,11 +237,13 @@ export async function reflect(
             // supersede the decision row above; just reconfirm the reference.
             touchMemory(db, res!.id);
           }
+          touchedIds.push(res!.id, sim.memory.id);
           upgraded++;
           continue;
         }
 
         touchMemory(db, sim.memory.id);
+        touchedIds.push(sim.memory.id);
         merged++;
         continue;
       }
@@ -272,6 +276,7 @@ export async function reflect(
       touchMemory(db, res.id);
       merged++;
     }
+    touchedIds.push(res.id);
   }
 
   advanceCursor(window.totalLines);
@@ -324,6 +329,7 @@ export async function reflect(
     inserted,
     merged,
     upgraded,
+    touchedIds,
     skipped: false,
     redactions: allRedactions.length,
     redaction_kinds: [...new Set(allRedactions)].sort(),

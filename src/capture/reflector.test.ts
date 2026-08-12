@@ -102,6 +102,17 @@ describe('reflect', () => {
     db.close();
   });
 
+  it('returns touchedIds naming every inserted/merged memory, for scoped export', async () => {
+    const db = freshDb();
+    const p = makeTranscript(SIGNAL_TRANSCRIPT);
+    const r = await reflect(db, { session_id: 's1b', transcript_path: p, project: 'proj' },
+      { extract: async () => [candA, candB], embed: async (t) => vecFromText(t) });
+
+    const ids = (db.prepare(`SELECT id FROM memories`).all() as { id: string }[]).map((row) => row.id).sort();
+    expect(r.touchedIds.slice().sort()).toEqual(ids);
+    db.close();
+  });
+
   it('skips a trivial window via the Observer gate', async () => {
     const db = freshDb();
     const p = makeTranscript([userMsg('hi')]);
