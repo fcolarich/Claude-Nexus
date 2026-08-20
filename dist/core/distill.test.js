@@ -57,6 +57,39 @@ describe('distillMemories', () => {
         db.close();
     });
 });
+describe('distillMemories — contradictionGuardFn (claim-level cluster-membership veto)', () => {
+    it('with no guard supplied, clusters purely on embedding similarity (unchanged default behavior)', async () => {
+        const db = freshDb();
+        insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+        insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+        const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+        expect(r.clusters).toBe(1);
+        expect(r.merged).toBe(2);
+        db.close();
+    });
+    it('excludes a related candidate the guard flags as "contradicts", leaving it out of the cluster', async () => {
+        const db = freshDb();
+        insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+        insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+        const guard = async () => 'contradicts';
+        const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge, guard);
+        // The only related candidate conflicted -> no safe cluster to build, both memories stay live.
+        expect(r.clusters).toBe(0);
+        expect(r.merged).toBe(0);
+        expect(liveCount(db)).toBe(2);
+        db.close();
+    });
+    it('still clusters when the guard returns "confirmed" or "insufficient" (only "contradicts" excludes)', async () => {
+        const db = freshDb();
+        insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+        insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+        const guard = async () => 'insufficient';
+        const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge, guard);
+        expect(r.clusters).toBe(1);
+        expect(r.merged).toBe(2);
+        db.close();
+    });
+});
 describe('distillMemories — Phase 1: identifier set-union on merge', () => {
     it('merged memory carries every source identifier even when the merge prose drops them', async () => {
         const db = freshDb();

@@ -24,6 +24,8 @@ import { flagStaleMemories, effectiveConfidence } from '../core/decay.js';
 import { getNexusConfig } from '../core/config.js';
 import { verifyMemory, recordFeedback, embedMemory } from '../core/memories.js';
 import { consolidateMemories } from '../core/consolidate.js';
+import { confirmMemoryDuplicate } from '../core/memory-dedup-confirm.js';
+import { callModel } from '../core/llm.js';
 import { distillMemories } from '../core/distill.js';
 import type { Atom, AtomLink, Session } from '../core/types.js';
 
@@ -118,12 +120,12 @@ app.post('/api/memories/:id/feedback', (req, res) => {
   res.json({ ok: recordFeedback(db, req.params.id, !!(req.body?.helped)) });
 });
 app.post('/api/consolidate', (_req, res) => {
-  consolidateMemories(db)
+  consolidateMemories(db, undefined, undefined, (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel))
     .then(r => res.json(r))
     .catch(err => res.status(500).json({ error: (err as Error).message }));
 });
 app.post('/api/distill', (_req, res) => {
-  distillMemories(db)
+  distillMemories(db, undefined, undefined, callModel, (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel))
     .then(r => res.json(r))
     .catch(err => res.status(500).json({ error: (err as Error).message }));
 });

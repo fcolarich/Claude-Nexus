@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Autonomous memory engine for Claude Code. Watches sessions, distills durable typed memories via Haiku, injects the highest-value ones back at session start. Ships an MCP server, a REST API, a Svelte 5 dashboard, and a CLI.
+Autonomous memory engine for Claude Code. Watches sessions, distills durable typed memories via Haiku, injects the highest-value ones back at session start. Ships an MCP server, a REST API, a Svelte 5 dashboard, and a CLI. Memory-level dedup/distill decisions (`consolidateMemories`, `distillMemories`) are confirmed by an opt-in claim-level gate (`confirmMemoryDuplicate`) that lazily decomposes candidate memories into atomic claims and vetoes on contradiction or insufficient claim overlap — claims stay scoped to this dedup role, not retrieval (ADR-20260820230137-dc, DDR-20260820230103-b4).
 
 Give Claude Code persistent cross-session memory without manual note-taking — capture, rank, decay, recall.
 
@@ -80,5 +80,13 @@ Or run `/update-project-docs` after a change and let the doc-sync agent route it
 | `src/capture/export.ts` | Exports memories as markdown mirror files; prunes stale project export buckets with no live memories |
 | `src/capture/project-migrate.ts` | Merges fragmented project buckets onto their git-root-resolved canonical slug (ADR-013) |
 | `src/capture/prompt-runner.ts` | UserPromptSubmit hook — embeds prompt, injects relevance-floored recall (top 3-5, per-session dedup) |
+| `src/core/identifiers.ts` | Deterministic code-like identifier extraction — never lost across merges, never touched by a model |
+| `src/core/claims.ts` | Claims data layer — immutable claim CRUD (content-addressed ids, `markClaimInvalid`, `embedClaim`) |
+| `src/core/claim-dedup.ts` | Claim dedup cascade — similarity bands, embedding+fuzzy blend, identifier-conflict veto |
+| `src/core/claim-contradiction.ts` | Deterministic numeric-contradiction guard between two claim facts |
+| `src/core/consolidate-claims.ts` | `consolidateClaims` — dedupe-and-link orchestration over the live claims corpus |
+| `src/core/claims-sweep.ts` | Resumable claim-decomposition sweep core, mirrors `distill.ts`'s cursor/chunk pattern |
+| `src/core/memory-dedup-confirm.ts` | `confirmMemoryDuplicate` — claim-level confirmation gate for memory dedup/distill (ADR-20260820230137-dc) |
+| `src/capture/claim-extract.ts` | `extractClaimsForMemory` — extract-then-verify claim decomposition of one memory |
 | `extraction_models.yaml` | Runtime config: embedding model, extraction model, recall budget, capture thresholds |
 | `package.json` | Project manifest, scripts, dependencies |

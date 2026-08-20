@@ -19,8 +19,42 @@
 
 import Database from 'better-sqlite3';
 import type { MemoryType } from './types.js';
+import { extractIdentifiers } from './identifiers.js';
 
 export type DedupBand = 'auto_merge' | 'flag' | 'new';
+
+/**
+ * Identifier-conflict veto. Found by running consolidateClaims against the
+ * live corpus: short, template-like claims sharing nearly all sentence
+ * structure but naming a different symbol/file/entity ("doc-sync regenerates
+ * notes.md" vs "doc-sync regenerates design.md") scored high on
+ * combinedSimilarity because the shared boilerplate dominates both fuzzy and
+ * embedding similarity — the identifiers that actually distinguish them are
+ * a small fraction of the text. Mirrors detectNumericContradiction's veto
+ * shape (runs before similarity, no score can override it), but for named
+ * entities instead of numeric values.
+ *
+ * Vetoes on ANY set difference, not just zero overlap — measured on the live
+ * corpus's 39 flagged pairs: zero-overlap only caught 2/39 (most real false
+ * positives share SOME identifiers, e.g. two facts both naming
+ * ImpactCollisionSystem but differing in which method they synchronize via),
+ * while any-difference caught 11/39 (9 real false positives, 2 false
+ * negatives — a stray extra identifier from unrelated wording, and a pure
+ * case-sensitivity difference). Accepted trade-off: a missed duplicate is
+ * silent and harmless (same_as is a non-destructive review hint), a wrong
+ * same_as edge actively asserts two different facts are the same thing.
+ *
+ * Only vetoes when BOTH facts carry identifiers — if either has none there's
+ * nothing to disagree on, so this falls through to normal similarity scoring.
+ */
+export function identifiersDisjoint(factA: string, factB: string): boolean {
+	const idsA = extractIdentifiers(factA);
+	const idsB = extractIdentifiers(factB);
+	if (idsA.length === 0 || idsB.length === 0) return false;
+	if (idsA.length !== idsB.length) return true;
+	const setB = new Set(idsB);
+	return !idsA.every((id) => setB.has(id));
+}
 
 // Starting thresholds per source-33 (Neo4j Agent Memory): "start at 0.98/0.92
 // and relax only after validating quality." Calibration on the real corpus

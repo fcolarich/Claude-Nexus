@@ -297,7 +297,7 @@ function relatedMemories(db, queryVec, self, highExclusive) {
     }
     return out;
 }
-export async function distillMemories(db, opts, embedFn = generateEmbedding, callFn = callModel) {
+export async function distillMemories(db, opts, embedFn = generateEmbedding, callFn = callModel, contradictionGuardFn) {
     const clampedLimit = normalizeLimit(opts?.limit);
     const scope = resolveScope(db, opts);
     const since = opts?.since;
@@ -365,11 +365,24 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
             continue;
         }
         consecutiveEmbedFailures = 0;
-        const related = relatedMemories(db, normalize(vec), m, dedupThreshold)
+        let related = relatedMemories(db, normalize(vec), m, dedupThreshold)
             .filter(r => !assigned.has(r.memory.id));
         if (related.length === 0) {
             assigned.add(m.id);
             continue;
+        }
+        if (contradictionGuardFn) {
+            const safe = [];
+            for (const r of related) {
+                const verdict = await contradictionGuardFn(db, m, r.memory);
+                if (verdict !== 'contradicts')
+                    safe.push(r);
+            }
+            related = safe;
+            if (related.length === 0) {
+                assigned.add(m.id);
+                continue;
+            } // every candidate conflicted — nothing safe to merge with
         }
         const cluster = [m, ...related.map(r => r.memory)].slice(0, MAX_CLUSTER);
         for (const c of cluster)

@@ -24,7 +24,7 @@
 import { generateEmbedding } from './embeddings.js';
 import { embedClaim, markClaimInvalid } from './claims.js';
 import { detectNumericContradiction, writeContradictionLinks } from './claim-contradiction.js';
-import { classifyDedupBand, fuzzyStringSimilarity, findDedupCandidates, combinedSimilarity, claimCosineSimilarity, } from './claim-dedup.js';
+import { classifyDedupBand, fuzzyStringSimilarity, findDedupCandidates, combinedSimilarity, claimCosineSimilarity, identifiersDisjoint, } from './claim-dedup.js';
 function writeSameAsLink(db, claimIdA, claimIdB) {
     const link = db.prepare(`INSERT OR IGNORE INTO memory_links (source_id, target_id, link_type, confidence) VALUES (?, ?, 'same_as', ?)`);
     link.run(claimIdA, claimIdB, 1.0);
@@ -65,6 +65,8 @@ export async function consolidateClaims(db, opts, embedFn = generateEmbedding) {
                 result.contradictions++;
                 continue;
             }
+            if (identifiersDisjoint(claim.fact, candidate.fact))
+                continue;
             const fuzzy = fuzzyStringSimilarity(claim.fact, candidate.fact);
             const embeddingSim = claimCosineSimilarity(db, claim.id, candidate.id);
             const combined = combinedSimilarity(embeddingSim, fuzzy);

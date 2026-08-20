@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { openDatabase, initializeSchema } from './database.js';
 import { insertMemory } from './memories.js';
 import { insertClaim, embedClaim } from './claims.js';
-import { classifyDedupBand, fuzzyStringSimilarity, findDedupCandidates, combinedSimilarity, loadStoredClaimVector, claimCosineSimilarity } from './claim-dedup.js';
+import { classifyDedupBand, fuzzyStringSimilarity, findDedupCandidates, combinedSimilarity, loadStoredClaimVector, claimCosineSimilarity, identifiersDisjoint } from './claim-dedup.js';
 function freshDb() {
     const db = openDatabase(':memory:');
     initializeSchema(db);
@@ -146,6 +146,40 @@ describe('findDedupCandidates', () => {
         const candidates = findDedupCandidates(db, { memory_id: mA.id, claim_type: 'decision', fact: 'in proj-a', id: queryId });
         expect(candidates.map((c) => c.id)).not.toContain(otherProjectId);
         db.close();
+    });
+});
+describe('identifiersDisjoint', () => {
+    // Real false positives found by running consolidateClaims against the live
+    // corpus (1,133-memory subset): short, template-like claims sharing almost
+    // all sentence structure but naming a different symbol/file/entity got
+    // flagged same_as because boilerplate wording dominates embedding+fuzzy
+    // similarity. Mirrors detectNumericContradiction's veto shape, but for
+    // named entities instead of numeric values.
+    //
+    // Vetoes on ANY identifier-set difference, not just zero overlap: measured
+    // against the same 39 real flagged pairs, zero-overlap caught 2/39 while
+    // any-difference caught 11/39 (9 real false positives, 2 acceptable false
+    // negatives — see claim-dedup.ts's docstring for the trade-off rationale).
+    it('is true when both facts carry identifiers and the sets share none', () => {
+        expect(identifiersDisjoint('The doc-sync system regenerates notes.md.', 'The doc-sync system regenerates design.md.')).toBe(true);
+    });
+    it('is true for two different function names embedded in otherwise-identical sentences', () => {
+        expect(identifiersDisjoint('The GetTreeBaseGustWind function needs guarding against numeric overflow using max(period, 1e-5f).', 'The GetBaseGustWind function needs guarding against numeric overflow using max(period, 1e-5f).')).toBe(true);
+    });
+    it('is true when the facts share some identifiers but differ on the one that matters', () => {
+        // Real case from the live corpus: same three system names, different
+        // method they synchronize via — sharing most identifiers doesn't make
+        // these the same fact.
+        expect(identifiersDisjoint('The `ImpactCollisionSystem`, `PaintCommandBufferSystem`, and `AlphaTextureUploadSystem` synchronize via `ApplyStampJob.Run()`.', 'The `ImpactCollisionSystem`, `PaintCommandBufferSystem`, and `AlphaTextureUploadSystem` synchronize via `ApplyChanges()`.')).toBe(true);
+    });
+    it('is false when the facts have exactly the same identifier set', () => {
+        expect(identifiersDisjoint('src/core/distill.ts computes identifiers.', 'src/core/distill.ts also computes identifiers before insertMemory.')).toBe(false);
+    });
+    it('is false when neither fact has any identifiers (nothing to veto on)', () => {
+        expect(identifiersDisjoint('Substantive coverage means multiple sentences or a dedicated section.', 'Substantive coverage means multiple sentences or a dedicated section within the source.')).toBe(false);
+    });
+    it('is false when only one fact carries identifiers', () => {
+        expect(identifiersDisjoint('src/core/distill.ts computes mergedIdentifiers.', 'Substantive coverage means multiple sentences or a dedicated section.')).toBe(false);
     });
 });
 //# sourceMappingURL=claim-dedup.test.js.map

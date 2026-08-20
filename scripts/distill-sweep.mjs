@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import { dirname, join } from 'node:path';
 import { openDatabase, initializeSchema } from '../dist/core/database.js';
 import { distillMemories, mergePrompt } from '../dist/core/distill.js';
+import { confirmMemoryDuplicate } from '../dist/core/memory-dedup-confirm.js';
 import { callModel } from '../dist/core/llm.js';
 
 const args = process.argv.slice(2);
@@ -242,7 +243,10 @@ for (let chunk = 1; chunk <= maxChunks; chunk++) {
 	await waitForBackend();
 	if (outOfTime()) { stopReason = `time budget reached (${maxRuntimeMin} min) — stopping at a chunk boundary`; break; }
 	const t0 = Date.now();
-	const r = await distillMemories(db, { project, limit, dryRun }, undefined, callFn);
+	const r = await distillMemories(
+		db, { project, limit, dryRun }, undefined, callFn,
+		(db, a, b) => confirmMemoryDuplicate(db, a, b, callFn) // same model as distillation itself, per convention
+	);
 	const secs = ((Date.now() - t0) / 1000).toFixed(1);
 
 	totals.chunks++;

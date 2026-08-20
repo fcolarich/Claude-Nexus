@@ -32,6 +32,8 @@ import { recallMemories } from '../core/recall.js';
 import { verifyMemory, recordFeedback, insertMemory, embedMemory, rememberBatch, getMemory } from '../core/memories.js';
 import type { MemoryType, DecayClass } from '../core/types.js';
 import { consolidateMemories } from '../core/consolidate.js';
+import { confirmMemoryDuplicate } from '../core/memory-dedup-confirm.js';
+import { callModel } from '../core/llm.js';
 import { distillMemories } from '../core/distill.js';
 import { backfillSessions } from '../capture/backfill.js';
 
@@ -483,7 +485,7 @@ server.tool(
   'Run a memory cleanup sweep: backfill missing embeddings, prune rejected memories, merge near-duplicates, govern confidence by help-rate trend, and surface candidate contradictions. Safe — decayed memories are never deleted, only superseded duplicates and rejected memories.',
   {},
   async () => {
-    const r = await consolidateMemories(db);
+    const r = await consolidateMemories(db, undefined, undefined, (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel));
     return {
       content: [{
         type: 'text',
@@ -506,7 +508,10 @@ server.tool(
     since:   z.string().optional().describe('Timestamp cutoff ("YYYY-MM-DD HH:MM:SS" UTC). Re-opens memories already distilled before it — use to start a fresh sweep over a scope already swept once. Omit to only examine never-distilled memories.'),
   },
   async ({ project, cwd, limit, dry_run, since }) => {
-    const r = await distillMemories(db, { project, cwd, limit, dryRun: dry_run, since });
+    const r = await distillMemories(
+      db, { project, cwd, limit, dryRun: dry_run, since }, undefined, callModel,
+      (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel)
+    );
     const remainingNote = r.eligibleRemaining > 0
       ? ` ${r.eligibleRemaining} memories under this scope have not been examined yet — re-invoke to continue (even if this run found 0 clusters).`
       : ' Sweep complete for this scope — nothing left un-examined.';

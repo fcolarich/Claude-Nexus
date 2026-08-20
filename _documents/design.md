@@ -12,3 +12,4 @@
 | [DDR-005](decisions/ddr-005-contradiction-detection-design-heuristic-pre-filte.md) | Contradiction-detection design: heuristic pre-filter + bounded Haiku confirmation, surfacing-only, bidirectional links | 2026-07-22 | accepted |
 | [DDR-006](decisions/ddr-006-automatic-memory-usefulness-feedback-via-retrospec.md) | Automatic memory-usefulness feedback via retrospective capture-runner pass | 2026-07-22 | accepted |
 | [DDR-007](decisions/ddr-20260731141054-ff-diff-before-write-memory-export-to-avoid-churn.md) | Diff-before-write memory export to avoid churn | 2026-07-31 | accepted |
+| [DDR-008](decisions/ddr-20260820230103-b4-phase-3-retrieval-fork-closed-memory-stays-the-sol.md) | Phase 3 retrieval fork closed: memory stays the sole retrieval unit | 2026-08-20 | accepted |

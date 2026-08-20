@@ -1,9 +1,9 @@
 ---
 id: FEAT-004
 title: Structural/graph memory (long-term, not recommended near-term)
-status: planned
+status: implemented
 date: 2026-07-26
-links: []
+links: ["DDR-20260820230103-b4", "ADR-20260820230120-e1", "ADR-20260820230137-dc"]
 tags: ["long-term", "low-priority", "not-recommended-near-term", "architecture"]
 ---
 

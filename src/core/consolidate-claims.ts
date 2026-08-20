@@ -28,7 +28,7 @@ import { embedClaim, markClaimInvalid } from './claims.js';
 import { detectNumericContradiction, writeContradictionLinks } from './claim-contradiction.js';
 import {
 	classifyDedupBand, fuzzyStringSimilarity, findDedupCandidates, combinedSimilarity, claimCosineSimilarity,
-	type DedupQueryClaim,
+	identifiersDisjoint, type DedupQueryClaim,
 } from './claim-dedup.js';
 import type { MemoryType } from './types.js';
 
@@ -103,6 +103,8 @@ export async function consolidateClaims(
 				result.contradictions++;
 				continue;
 			}
+
+			if (identifiersDisjoint(claim.fact, candidate.fact)) continue;
 
 			const fuzzy = fuzzyStringSimilarity(claim.fact, candidate.fact);
 			const embeddingSim = claimCosineSimilarity(db, claim.id, candidate.id);
