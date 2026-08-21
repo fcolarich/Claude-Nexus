@@ -41,6 +41,11 @@ const MIGRATIONS = [
     { version: 10, name: 'vcc-shrunk-at', up: migrateVccShrunkAt },
     { version: 11, name: 'distill-cursor', up: migrateDistillCursor },
     { version: 12, name: 'vcc-shrunk-path', up: migrateVccShrunkPath },
+    { version: 13, name: 'session-search-log', up: migrateSessionSearchLog },
+    { version: 14, name: 'memory-identifiers', up: migrateMemoryIdentifiers },
+    { version: 15, name: 'claims-table', up: migrateClaimsTable },
+    { version: 16, name: 'claims-vec-dedup-only', up: migrateClaimsVec },
+    { version: 17, name: 'claims-extraction-cursor', up: migrateClaimsExtractionCursor },
 ];
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 function getSchemaVersion(db) {
@@ -383,6 +388,19 @@ function migrateProjectAliases(db) {
     );
   `);
 }
+function migrateSessionSearchLog(db) {
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS session_search_log (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id   TEXT NOT NULL,
+      query        TEXT NOT NULL,
+      source       TEXT NOT NULL CHECK(source IN ('compacted', 'full', 'none')),
+      match_count  INTEGER NOT NULL,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_session_search_log_session ON session_search_log(session_id, created_at DESC);
+  `);
+}
 function migratePromotionClassification(db) {
     try {
         db.exec(`ALTER TABLE memories ADD COLUMN promotion_target TEXT NOT NULL DEFAULT 'none' CHECK(promotion_target IN ('none','adr','ddr','best_practice','recipe','note'))`);
@@ -544,6 +562,124 @@ function migrateVccShrunkPath(db) {
         db.exec(`ALTER TABLE sessions ADD COLUMN vcc_shrunk_path TEXT`);
     }
     catch { }
+}
+// ── Migration 14: memory identifiers ─────────────────────────────────
+// First-class carrier for code-like identifiers (file paths, script names,
+// config keys, CLI flags, CONST_NAMES, versions — see src/core/identifiers.ts),
+// extracted deterministically in code, never by a model. Phase 1 of
+// _documents/design-structured-memory.md: consolidation set-unions this column
+// across a merge's sources instead of relying on the merged prose to carry
+// every identifier verbatim, which measured 16.7% loss (adr-018, source-1.md
+// in the design-doc worktree). JSON array, default '[]' so pre-migration rows
+// read as "not yet backfilled" rather than NULL.
+function migrateMemoryIdentifiers(db) {
+    try {
+        db.exec(`ALTER TABLE memories ADD COLUMN identifiers TEXT DEFAULT '[]'`);
+    }
+    catch { }
+}
+// ── Migration 15: claims table + edge taxonomy ───────────────────────
+// Phase 2 of _documents/design-structured-memory.md (design worktree). Claims
+// are the unit of consolidation truth beneath a memory; memory stays the unit
+// of retrieval (no FTS/vec changes here — see the design doc). Claim text is
+// immutable once written: consolidation may only ADD, LINK, or MARK INVALID
+// (`valid_until`/`expired_at`), never rewrite `fact`.
+//
+// memory_links.link_type CHECK is extended with `same_as` (Neo4j-style
+// pending-review dedup edge) and `supersedes` (directional, claim-graph-only —
+// replaces Graphiti's fact-rewrite-on-invalidation, which this design
+// explicitly rejects; see DDR-20260808153555-7a). SQLite has no ALTER-CHECK,
+// so the table is recreated — same pattern as migrateRemoveTaskSupport /
+// migrateCorpusExpansion above.
+function migrateClaimsTable(db) {
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS claims (
+      id                TEXT PRIMARY KEY,
+      memory_id         TEXT NOT NULL,
+      source_memory_id  TEXT NOT NULL,
+      fact              TEXT NOT NULL,
+      claim_type        TEXT NOT NULL,
+      identifiers       TEXT NOT NULL DEFAULT '[]',
+      confidence        REAL NOT NULL DEFAULT 0.6,
+      valid_from        TEXT NOT NULL DEFAULT (datetime('now')),
+      valid_until       TEXT,
+      recorded_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      expired_at        TEXT,
+      created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_claims_memory ON claims(memory_id);
+    CREATE INDEX IF NOT EXISTS idx_claims_source_memory ON claims(source_memory_id);
+    CREATE INDEX IF NOT EXISTS idx_claims_type ON claims(claim_type);
+    CREATE INDEX IF NOT EXISTS idx_claims_valid_until ON claims(valid_until);
+  `);
+    const schemaRow = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`).get();
+    if (!schemaRow)
+        return;
+    if (schemaRow.sql.includes("'same_as'"))
+        return; // already migrated
+    db.pragma('foreign_keys = OFF');
+    try {
+        db.transaction(() => {
+            db.exec(`
+        CREATE TABLE memory_links_new (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          source_id   TEXT NOT NULL,
+          target_id   TEXT NOT NULL,
+          link_type   TEXT NOT NULL CHECK(link_type IN (
+            'references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related',
+            'same_as', 'supersedes'
+          )),
+          confidence  REAL NOT NULL DEFAULT 1.0,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(source_id, target_id, link_type)
+        );
+        INSERT INTO memory_links_new (id, source_id, target_id, link_type, confidence, created_at)
+          SELECT id, source_id, target_id, link_type, confidence, created_at FROM memory_links;
+        DROP TABLE memory_links;
+        ALTER TABLE memory_links_new RENAME TO memory_links;
+        CREATE INDEX IF NOT EXISTS idx_memory_links_source ON memory_links(source_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_links_target ON memory_links(target_id);
+      `);
+        })();
+    }
+    finally {
+        db.pragma('foreign_keys = ON');
+    }
+}
+// ── Migration 16: claims_vec (dedup cascade ONLY) ────────────────────
+// Deliberately narrow scope: this table exists to give the dedup cascade
+// (src/core/claim-dedup.ts) a semantic-similarity signal beyond fuzzy string
+// matching. It is NEVER queried by recall.ts / nexus_search — "memory stays
+// the unit of retrieval through Phase 2" (design doc) constrains the
+// query-return interface, not internal consolidation-time signals, so this
+// does not pre-decide the Phase 3 claim-vs-memory retrieval fork. Same
+// vec0/1024-dim/drop-on-delete pattern as memories_vec.
+// ── Migration 17: claims extraction cursor ───────────────────────────
+// Mirrors migrateDistillCursor's distilled_at pattern exactly: a memory is a
+// candidate for claim decomposition only while claims_extracted_at IS NULL
+// (optionally `OR < :since`). Stamped BEFORE work (crash safety) and
+// un-stamped only on genuine backend failure — never on a rejected
+// extraction, which stamps normally so a full sweep terminates instead of
+// retrying the same ~1.7% baseline reject rate forever.
+function migrateClaimsExtractionCursor(db) {
+    try {
+        db.exec(`ALTER TABLE memories ADD COLUMN claims_extracted_at TEXT`);
+    }
+    catch { }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_claims_extracted_at ON memories(claims_extracted_at)`);
+}
+function migrateClaimsVec(db) {
+    try {
+        db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS claims_vec USING vec0(embedding float[1024])`);
+        db.exec(`
+      CREATE TRIGGER IF NOT EXISTS claims_vec_ad AFTER DELETE ON claims BEGIN
+        DELETE FROM claims_vec WHERE rowid = old.rowid;
+      END;
+    `);
+    }
+    catch (err) {
+        console.warn('[claude-nexus] Could not create claims_vec table — claim dedup embeddings disabled:', err.message);
+    }
 }
 // ── Migration 4: import legacy memory atoms ──────────────────────────
 // One-time copy of v1 knowledge atoms (memory/feedback/architecture) into the

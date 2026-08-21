@@ -1,8 +1,11 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { openDatabase, initializeSchema } from './database.js';
 import { insertMemory, embedMemory } from './memories.js';
-import { sanitizeFts5Query, searchMemories, hybridSearchMemories } from './search.js';
+import { sanitizeFts5Query, searchMemories, hybridSearchMemories, getSessionById, logSessionSearch, searchSession, getStats } from './search.js';
 // Mock generateEmbedding so tests don't require Ollama running.
 // Default: returns null (vec unavailable), overridden per-test for hybrid path.
 vi.mock('./embeddings.js', () => ({
@@ -192,6 +195,236 @@ describe('hybridSearchMemories', () => {
         expect(titles[2]).toBe('Mem C');
         // rank field follows negative-score convention (lower = better BM25/RRF)
         expect(results[0].rank).toBeLessThan(0);
+        db.close();
+    });
+});
+// ── getSessionById / logSessionSearch ────────────────────────────────────────
+function insertTestSession(db, o) {
+    db.prepare(`
+		INSERT INTO sessions (session_id, project, jsonl_path, vcc_shrunk_path)
+		VALUES (?, ?, ?, ?)
+	`).run(o.id, 'test-proj', `/tmp/${o.id}.jsonl`, o.vccShrunkPath ?? null);
+}
+describe('getSessionById', () => {
+    it('returns the session row when session_id exists', () => {
+        const db = freshDb();
+        insertTestSession(db, { id: 'sess-1', vccShrunkPath: '/tmp/sess-1.compacted.jsonl' });
+        const row = getSessionById(db, 'sess-1');
+        expect(row).toBeDefined();
+        expect(row.session_id).toBe('sess-1');
+        expect(row.project).toBe('test-proj');
+        expect(row.jsonl_path).toBe('/tmp/sess-1.jsonl');
+        expect(row.vcc_shrunk_path).toBe('/tmp/sess-1.compacted.jsonl');
+        db.close();
+    });
+    it('returns undefined (not a throw) when session_id is unknown', () => {
+        const db = freshDb();
+        expect(() => getSessionById(db, 'does-not-exist')).not.toThrow();
+        expect(getSessionById(db, 'does-not-exist')).toBeUndefined();
+        db.close();
+    });
+});
+describe('logSessionSearch', () => {
+    it('inserts a row into session_search_log with the given fields', () => {
+        const db = freshDb();
+        insertTestSession(db, { id: 'sess-1' });
+        logSessionSearch(db, { sessionId: 'sess-1', query: 'foo bar', source: 'compacted', matchCount: 3 });
+        const row = db.prepare(`SELECT * FROM session_search_log WHERE session_id = ?`).get('sess-1');
+        expect(row).toBeDefined();
+        expect(row.session_id).toBe('sess-1');
+        expect(row.query).toBe('foo bar');
+        expect(row.source).toBe('compacted');
+        expect(row.match_count).toBe(3);
+        db.close();
+    });
+    it('throws (does not swallow) on a CHECK-constraint violation for an invalid source', () => {
+        const db = freshDb();
+        insertTestSession(db, { id: 'sess-1' });
+        expect(() => logSessionSearch(db, { sessionId: 'sess-1', query: 'q', source: 'bogus', matchCount: 0 })).toThrow();
+        db.close();
+    });
+});
+// ── searchSession ─────────────────────────────────────────────────────────────
+describe('searchSession', () => {
+    let tmpDir;
+    beforeEach(() => {
+        tmpDir = mkdtempSync(join(tmpdir(), 'nexus-search-session-'));
+    });
+    afterEach(() => {
+        rmSync(tmpDir, { recursive: true, force: true });
+    });
+    function insertSession(db, o) {
+        db.prepare(`
+			INSERT INTO sessions (session_id, project, jsonl_path, vcc_shrunk_path)
+			VALUES (?, ?, ?, ?)
+		`).run(o.id, 'test-proj', o.jsonlPath ?? null, o.vccShrunkPath ?? null);
+    }
+    function countLogRows(db, sessionId) {
+        return db.prepare(`SELECT COUNT(*) as c FROM session_search_log WHERE session_id = ?`).get(sessionId).c;
+    }
+    it('returns session-not-found and still logs when session_id is unknown', () => {
+        const db = freshDb();
+        const result = searchSession(db, 'ghost', 'anything');
+        expect(result.status).toBe('session-not-found');
+        expect(result.source).toBe('none');
+        expect(result.detail).toBeTruthy();
+        expect(countLogRows(db, 'ghost')).toBe(1);
+        db.close();
+    });
+    it('finds a match in the compacted file and reports source compacted', () => {
+        const db = freshDb();
+        const compactedPath = join(tmpDir, 'sess-1.compacted.txt');
+        writeFileSync(compactedPath, 'line one\nthe needle is here\nline three', 'utf8');
+        insertSession(db, { id: 'sess-1', jsonlPath: join(tmpDir, 'sess-1.jsonl'), vccShrunkPath: compactedPath });
+        const result = searchSession(db, 'sess-1', 'needle');
+        expect(result.status).toBe('ok');
+        expect(result.source).toBe('compacted');
+        expect(result.sourcesChecked).toEqual(['compacted summary']);
+        expect(result.totalMatches).toBe(1);
+        expect(result.matches[0].snippet).toContain('needle');
+        const row = db.prepare(`SELECT source, match_count FROM session_search_log WHERE session_id = ?`).get('sess-1');
+        expect(row.source).toBe('compacted');
+        expect(row.match_count).toBe(1);
+        db.close();
+    });
+    it('falls back to the full transcript when vcc_shrunk_path is null', () => {
+        const db = freshDb();
+        const jsonlPath = join(tmpDir, 'sess-2.jsonl');
+        writeFileSync(jsonlPath, JSON.stringify({ type: 'user', message: { role: 'user', content: 'find the needle please' } }) + '\n', 'utf8');
+        insertSession(db, { id: 'sess-2', jsonlPath, vccShrunkPath: null });
+        const result = searchSession(db, 'sess-2', 'needle');
+        expect(result.status).toBe('ok');
+        expect(result.source).toBe('full');
+        expect(result.sourcesChecked).toEqual(['full transcript']);
+        expect(result.totalMatches).toBeGreaterThanOrEqual(1);
+        db.close();
+    });
+    it('falls back to the full transcript when the compacted file is missing on disk', () => {
+        const db = freshDb();
+        const jsonlPath = join(tmpDir, 'sess-3.jsonl');
+        writeFileSync(jsonlPath, JSON.stringify({ type: 'user', message: { role: 'user', content: 'find the needle please' } }) + '\n', 'utf8');
+        insertSession(db, { id: 'sess-3', jsonlPath, vccShrunkPath: join(tmpDir, 'does-not-exist.txt') });
+        const result = searchSession(db, 'sess-3', 'needle');
+        expect(result.status).toBe('ok');
+        expect(result.source).toBe('full');
+        expect(result.sourcesChecked).toEqual(['full transcript']);
+        db.close();
+    });
+    it('falls back to the full transcript when the compacted file has zero matches', () => {
+        const db = freshDb();
+        const compactedPath = join(tmpDir, 'sess-4.compacted.txt');
+        writeFileSync(compactedPath, 'nothing relevant here', 'utf8');
+        const jsonlPath = join(tmpDir, 'sess-4.jsonl');
+        writeFileSync(jsonlPath, JSON.stringify({ type: 'user', message: { role: 'user', content: 'find the needle please' } }) + '\n', 'utf8');
+        insertSession(db, { id: 'sess-4', jsonlPath, vccShrunkPath: compactedPath });
+        const result = searchSession(db, 'sess-4', 'needle');
+        expect(result.status).toBe('ok');
+        expect(result.source).toBe('full');
+        expect(result.sourcesChecked).toEqual(['compacted summary', 'full transcript']);
+        db.close();
+    });
+    it('returns no-matches (both sources checked, zero hits) and logs source none', () => {
+        const db = freshDb();
+        const compactedPath = join(tmpDir, 'sess-5.compacted.txt');
+        writeFileSync(compactedPath, 'nothing relevant here', 'utf8');
+        const jsonlPath = join(tmpDir, 'sess-5.jsonl');
+        writeFileSync(jsonlPath, JSON.stringify({ type: 'user', message: { role: 'user', content: 'still nothing relevant' } }) + '\n', 'utf8');
+        insertSession(db, { id: 'sess-5', jsonlPath, vccShrunkPath: compactedPath });
+        const result = searchSession(db, 'sess-5', 'needle');
+        expect(result.status).toBe('no-matches');
+        expect(result.source).toBe('none');
+        expect(result.sourcesChecked).toEqual(['compacted summary', 'full transcript']);
+        expect(result.matches).toEqual([]);
+        const row = db.prepare(`SELECT source, match_count FROM session_search_log WHERE session_id = ?`).get('sess-5');
+        expect(row.source).toBe('none');
+        expect(row.match_count).toBe(0);
+        db.close();
+    });
+    it('returns no-content when jsonl_path is empty and there is no compacted file', () => {
+        const db = freshDb();
+        insertSession(db, { id: 'sess-6', jsonlPath: '', vccShrunkPath: null });
+        const result = searchSession(db, 'sess-6', 'needle');
+        expect(result.status).toBe('no-content');
+        expect(result.source).toBe('none');
+        expect(result.detail).toBeTruthy();
+        expect(countLogRows(db, 'sess-6')).toBe(1);
+        db.close();
+    });
+    it('returns no-content when jsonl_path points to a missing file (readTranscriptWindow returns empty text)', () => {
+        const db = freshDb();
+        insertSession(db, { id: 'sess-7', jsonlPath: join(tmpDir, 'missing.jsonl'), vccShrunkPath: null });
+        const result = searchSession(db, 'sess-7', 'needle');
+        expect(result.status).toBe('no-content');
+        expect(result.source).toBe('none');
+        db.close();
+    });
+    it('never throws to the caller even when logSessionSearch write fails (fail-open)', () => {
+        const db = freshDb();
+        insertSession(db, { id: 'sess-8', jsonlPath: '', vccShrunkPath: null });
+        const stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+        db.prepare(`DROP TABLE session_search_log`).run();
+        let result;
+        expect(() => { result = searchSession(db, 'sess-8', 'needle'); }).not.toThrow();
+        expect(result.status).toBe('no-content');
+        expect(stderrSpy).toHaveBeenCalled();
+        stderrSpy.mockRestore();
+        db.close();
+    });
+});
+// ── getStats — session-search counts ─────────────────────────────────────────
+describe('getStats — session-search counts', () => {
+    it('zero-fills all 3 source keys to 0 when session_search_log is empty', () => {
+        const db = freshDb();
+        const stats = getStats(db);
+        expect(stats.totalSessionSearches).toBe(0);
+        expect(stats.sessionSearchesBySource).toEqual({ compacted: 0, full: 0, none: 0 });
+        db.close();
+    });
+    it('reports correct total and per-source counts across all 3 sources', () => {
+        const db = freshDb();
+        insertTestSession(db, { id: 'sess-1' });
+        logSessionSearch(db, { sessionId: 'sess-1', query: 'a', source: 'compacted', matchCount: 1 });
+        logSessionSearch(db, { sessionId: 'sess-1', query: 'b', source: 'compacted', matchCount: 2 });
+        logSessionSearch(db, { sessionId: 'sess-1', query: 'c', source: 'full', matchCount: 1 });
+        logSessionSearch(db, { sessionId: 'sess-1', query: 'd', source: 'none', matchCount: 0 });
+        logSessionSearch(db, { sessionId: 'sess-1', query: 'e', source: 'none', matchCount: 0 });
+        logSessionSearch(db, { sessionId: 'sess-1', query: 'f', source: 'none', matchCount: 0 });
+        const stats = getStats(db);
+        expect(stats.totalSessionSearches).toBe(6);
+        expect(stats.sessionSearchesBySource).toEqual({ compacted: 2, full: 1, none: 3 });
+        db.close();
+    });
+    it('regression: every pre-existing Stats key/type is unchanged', () => {
+        const db = freshDb();
+        const stats = getStats(db);
+        expect(typeof stats.totalAtoms).toBe('number');
+        expect(typeof stats.embeddedAtoms).toBe('number');
+        expect(typeof stats.atomsByType).toBe('object');
+        expect(typeof stats.atomsByScope).toBe('object');
+        expect(typeof stats.atomsByProject).toBe('object');
+        expect(typeof stats.totalMemories).toBe('number');
+        expect(typeof stats.embeddedMemories).toBe('number');
+        expect(typeof stats.memoriesByReview).toBe('object');
+        expect(typeof stats.totalLinks).toBe('number');
+        expect(typeof stats.totalSessions).toBe('number');
+        expect(typeof stats.totalDiagnostics).toBe('number');
+        expect(typeof stats.diagnosticsByType).toBe('object');
+        expect(Object.keys(stats).sort()).toEqual([
+            'atomsByProject',
+            'atomsByScope',
+            'atomsByType',
+            'diagnosticsByType',
+            'embeddedAtoms',
+            'embeddedMemories',
+            'memoriesByReview',
+            'sessionSearchesBySource',
+            'totalAtoms',
+            'totalDiagnostics',
+            'totalLinks',
+            'totalMemories',
+            'totalSessionSearches',
+            'totalSessions',
+        ]);
         db.close();
     });
 });

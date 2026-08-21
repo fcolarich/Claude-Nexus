@@ -68,6 +68,84 @@ describe('distillMemories', () => {
   });
 });
 
+describe('distillMemories — contradictionGuardFn (claim-level cluster-membership veto)', () => {
+  it('with no guard supplied, clusters purely on embedding similarity (unchanged default behavior)', async () => {
+    const db = freshDb();
+    insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+
+    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+    expect(r.clusters).toBe(1);
+    expect(r.merged).toBe(2);
+    db.close();
+  });
+
+  it('excludes a related candidate the guard flags as "contradicts", leaving it out of the cluster', async () => {
+    const db = freshDb();
+    insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+
+    const guard = async () => 'contradicts' as const;
+    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge, guard);
+    // The only related candidate conflicted -> no safe cluster to build, both memories stay live.
+    expect(r.clusters).toBe(0);
+    expect(r.merged).toBe(0);
+    expect(liveCount(db)).toBe(2);
+    db.close();
+  });
+
+  it('still clusters when the guard returns "confirmed" or "insufficient" (only "contradicts" excludes)', async () => {
+    const db = freshDb();
+    insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
+
+    const guard = async () => 'insufficient' as const;
+    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge, guard);
+    expect(r.clusters).toBe(1);
+    expect(r.merged).toBe(2);
+    db.close();
+  });
+});
+
+describe('distillMemories — Phase 1: identifier set-union on merge', () => {
+  it('merged memory carries every source identifier even when the merge prose drops them', async () => {
+    const db = freshDb();
+    // Sources carry code-like identifiers in their bodies (auto-extracted at insert time).
+    insertMemory(db, { ...base, title: 'One', body: 'ALPHA uses src/core/distill.ts and MERGE_COVERAGE_FLOOR', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'Two', body: 'BETA also touches src/core/memories.ts and ADR-018', confidence: 0.7 });
+
+    // fakeMerge's prose ("ALPHA consolidated body") reproduces none of those identifiers —
+    // the exact failure mode this design eliminates structurally.
+    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+    expect(r.created).toBe(1);
+
+    const merged = db.prepare(
+      `SELECT identifiers FROM memories WHERE superseded_by IS NULL AND identifiers != '[]'`
+    ).get() as { identifiers: string } | undefined;
+    expect(merged).toBeDefined();
+    const ids = JSON.parse(merged!.identifiers) as string[];
+    expect(ids).toContain('src/core/distill.ts');
+    expect(ids).toContain('MERGE_COVERAGE_FLOOR');
+    expect(ids).toContain('src/core/memories.ts');
+    expect(ids).toContain('ADR-018');
+    db.close();
+  });
+
+  it('supersedes originals but preserves their identifiers row (recoverable via rollback)', async () => {
+    const db = freshDb();
+    const a = insertMemory(db, { ...base, title: 'One', body: 'ALPHA first src/core/distill.ts', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'Two', body: 'BETA second src/core/memories.ts', confidence: 0.7 });
+
+    await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+
+    const original = db.prepare(`SELECT identifiers, superseded_by FROM memories WHERE id = ?`).get(a.id) as
+      { identifiers: string; superseded_by: string | null };
+    expect(original.superseded_by).not.toBeNull();
+    expect(JSON.parse(original.identifiers)).toContain('src/core/distill.ts');
+    db.close();
+  });
+});
+
 describe('distillMemories — scoped/limited pool + accounting', () => {
   it('pool never exceeds limit regardless of total rows (SC-3)', async () => {
     const db = freshDb();
@@ -717,6 +795,27 @@ describe('distillMemories — sanitize bound (7)', () => {
     expect(inRow.body).not.toBe(longBodyA);
     expect(outRow.body).toBe(longBodyB);
 
+    db.close();
+  });
+
+  it('sanitize preserves identifiers even when the tightened prose drops them (ADR-20260808214308-a0 regression)', async () => {
+    const db = freshDb();
+    const longBody = `GAMMA touches src/core/distill.ts and MERGE_COVERAGE_FLOOR. ${'padding text here. '.repeat(50)}`;
+    const inserted = insertMemory(db, { ...base, title: 'Oversized', body: longBody, project: 'proj-a' });
+    const seeded = db.prepare(`SELECT identifiers FROM memories WHERE id = ?`).get(inserted.id) as { identifiers: string };
+    expect(JSON.parse(seeded.identifiers)).toEqual(expect.arrayContaining(['src/core/distill.ts', 'MERGE_COVERAGE_FLOOR']));
+
+    // Tightened prose reproduces neither identifier — the exact failure mode
+    // the audit found: a shorter rewrite that drops what the original named.
+    const spySanitize = async () => JSON.stringify({ title: 'Tight', body: 'short tightened body with nothing specific' });
+
+    const r = await distillMemories(db, { project: 'proj-a' }, fakeEmbed, spySanitize);
+    expect(r.sanitized).toBe(1);
+
+    const row = db.prepare(`SELECT identifiers FROM memories WHERE id = ?`).get(inserted.id) as { identifiers: string };
+    const ids = JSON.parse(row.identifiers) as string[];
+    expect(ids).toContain('src/core/distill.ts');
+    expect(ids).toContain('MERGE_COVERAGE_FLOOR');
     db.close();
   });
 });

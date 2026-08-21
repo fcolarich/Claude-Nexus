@@ -1,7 +1,7 @@
 export type AtomType = 'memory' | 'agent' | 'skill' | 'plan' | 'feedback' | 'reference' | 'project_note' | 'architecture';
 export type AtomScope = 'global' | 'shared' | 'project';
 export type SourceType = 'memory_file' | 'agent_def' | 'skill_def' | 'plan_file' | 'nexus_native' | 'project_doc';
-export type LinkType = 'references' | 'extends' | 'refines' | 'contradicts' | 'supports' | 'duplicates' | 'related';
+export type LinkType = 'references' | 'extends' | 'refines' | 'contradicts' | 'supports' | 'duplicates' | 'related' | 'same_as' | 'supersedes';
 export type SessionStatus = 'active' | 'waiting_input' | 'processing' | 'idle' | 'dead';
 export type DiagnosticType = 'broken_reference' | 'missing_frontmatter' | 'duplicate' | 'orphan' | 'stale';
 
@@ -67,6 +67,27 @@ export interface Memory {
   linked_at: string | null;
   load_at_init: number;  // 0 | 1
   distilled_at: string | null;  // last distill run that examined this memory; NULL = never
+  identifiers: string[];  // code-like tokens, extracted deterministically (src/core/identifiers.ts)
+}
+
+/**
+ * An atomic claim beneath a memory (Phase 2, design-structured-memory.md).
+ * Immutable once written: consolidation may only ADD, LINK, or MARK INVALID
+ * (`valid_until`/`expired_at`) — `fact` is never rewritten.
+ */
+export interface Claim {
+  id: string;                    // sha256(claim_type + fact), 16-char, content-addressed
+  memory_id: string;              // parent memory row
+  source_memory_id: string;       // memory this claim was extracted from (== memory_id unless re-parented)
+  fact: string;                   // immutable once written
+  claim_type: MemoryType;         // derived from parent memory_type
+  identifiers: string[];          // code-like tokens, extracted deterministically, never model-generated
+  confidence: number;             // inherited from parent; adjusted by feedback
+  valid_from: string;             // world time — when the fact became true
+  valid_until: string | null;     // world time — NULL = still valid
+  recorded_at: string;            // transaction time — when the system learned it
+  expired_at: string | null;      // transaction time — set on supersession
+  created_at: string;
 }
 
 export interface Session {

@@ -27,6 +27,52 @@ describe('schema migrations', () => {
     expect(tableExists(db, 'memory_links')).toBe(true);
     expect(tableExists(db, 'memories_fts')).toBe(true);
     expect(columnExists(db, 'sessions', 'last_reflected_index')).toBe(true);
+    expect(columnExists(db, 'memories', 'identifiers')).toBe(true);
+    expect(tableExists(db, 'claims')).toBe(true);
+    db.close();
+  });
+
+  it('migration v13: claims table has the design-doc schema', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+
+    for (const col of [
+      'id', 'memory_id', 'source_memory_id', 'fact', 'claim_type', 'identifiers',
+      'confidence', 'valid_from', 'valid_until', 'recorded_at', 'expired_at', 'created_at',
+    ]) {
+      expect(columnExists(db, 'claims', col)).toBe(true);
+    }
+    db.close();
+  });
+
+  it('migration v15: memories.claims_extracted_at cursor column exists', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    expect(columnExists(db, 'memories', 'claims_extracted_at')).toBe(true);
+    db.close();
+  });
+
+  it('migration v14: claims_vec table exists for the dedup cascade only', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+    expect(tableExists(db, 'claims_vec')).toBe(true);
+    db.close();
+  });
+
+  it('migration v13: memory_links accepts same_as and supersedes link types', () => {
+    const db = openDatabase(':memory:');
+    initializeSchema(db);
+
+    expect(() => db.prepare(
+      `INSERT INTO memory_links (source_id, target_id, link_type, confidence) VALUES ('a', 'b', 'same_as', 0.9)`
+    ).run()).not.toThrow();
+    expect(() => db.prepare(
+      `INSERT INTO memory_links (source_id, target_id, link_type, confidence) VALUES ('a', 'c', 'supersedes', 1.0)`
+    ).run()).not.toThrow();
+    // Existing link types must still work after the CHECK-constraint recreate.
+    expect(() => db.prepare(
+      `INSERT INTO memory_links (source_id, target_id, link_type, confidence) VALUES ('a', 'd', 'contradicts', 1.0)`
+    ).run()).not.toThrow();
     db.close();
   });
 
@@ -329,11 +375,10 @@ describe('schema migrations', () => {
     db.close();
   });
 
-  it('migration v13: brings a fresh DB to schema_version 13 with session_search_log table', () => {
+  it('migration v13: brings a fresh DB up through session_search_log table', () => {
     const db = openDatabase(':memory:');
     initializeSchema(db);
     expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
-    expect(LATEST_SCHEMA_VERSION).toBe(13);
     expect(tableExists(db, 'session_search_log')).toBe(true);
     db.close();
   });

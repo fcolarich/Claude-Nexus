@@ -41,6 +41,7 @@ export interface ReflectResult {
     inserted: number;
     merged: number;
     upgraded: number;
+    touchedIds: string[];
     skipped: boolean;
     excluded_reason?: string | null;
     redactions?: number;

@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { Atom, AtomLink, SearchResult, Diagnostic, Session, Memory } from './types.js';
+import { type GrepMatch, type GrepOptions } from './text-search.js';
 export interface MemorySearchResult {
     memory: Memory;
     rank: number;
@@ -94,6 +95,45 @@ export declare function listSessions(db: Database.Database, options?: {
     project?: string;
     status?: string;
 }): Session[];
+export type SessionWithVccPath = Session & {
+    vcc_shrunk_path: string | null;
+};
+/**
+ * Look up a single session by id. Returns undefined on a miss — an unknown
+ * session_id is an expected, common case the caller branches on, not an error.
+ */
+export declare function getSessionById(db: Database.Database, sessionId: string): SessionWithVccPath | undefined;
+/**
+ * Record one session-content-search event. A plain, unguarded INSERT — no
+ * try/catch here. The fail-open guard for search logging lives at the call
+ * site in searchSession, so a constraint violation (e.g. a bad `source`)
+ * propagates as a real throw from this thin wrapper.
+ */
+export declare function logSessionSearch(db: Database.Database, params: {
+    sessionId: string;
+    query: string;
+    source: 'compacted' | 'full' | 'none';
+    matchCount: number;
+}): void;
+export type SessionSearchSource = 'compacted' | 'full' | 'none';
+export interface SessionSearchResult {
+    status: 'ok' | 'no-matches' | 'session-not-found' | 'no-content';
+    sessionId: string;
+    query: string;
+    source: SessionSearchSource;
+    sourcesChecked: string[];
+    matches: GrepMatch[];
+    totalMatches: number;
+    truncated: boolean;
+    detail?: string;
+}
+/**
+ * Compacted-first session content search with fallback to the full transcript.
+ * Never throws — an outer try/catch produces a safe 'no-content' fallback on
+ * any unexpected internal error. Logs exactly once, at the end, from a single
+ * fail-open call site covering every terminal path (see architecture.md).
+ */
+export declare function searchSession(db: Database.Database, sessionId: string, query: string, opts?: GrepOptions): SessionSearchResult;
 /**
  * Get database statistics for the dashboard.
  */
@@ -110,5 +150,7 @@ export declare function getStats(db: Database.Database): {
     totalSessions: number;
     totalDiagnostics: number;
     diagnosticsByType: Record<string, number>;
+    totalSessionSearches: number;
+    sessionSearchesBySource: Record<'compacted' | 'full' | 'none', number>;
 };
 //# sourceMappingURL=search.d.ts.map

@@ -9,7 +9,7 @@
 | [FEAT-001](features/feature-001-secret-redaction-guard-on-the-capture-path.md) | Secret-redaction guard on the capture path | planned | master-tooling-reference.md#GuardrailEngine (adaptive-memory-router, Pi.dev, tag: Adapt) - candidate off-the-shelf option: injection detection + PII/secret redaction + content filter in one component |
 | [FEAT-002](features/feature-002-evaluate-jina-reranker-v3-over-v2-for-prompt-drive.md) | Evaluate jina-reranker-v3 over v2 for prompt-driven recall | planned | ADR-012 |
 | [FEAT-003](features/feature-003-non-git-repo-fallback-for-project-slug-resolution.md) | Non-git-repo fallback for project-slug resolution reintroduces subdirectory fragmentation | planned | ADR-013 |
-| [FEAT-004](features/feature-004-structuralgraph-memory-long-term-not-recommended-n.md) | Structural/graph memory (long-term, not recommended near-term) | planned | — |
+| [FEAT-004](features/feature-004-structuralgraph-memory-long-term-not-recommended-n.md) | Structural/graph memory (long-term, not recommended near-term) | implemented | DDR-20260820230103-b4, ADR-20260820230120-e1, ADR-20260820230137-dc |
 | [FEAT-005](features/feature-005-gate-nexus-promotions-candidates-by-accumulated-hi.md) | Gate nexus_promotions candidates by accumulated hit_count/reconfirmation | planned | — |
 | [FEAT-006](features/feature-006-memory-scope-parameter-projectsharedglobal-isolati.md) | Memory scope parameter (project/shared/global isolation) | implemented | — |
 | [FEAT-007](features/feature-007-observer-reflector-two-phase-capture-pipeline.md) | Observer-Reflector two-phase capture pipeline | implemented | — |

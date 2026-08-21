@@ -1,7 +1,7 @@
 export type AtomType = 'memory' | 'agent' | 'skill' | 'plan' | 'feedback' | 'reference' | 'project_note' | 'architecture';
 export type AtomScope = 'global' | 'shared' | 'project';
 export type SourceType = 'memory_file' | 'agent_def' | 'skill_def' | 'plan_file' | 'nexus_native' | 'project_doc';
-export type LinkType = 'references' | 'extends' | 'refines' | 'contradicts' | 'supports' | 'duplicates' | 'related';
+export type LinkType = 'references' | 'extends' | 'refines' | 'contradicts' | 'supports' | 'duplicates' | 'related' | 'same_as' | 'supersedes';
 export type SessionStatus = 'active' | 'waiting_input' | 'processing' | 'idle' | 'dead';
 export type DiagnosticType = 'broken_reference' | 'missing_frontmatter' | 'duplicate' | 'orphan' | 'stale';
 export type MemoryType = 'preference' | 'convention' | 'failure' | 'correction' | 'decision' | 'insight' | 'tool_quirk' | 'reference' | 'handoff';
@@ -62,6 +62,26 @@ export interface Memory {
     linked_at: string | null;
     load_at_init: number;
     distilled_at: string | null;
+    identifiers: string[];
+}
+/**
+ * An atomic claim beneath a memory (Phase 2, design-structured-memory.md).
+ * Immutable once written: consolidation may only ADD, LINK, or MARK INVALID
+ * (`valid_until`/`expired_at`) — `fact` is never rewritten.
+ */
+export interface Claim {
+    id: string;
+    memory_id: string;
+    source_memory_id: string;
+    fact: string;
+    claim_type: MemoryType;
+    identifiers: string[];
+    confidence: number;
+    valid_from: string;
+    valid_until: string | null;
+    recorded_at: string;
+    expired_at: string | null;
+    created_at: string;
 }
 export interface Session {
     session_id: string;

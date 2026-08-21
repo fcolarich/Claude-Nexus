@@ -188,7 +188,7 @@ describe('consolidateMemories', () => {
             'discovered_from', 'help_count', 'id', 'last_verified_at', 'linked_at',
             'memory_type', 'project', 'promoted_to', 'promotion_target', 'review_status',
             'scope', 'source_session_id', 'superseded_by', 'tags', 'title', 'updated_at',
-            'use_count', 'load_at_init', 'distilled_at',
+            'use_count', 'load_at_init', 'distilled_at', 'identifiers', 'claims_extracted_at',
         ].sort());
         // Extracts the quoted value list from a `CHECK(<column> IN (...))` clause
         // only — not the whole CREATE TABLE SQL, which also contains unrelated
@@ -201,7 +201,7 @@ describe('consolidateMemories', () => {
         }
         // memory_links: link_type CHECK contains exactly the 7 known values (order-independent).
         const linksSql = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`).get().sql;
-        expect(checkValues(linksSql, 'link_type')).toEqual(['references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related'].sort());
+        expect(checkValues(linksSql, 'link_type')).toEqual(['references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related', 'same_as', 'supersedes'].sort());
         // diagnostics: type CHECK contains exactly the 5 known values (order-independent).
         const diagSql = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='diagnostics'`).get().sql;
         expect(checkValues(diagSql, 'type')).toEqual(['broken_reference', 'missing_frontmatter', 'duplicate', 'orphan', 'stale'].sort());

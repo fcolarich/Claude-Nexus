@@ -7,6 +7,12 @@ back at the start of future sessions — no manual note-taking, no agent coopera
 It also indexes your Claude knowledge files (agents, skills, plans, notes) and
 ships a web dashboard for browsing memories, sessions, and the review queue.
 
+Memory cleanup (dedup and distill) is checked at the atomic-fact level before
+merging anything — a claim-level confirmation gate lazily breaks candidate
+memories into atomic claims and blocks the merge on contradiction or
+insufficient overlap, so lookalike-but-different memories don't get folded
+together.
+
 **Storage:** SQLite + FTS5 + sqlite-vec at `~/.claude-nexus/nexus.db`
 
 ---

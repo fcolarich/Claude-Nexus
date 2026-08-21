@@ -19,6 +19,7 @@ export interface MemoryInput {
     tags: string[];
     promotion_target: PromotionTarget;
     load_at_init?: boolean;
+    identifiers?: string[];
 }
 /** Content-addressed id — identical (type, body) collapses to one row. */
 export declare function computeMemoryId(memory_type: string, body: string): string;

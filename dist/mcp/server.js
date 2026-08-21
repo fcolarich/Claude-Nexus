@@ -8,10 +8,13 @@ import { runFullIndex } from '../indexer/indexer.js';
 import { resolveProjectFromCwd } from '../core/project-root.js';
 import { buildBm25Corpus, rrfMerge } from '../core/links.js';
 import { generateEmbedding } from '../core/embeddings.js';
-import { hybridSearch, hybridSearchMemories, fetchContext, fetchMemoryContext, getSharedKnowledge, getProjectContext, listSessions, getDiagnostics, getStats, } from '../core/search.js';
+import { extractIdentifiers, unionIdentifiers } from '../core/identifiers.js';
+import { hybridSearch, hybridSearchMemories, fetchContext, fetchMemoryContext, getSharedKnowledge, getProjectContext, listSessions, searchSession, getDiagnostics, getStats, } from '../core/search.js';
 import { recallMemories } from '../core/recall.js';
 import { verifyMemory, recordFeedback, insertMemory, embedMemory, rememberBatch, getMemory } from '../core/memories.js';
 import { consolidateMemories } from '../core/consolidate.js';
+import { confirmMemoryDuplicate } from '../core/memory-dedup-confirm.js';
+import { callModel } from '../core/llm.js';
 import { distillMemories } from '../core/distill.js';
 import { backfillSessions } from '../capture/backfill.js';
 // Initialize database and index on startup
@@ -166,6 +169,40 @@ server.tool('nexus_sessions', 'List Claude Code sessions with their status, proj
         content: [{ type: 'text', text: `# Sessions (${sessions.length} total)\n\n${lines.join('\n')}` }],
     };
 });
+// ── nexus_search_session ─────────────────────────────────────────────
+/**
+ * Render a SessionSearchResult as tool-response text: source line, one
+ * bullet per snippet (line number + occurrences + text), and clear
+ * no-matches/session-not-found/no-content messages.
+ */
+function renderSessionSearch(r) {
+    if (r.status === 'session-not-found') {
+        return r.detail ?? `No session found for session_id "${r.sessionId}"`;
+    }
+    if (r.status === 'no-content') {
+        return r.detail ?? `No content available for session ${r.sessionId}.`;
+    }
+    if (r.status === 'no-matches') {
+        const searched = r.sourcesChecked.length > 0 ? r.sourcesChecked.join(', ') : 'nothing';
+        return `No matches for "${r.query}" in session ${r.sessionId}. Searched: ${searched}.`;
+    }
+    // status === 'ok'
+    const lines = r.matches.map(m => `- line ${m.line} (${m.occurrences} occurrence${m.occurrences === 1 ? '' : 's'}): ${m.snippet}`);
+    const truncNote = r.truncated ? `\n(truncated — ${r.totalMatches} total matches, showing ${r.matches.length})` : '';
+    return `Source: ${r.source} (${r.totalMatches} match${r.totalMatches === 1 ? '' : 'es'})\n\n${lines.join('\n')}${truncNote}`;
+}
+server.tool('nexus_search_session', 'Search a session\'s content for a plain-text query. Compacted-summary-first with automatic fallback to the full transcript if the compacted summary is absent, missing on disk, or has zero matches. Returns matching lines with context snippets — use to find where something was discussed within a specific session.', {
+    session_id: z.string().describe('Session id to search within (see nexus_sessions)'),
+    query: z.string().min(1).describe('Plain-text substring to search for (case-insensitive, no regex)'),
+    max_matches: z.coerce.number().min(1).max(50).optional().describe('Max matches to return (default 20)'),
+}, async ({ session_id, query, max_matches }) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+        return { content: [{ type: 'text', text: 'Error: query must not be empty.' }] };
+    }
+    const result = searchSession(db, session_id, trimmed, { maxMatches: max_matches });
+    return { content: [{ type: 'text', text: renderSessionSearch(result) }] };
+});
 // ── nexus_health ─────────────────────────────────────────────────────
 server.tool('nexus_health', 'Show diagnostics: broken references, duplicates, orphan atoms, missing frontmatter. Use to audit knowledge graph health.', {
     type: z.string().optional().describe('Filter: broken_reference, missing_frontmatter, duplicate, orphan, stale'),
@@ -308,7 +345,8 @@ server.tool('nexus_stats', 'Get database statistics: atom counts by type/scope/p
 **Memories:** ${stats.totalMemories} (${stats.embeddedMemories} embedded) — review: ${reviewSummary}
 **Links:** ${stats.totalLinks}
 **Sessions:** ${stats.totalSessions}
-**Diagnostics:** ${stats.totalDiagnostics}`;
+**Diagnostics:** ${stats.totalDiagnostics}
+**Session searches:** ${stats.totalSessionSearches} total (compacted: ${stats.sessionSearchesBySource.compacted}, full: ${stats.sessionSearchesBySource.full}, none: ${stats.sessionSearchesBySource.none})`;
     return { content: [{ type: 'text', text }] };
 });
 // ── nexus_verify ─────────────────────────────────────────────────────
@@ -328,7 +366,7 @@ server.tool('nexus_feedback', 'Record whether a recalled memory was actually use
 });
 // ── nexus_consolidate ────────────────────────────────────────────────
 server.tool('nexus_consolidate', 'Run a memory cleanup sweep: backfill missing embeddings, prune rejected memories, merge near-duplicates, govern confidence by help-rate trend, and surface candidate contradictions. Safe — decayed memories are never deleted, only superseded duplicates and rejected memories.', {}, async () => {
-    const r = await consolidateMemories(db);
+    const r = await consolidateMemories(db, undefined, undefined, (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel));
     return {
         content: [{
                 type: 'text',
@@ -344,7 +382,7 @@ server.tool('nexus_distill', 'Deep cleanup of existing memories: clusters relate
     dry_run: z.boolean().optional().describe('Report eligible-memory counts without running any LLM/embedding calls'),
     since: z.string().optional().describe('Timestamp cutoff ("YYYY-MM-DD HH:MM:SS" UTC). Re-opens memories already distilled before it — use to start a fresh sweep over a scope already swept once. Omit to only examine never-distilled memories.'),
 }, async ({ project, cwd, limit, dry_run, since }) => {
-    const r = await distillMemories(db, { project, cwd, limit, dryRun: dry_run, since });
+    const r = await distillMemories(db, { project, cwd, limit, dryRun: dry_run, since }, undefined, callModel, (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel));
     const remainingNote = r.eligibleRemaining > 0
         ? ` ${r.eligibleRemaining} memories under this scope have not been examined yet — re-invoke to continue (even if this run found 0 clusters).`
         : ' Sweep complete for this scope — nothing left un-examined.';
@@ -528,7 +566,12 @@ server.tool('nexus_mark_promoted', 'Mark a memory as promoted to an external art
     const newBody = firstSentence && !firstSentence.includes(artifact_ref)
         ? `${firstSentence} → ${artifact_ref}`
         : firstSentence;
-    db.prepare(`UPDATE memories SET body = ?, promoted_to = ?, updated_at = datetime('now') WHERE id = ?`).run(newBody, artifact_ref, id);
+    // Same identifier guarantee as distill's merge/sanitize paths: this rewrites
+    // body to a thin pointer, so the full identifier set the original body named
+    // must be carried forward explicitly rather than re-derived from the (much
+    // shorter) pointer text alone.
+    const newIdentifiers = unionIdentifiers(memory.identifiers, extractIdentifiers(newBody));
+    db.prepare(`UPDATE memories SET body = ?, promoted_to = ?, identifiers = ?, updated_at = datetime('now') WHERE id = ?`).run(newBody, artifact_ref, JSON.stringify(newIdentifiers), id);
     // D-005: re-embed the rewritten body — best-effort, failure does not fail the tool
     embedMemory(db, id).catch(() => { });
     return {

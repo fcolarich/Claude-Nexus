@@ -11,6 +11,7 @@ import { resolveProjectFromCwd } from '../core/project-root.js';
 import { buildBm25Corpus, rrfMerge } from '../core/links.js';
 import type { RankedResult } from '../core/links.js';
 import { generateEmbedding } from '../core/embeddings.js';
+import { extractIdentifiers, unionIdentifiers } from '../core/identifiers.js';
 import type { CrossRefResult, LinkType } from '../core/types.js';
 import { computeAtomId, computeHash } from '../indexer/parser.js';
 import type { Atom } from '../core/types.js';
@@ -33,6 +34,8 @@ import { recallMemories } from '../core/recall.js';
 import { verifyMemory, recordFeedback, insertMemory, embedMemory, rememberBatch, getMemory } from '../core/memories.js';
 import type { MemoryType, DecayClass } from '../core/types.js';
 import { consolidateMemories } from '../core/consolidate.js';
+import { confirmMemoryDuplicate } from '../core/memory-dedup-confirm.js';
+import { callModel } from '../core/llm.js';
 import { distillMemories } from '../core/distill.js';
 import { backfillSessions } from '../capture/backfill.js';
 
@@ -530,7 +533,7 @@ server.tool(
   'Run a memory cleanup sweep: backfill missing embeddings, prune rejected memories, merge near-duplicates, govern confidence by help-rate trend, and surface candidate contradictions. Safe — decayed memories are never deleted, only superseded duplicates and rejected memories.',
   {},
   async () => {
-    const r = await consolidateMemories(db);
+    const r = await consolidateMemories(db, undefined, undefined, (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel));
     return {
       content: [{
         type: 'text',
@@ -553,7 +556,10 @@ server.tool(
     since:   z.string().optional().describe('Timestamp cutoff ("YYYY-MM-DD HH:MM:SS" UTC). Re-opens memories already distilled before it — use to start a fresh sweep over a scope already swept once. Omit to only examine never-distilled memories.'),
   },
   async ({ project, cwd, limit, dry_run, since }) => {
-    const r = await distillMemories(db, { project, cwd, limit, dryRun: dry_run, since });
+    const r = await distillMemories(
+      db, { project, cwd, limit, dryRun: dry_run, since }, undefined, callModel,
+      (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel)
+    );
     const remainingNote = r.eligibleRemaining > 0
       ? ` ${r.eligibleRemaining} memories under this scope have not been examined yet — re-invoke to continue (even if this run found 0 clusters).`
       : ' Sweep complete for this scope — nothing left un-examined.';
@@ -804,9 +810,15 @@ server.tool(
       ? `${firstSentence} → ${artifact_ref}`
       : firstSentence;
 
+    // Same identifier guarantee as distill's merge/sanitize paths: this rewrites
+    // body to a thin pointer, so the full identifier set the original body named
+    // must be carried forward explicitly rather than re-derived from the (much
+    // shorter) pointer text alone.
+    const newIdentifiers = unionIdentifiers(memory.identifiers, extractIdentifiers(newBody));
+
     db.prepare(
-      `UPDATE memories SET body = ?, promoted_to = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(newBody, artifact_ref, id);
+      `UPDATE memories SET body = ?, promoted_to = ?, identifiers = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(newBody, artifact_ref, JSON.stringify(newIdentifiers), id);
 
     // D-005: re-embed the rewritten body — best-effort, failure does not fail the tool
     embedMemory(db, id).catch(() => {});

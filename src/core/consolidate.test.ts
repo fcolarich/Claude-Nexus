@@ -240,7 +240,7 @@ describe('consolidateMemories', () => {
 			'discovered_from', 'help_count', 'id', 'last_verified_at', 'linked_at',
 			'memory_type', 'project', 'promoted_to', 'promotion_target', 'review_status',
 			'scope', 'source_session_id', 'superseded_by', 'tags', 'title', 'updated_at',
-			'use_count', 'load_at_init', 'distilled_at',
+			'use_count', 'load_at_init', 'distilled_at', 'identifiers', 'claims_extracted_at',
 		].sort());
 
 		// Extracts the quoted value list from a `CHECK(<column> IN (...))` clause
@@ -257,7 +257,7 @@ describe('consolidateMemories', () => {
 			`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_links'`
 		).get() as { sql: string }).sql;
 		expect(checkValues(linksSql, 'link_type')).toEqual(
-			['references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related'].sort()
+			['references', 'extends', 'refines', 'contradicts', 'supports', 'duplicates', 'related', 'same_as', 'supersedes'].sort()
 		);
 
 		// diagnostics: type CHECK contains exactly the 5 known values (order-independent).

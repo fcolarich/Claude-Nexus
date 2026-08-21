@@ -21,6 +21,40 @@ describe('schema migrations', () => {
         expect(tableExists(db, 'memory_links')).toBe(true);
         expect(tableExists(db, 'memories_fts')).toBe(true);
         expect(columnExists(db, 'sessions', 'last_reflected_index')).toBe(true);
+        expect(columnExists(db, 'memories', 'identifiers')).toBe(true);
+        expect(tableExists(db, 'claims')).toBe(true);
+        db.close();
+    });
+    it('migration v13: claims table has the design-doc schema', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        for (const col of [
+            'id', 'memory_id', 'source_memory_id', 'fact', 'claim_type', 'identifiers',
+            'confidence', 'valid_from', 'valid_until', 'recorded_at', 'expired_at', 'created_at',
+        ]) {
+            expect(columnExists(db, 'claims', col)).toBe(true);
+        }
+        db.close();
+    });
+    it('migration v15: memories.claims_extracted_at cursor column exists', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(columnExists(db, 'memories', 'claims_extracted_at')).toBe(true);
+        db.close();
+    });
+    it('migration v14: claims_vec table exists for the dedup cascade only', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(tableExists(db, 'claims_vec')).toBe(true);
+        db.close();
+    });
+    it('migration v13: memory_links accepts same_as and supersedes link types', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(() => db.prepare(`INSERT INTO memory_links (source_id, target_id, link_type, confidence) VALUES ('a', 'b', 'same_as', 0.9)`).run()).not.toThrow();
+        expect(() => db.prepare(`INSERT INTO memory_links (source_id, target_id, link_type, confidence) VALUES ('a', 'c', 'supersedes', 1.0)`).run()).not.toThrow();
+        // Existing link types must still work after the CHECK-constraint recreate.
+        expect(() => db.prepare(`INSERT INTO memory_links (source_id, target_id, link_type, confidence) VALUES ('a', 'd', 'contradicts', 1.0)`).run()).not.toThrow();
         db.close();
     });
     it('migration 6: sessions.cwd column exists', () => {
@@ -274,6 +308,60 @@ describe('schema migrations', () => {
         expect(idx).toBeTruthy();
         // Schema fully migrated
         expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+        db.close();
+    });
+    it('migration v13: brings a fresh DB up through session_search_log table', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(schemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
+        expect(tableExists(db, 'session_search_log')).toBe(true);
+        db.close();
+    });
+    it('migration v13: session_search_log accepts a valid row and rejects an invalid source', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        expect(() => {
+            db.prepare(`
+        INSERT INTO session_search_log (session_id, query, source, match_count)
+        VALUES ('sess-1', 'needle', 'compacted', 3)
+      `).run();
+        }).not.toThrow();
+        expect(() => {
+            db.prepare(`
+        INSERT INTO session_search_log (session_id, query, source, match_count)
+        VALUES ('sess-1', 'needle', 'bogus', 0)
+      `).run();
+        }).toThrow();
+        db.close();
+    });
+    it('migration v13: idx_session_search_log_session index exists', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        const idx = db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name='idx_session_search_log_session'`).get();
+        expect(idx).toBeTruthy();
+        db.close();
+    });
+    it('migration v13: running initializeSchema twice is idempotent (no throw, table queryable, no duplicate schema_version rows)', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        const afterFirst = db.prepare(`SELECT COUNT(*) AS c FROM schema_version`).get().c;
+        expect(() => initializeSchema(db)).not.toThrow();
+        const afterSecond = db.prepare(`SELECT COUNT(*) AS c FROM schema_version`).get().c;
+        expect(afterSecond).toBe(afterFirst);
+        expect(db.prepare(`SELECT * FROM session_search_log LIMIT 0`).all()).toEqual([]);
+        db.close();
+    });
+    it('migration v13: does not touch existing tables/data (sessions row survives)', () => {
+        const db = openDatabase(':memory:');
+        initializeSchema(db);
+        db.prepare(`
+      INSERT INTO sessions (session_id, project, jsonl_path)
+      VALUES ('test-v13-preserve', 'proj', '/tmp/test.jsonl')
+    `).run();
+        const before = db.prepare(`SELECT COUNT(*) AS c FROM sessions`).get().c;
+        initializeSchema(db);
+        const after = db.prepare(`SELECT COUNT(*) AS c FROM sessions`).get().c;
+        expect(after).toBe(before);
         db.close();
     });
 });

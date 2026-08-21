@@ -12,7 +12,28 @@
  * memories are pruned.
  */
 import Database from 'better-sqlite3';
+import type { MemoryType } from './types.js';
 import { type HaikuFn } from './governance.js';
+import type { MemoryDuplicateVerdict } from './memory-dedup-confirm.js';
+/**
+ * Optional claim-level confirmation gate for the raw-cosine duplicate merge
+ * below (see memory-dedup-confirm.ts's docstring for why raw cosine alone is
+ * risky). Undefined by default — existing callers get exactly today's
+ * behavior; only a caller that opts in by passing confirmMemoryDuplicate
+ * (or an equivalent) pays the claim-decomposition cost and gets the extra
+ * precision.
+ */
+export type ConfirmDuplicateFn = (db: Database.Database, memoryA: {
+    id: string;
+    body: string;
+    memory_type: MemoryType;
+    confidence: number;
+}, memoryB: {
+    id: string;
+    body: string;
+    memory_type: MemoryType;
+    confidence: number;
+}) => Promise<MemoryDuplicateVerdict>;
 export interface ConsolidateResult {
     embedded: number;
     merged: number;
@@ -44,5 +65,5 @@ export interface ConsolidateResult {
  * Decision: do NOT add LLM rewrite logic here. The three reasons above must
  * each be addressed before this decision can be reversed.
  */
-export declare function consolidateMemories(db: Database.Database, embedFn?: (text: string) => Promise<Float32Array | null>, haikuFn?: HaikuFn): Promise<ConsolidateResult>;
+export declare function consolidateMemories(db: Database.Database, embedFn?: (text: string) => Promise<Float32Array | null>, haikuFn?: HaikuFn, confirmDuplicateFn?: ConfirmDuplicateFn): Promise<ConsolidateResult>;
 //# sourceMappingURL=consolidate.d.ts.map

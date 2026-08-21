@@ -70,4 +70,37 @@ describe('consolidateMemories', () => {
     expect(getMemory(db, b.id)!.superseded_by).toBe(a.id);
     db.close();
   });
+
+  it('with no confirmDuplicateFn supplied, merges on raw cosine similarity alone (unchanged default behavior)', async () => {
+    const db = freshDb();
+    insertMemory(db, { ...base, title: 'A', body: 'first phrasing of the rule', confidence: 0.9 });
+    insertMemory(db, { ...base, title: 'B', body: 'second phrasing of the rule', confidence: 0.7 });
+
+    const r = await consolidateMemories(db, async () => constVec());
+    expect(r.merged).toBe(1);
+    db.close();
+  });
+
+  it('with a confirmDuplicateFn supplied, skips the merge when it returns anything other than "confirmed"', async () => {
+    const db = freshDb();
+    const a = insertMemory(db, { ...base, title: 'A', body: 'first phrasing of the rule', confidence: 0.9 });
+    const b = insertMemory(db, { ...base, title: 'B', body: 'second phrasing of the rule', confidence: 0.7 });
+
+    const r = await consolidateMemories(db, async () => constVec(), undefined, async () => 'insufficient');
+    expect(r.merged).toBe(0);
+    expect(getMemory(db, a.id)!.superseded_by).toBeNull();
+    expect(getMemory(db, b.id)!.superseded_by).toBeNull();
+    db.close();
+  });
+
+  it('with a confirmDuplicateFn supplied, proceeds with the merge when it returns "confirmed"', async () => {
+    const db = freshDb();
+    const a = insertMemory(db, { ...base, title: 'A', body: 'first phrasing of the rule', confidence: 0.9 });
+    const b = insertMemory(db, { ...base, title: 'B', body: 'second phrasing of the rule', confidence: 0.7 });
+
+    const r = await consolidateMemories(db, async () => constVec(), undefined, async () => 'confirmed');
+    expect(r.merged).toBe(1);
+    expect(getMemory(db, b.id)!.superseded_by).toBe(a.id);
+    db.close();
+  });
 });

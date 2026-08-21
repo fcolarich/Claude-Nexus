@@ -18,7 +18,28 @@ import { generateEmbedding } from './embeddings.js';
 import { callModel } from './llm.js';
 import { embedUnindexedMemories, insertMemory, embedMemory, normalize } from './memories.js';
 import { resolveProjectFromCwd } from './project-root.js';
+import { extractIdentifiers, unionIdentifiers } from './identifiers.js';
+import type { MemoryDuplicateVerdict } from './memory-dedup-confirm.js';
 import type { Memory, MemoryType, DecayClass, AtomScope } from './types.js';
+
+/**
+ * Optional claim-level contradiction guard for cluster membership. Distill's
+ * clustering is embedding-similarity-only (BAND_LOW=0.70, "related" not
+ * "duplicate") — nothing stops it from merging two memories that are
+ * topically close but state conflicting facts. Undefined by default —
+ * existing callers/tests get exactly today's behavior; production wiring
+ * passes confirmMemoryDuplicate bound to the SAME callFn distillation itself
+ * uses, so decomposition runs on whatever model is configured for the sweep
+ * (Haiku by default, or --merge-model's local model), never a hardcoded one.
+ * Only 'contradicts' excludes a candidate — 'insufficient' still lets
+ * embedding-based clustering proceed, since distill's own band is already
+ * looser than a duplicate-confirmation bar.
+ */
+export type ContradictionGuardFn = (
+  db: Database.Database,
+  memoryA: { id: string; body: string; memory_type: MemoryType; confidence: number },
+  memoryB: { id: string; body: string; memory_type: MemoryType; confidence: number },
+) => Promise<MemoryDuplicateVerdict>;
 
 // Below: unrelated. At/above the dedup threshold (0.86): consolidate's job.
 // Left at 0.70 deliberately. Raising it to 0.75 was measured against 1028 real
@@ -199,7 +220,11 @@ function scopeLabel(scope: ResolvedScope): string {
 }
 
 function rowToMemory(r: Record<string, unknown>): Memory {
-  return { ...(r as unknown as Memory), tags: JSON.parse((r.tags as string) || '[]') };
+  return {
+    ...(r as unknown as Memory),
+    tags: JSON.parse((r.tags as string) || '[]'),
+    identifiers: JSON.parse((r.identifiers as string) || '[]'),
+  };
 }
 
 /**
@@ -326,7 +351,8 @@ export async function distillMemories(
   db: Database.Database,
   opts?: DistillOptions,
   embedFn: (text: string) => Promise<Float32Array | null> = generateEmbedding,
-  callFn: (system: string, user: string) => Promise<string> = callModel
+  callFn: (system: string, user: string) => Promise<string> = callModel,
+  contradictionGuardFn?: ContradictionGuardFn
 ): Promise<DistillResult> {
   const clampedLimit = normalizeLimit(opts?.limit);
   const scope = resolveScope(db, opts);
@@ -402,9 +428,19 @@ export async function distillMemories(
     }
     consecutiveEmbedFailures = 0;
 
-    const related = relatedMemories(db, normalize(vec), m, dedupThreshold)
+    let related = relatedMemories(db, normalize(vec), m, dedupThreshold)
       .filter(r => !assigned.has(r.memory.id));
     if (related.length === 0) { assigned.add(m.id); continue; }
+
+    if (contradictionGuardFn) {
+      const safe = [];
+      for (const r of related) {
+        const verdict = await contradictionGuardFn(db, m, r.memory);
+        if (verdict !== 'contradicts') safe.push(r);
+      }
+      related = safe;
+      if (related.length === 0) { assigned.add(m.id); continue; } // every candidate conflicted — nothing safe to merge with
+    }
 
     const cluster = [m, ...related.map(r => r.memory)].slice(0, MAX_CLUSTER);
     for (const c of cluster) assigned.add(c.id);
@@ -462,6 +498,14 @@ export async function distillMemories(
       ? (obj.tags as unknown[]).filter(t => typeof t === 'string').map(t => (t as string).toLowerCase()).slice(0, 5)
       : [];
 
+    // Set-union in code — the model never carries identifiers across a merge.
+    // Sourced from each cluster member's own `identifiers` column (populated at
+    // insert time or by the Phase 1 backfill), not re-extracted from the LLM's
+    // merged prose: that would only recover what the model happened to keep,
+    // reproducing the exact loss this column exists to eliminate. See
+    // src/core/identifiers.ts and _documents/design-structured-memory.md (Phase 1).
+    const mergedIdentifiers = unionIdentifiers(...cluster.map(c => c.identifiers));
+
     const ins = insertMemory(db, {
       title: (obj.title as string).slice(0, 120),
       body: obj.body as string,
@@ -476,6 +520,7 @@ export async function distillMemories(
       tags,
       load_at_init: cluster.some(c => c.load_at_init === 1),
       promotion_target: 'none',
+      identifiers: mergedIdentifiers,
     });
     if (!ins.inserted) continue;
     await embedMemory(db, ins.id, embedFn);
@@ -510,8 +555,19 @@ export async function distillMemories(
     const obj = firstJsonObject(await callFn(SANITIZE_PROMPT, `(${m.memory_type}) ${m.title}\n${fresh.body}`));
     if (!obj || typeof obj.body !== 'string' || obj.body.length >= fresh.body.length) continue;
 
-    db.prepare(`UPDATE memories SET title = ?, body = ?, updated_at = datetime('now') WHERE id = ?`)
-      .run(typeof obj.title === 'string' ? (obj.title as string).slice(0, 120) : m.title, obj.body, m.id);
+    const newTitle = typeof obj.title === 'string' ? (obj.title as string).slice(0, 120) : m.title;
+    // Sanitize rewrites body text, same as a merge — it must carry the same
+    // identifier guarantee. Union `m.identifiers` (captured at insert/backfill
+    // time, before this rewrite) with a fresh extraction of the tightened text,
+    // rather than overwriting: whatever the shortened prose still names is
+    // included, and nothing the pre-rewrite body named is ever dropped just
+    // because this pass shortened it. Fixes the two identifier losses found in
+    // the Phase 1 whole-population audit (ADR-20260808214308-a0) — both traced
+    // to this UPDATE not touching `identifiers`, not to the extractor itself.
+    const newIdentifiers = unionIdentifiers(m.identifiers, extractIdentifiers(`${newTitle}\n${obj.body}`));
+
+    db.prepare(`UPDATE memories SET title = ?, body = ?, identifiers = ?, updated_at = datetime('now') WHERE id = ?`)
+      .run(newTitle, obj.body, JSON.stringify(newIdentifiers), m.id);
     await embedMemory(db, m.id, embedFn);
     result.sanitized++;
   }

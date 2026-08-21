@@ -124,6 +124,76 @@ describe('exportAll', () => {
         expect(index).not.toContain('more memories');
         db.close();
     });
+    it('does not rewrite an existing exported file even if its on-disk content diverges from the DB (full export is fill-missing only)', () => {
+        const db = freshDb();
+        insertMemory(db, { ...base, title: 'Stable one', body: 'original body.', memory_type: 'convention', review_status: 'approved' });
+        const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+        exportAll(db, dir);
+        const projDir = join(dir, 'proj', 'memory');
+        const memFiles = readdirSync(projDir).filter((f) => f.endsWith('.md') && f !== 'MEMORY.md');
+        const fpath = join(projDir, memFiles[0]);
+        writeFileSync(fpath, 'MANUALLY EDITED CONTENT');
+        exportAll(db, dir);
+        expect(readFileSync(fpath, 'utf-8')).toBe('MANUALLY EDITED CONTENT');
+        db.close();
+    });
+    it('touchedIds scope writes only the touched memory files, unconditionally, and rebuilds that bucket index from the DB', () => {
+        const db = freshDb();
+        const { id: id1 } = insertMemory(db, { ...base, title: 'Mem One', body: 'body one', memory_type: 'convention', review_status: 'approved' });
+        insertMemory(db, { ...base, title: 'Mem Two', body: 'body two', memory_type: 'convention', review_status: 'approved' });
+        const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+        exportAll(db, dir);
+        db.prepare('UPDATE memories SET body = ? WHERE id = ?').run('body one UPDATED', id1);
+        exportAll(db, dir, { touchedIds: [id1] });
+        const projDir = join(dir, 'proj', 'memory');
+        const f1 = readdirSync(projDir).find((f) => f.startsWith(id1));
+        expect(readFileSync(join(projDir, f1), 'utf-8')).toContain('body one UPDATED');
+        const index = readFileSync(join(projDir, 'MEMORY.md'), 'utf-8');
+        expect(index).toContain('Mem One');
+        expect(index).toContain('Mem Two');
+        db.close();
+    });
+    it('touchedIds scope removes the on-disk file for a touched memory that became superseded', () => {
+        const db = freshDb();
+        const { id: oldId } = insertMemory(db, { ...base, title: 'Old One', body: 'old body', memory_type: 'convention', review_status: 'approved' });
+        const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+        exportAll(db, dir);
+        const { id: newId } = insertMemory(db, { ...base, title: 'New One', body: 'new body', memory_type: 'convention', review_status: 'approved' });
+        db.prepare('UPDATE memories SET superseded_by = ? WHERE id = ?').run(newId, oldId);
+        exportAll(db, dir, { touchedIds: [oldId, newId] });
+        const projDir = join(dir, 'proj', 'memory');
+        expect(readdirSync(projDir).some((f) => f.startsWith(oldId))).toBe(false);
+        db.close();
+    });
+    it('touchedIds scope skips orphan bucket pruning', () => {
+        const db = freshDb();
+        const { id } = insertMemory(db, { ...base, project: 'live-proj', title: 'Kept', body: 'kept body', memory_type: 'convention', review_status: 'approved' });
+        const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+        mkdirSync(join(dir, 'stale-proj', 'memory'), { recursive: true });
+        writeFileSync(join(dir, 'stale-proj', 'memory', 'MEMORY.md'), '# stale');
+        exportAll(db, dir, { touchedIds: [id] });
+        expect(existsSync(join(dir, 'stale-proj'))).toBe(true);
+        db.close();
+    });
+    it('touchedIds scope only processes buckets containing touched memories', () => {
+        const db = freshDb();
+        const { id: idA } = insertMemory(db, { ...base, project: 'proj-a', title: 'A', body: 'a body', memory_type: 'convention', review_status: 'approved' });
+        insertMemory(db, { ...base, project: 'proj-b', title: 'B', body: 'b body', memory_type: 'convention', review_status: 'approved' });
+        const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+        const result = exportAll(db, dir, { touchedIds: [idA] });
+        expect(result.buckets).toBe(1);
+        expect(existsSync(join(dir, 'proj-b'))).toBe(false);
+        db.close();
+    });
+    it('touchedIds scope writes no file and does not count a bucket for a touched memory that is not approved', () => {
+        const db = freshDb();
+        const { id } = insertMemory(db, { ...base, title: 'Pending', body: 'pending body', memory_type: 'convention', review_status: 'pending' });
+        const dir = mkdtempSync(join(tmpdir(), 'nexus-exp-'));
+        const result = exportAll(db, dir, { touchedIds: [id] });
+        expect(result.files).toBe(0);
+        expect(result.buckets).toBe(0);
+        db.close();
+    });
     it('writes no pointer line when entry count is exactly at the cap (strict >)', () => {
         const db = freshDb();
         const cap = 200;

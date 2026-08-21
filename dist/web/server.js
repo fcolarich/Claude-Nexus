@@ -17,6 +17,8 @@ import { flagStaleMemories, effectiveConfidence } from '../core/decay.js';
 import { getNexusConfig } from '../core/config.js';
 import { verifyMemory, recordFeedback, embedMemory } from '../core/memories.js';
 import { consolidateMemories } from '../core/consolidate.js';
+import { confirmMemoryDuplicate } from '../core/memory-dedup-confirm.js';
+import { callModel } from '../core/llm.js';
 import { distillMemories } from '../core/distill.js';
 const PORT = parseInt(process.env.NEXUS_PORT ?? '3210', 10);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -81,8 +83,8 @@ app.post('/api/reflect', (req, res) => {
                 project: project ?? (cwd ? resolveProjectSlug(cwd) : null),
                 cwd,
             });
-            if (!result.skipped && (result.inserted > 0 || result.merged > 0))
-                exportAll(db);
+            if (!result.skipped && result.touchedIds.length > 0)
+                exportAll(db, undefined, { touchedIds: result.touchedIds });
             if (result.excluded_reason)
                 console.log(`[web] reflect: origin excluded (${result.excluded_reason})`);
             else
@@ -109,12 +111,12 @@ app.post('/api/memories/:id/feedback', (req, res) => {
     res.json({ ok: recordFeedback(db, req.params.id, !!(req.body?.helped)) });
 });
 app.post('/api/consolidate', (_req, res) => {
-    consolidateMemories(db)
+    consolidateMemories(db, undefined, undefined, (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel))
         .then(r => res.json(r))
         .catch(err => res.status(500).json({ error: err.message }));
 });
 app.post('/api/distill', (_req, res) => {
-    distillMemories(db)
+    distillMemories(db, undefined, undefined, callModel, (db, a, b) => confirmMemoryDuplicate(db, a, b, callModel))
         .then(r => res.json(r))
         .catch(err => res.status(500).json({ error: err.message }));
 });

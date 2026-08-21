@@ -88,6 +88,14 @@ describe('reflect', () => {
         expect(approved).toBe(2); // confidence 0.9 >= auto-approve threshold
         db.close();
     });
+    it('returns touchedIds naming every inserted/merged memory, for scoped export', async () => {
+        const db = freshDb();
+        const p = makeTranscript(SIGNAL_TRANSCRIPT);
+        const r = await reflect(db, { session_id: 's1b', transcript_path: p, project: 'proj' }, { extract: async () => [candA, candB], embed: async (t) => vecFromText(t) });
+        const ids = db.prepare(`SELECT id FROM memories`).all().map((row) => row.id).sort();
+        expect(r.touchedIds.slice().sort()).toEqual(ids);
+        db.close();
+    });
     it('skips a trivial window via the Observer gate', async () => {
         const db = freshDb();
         const p = makeTranscript([userMsg('hi')]);
@@ -201,43 +209,12 @@ describe('reflect', () => {
         expect(receivedText).toContain("no, don't use global variables here");
         db.close();
     });
-    it('sets sessions.vcc_shrunk_at after a full reflect() pass when compactFileInPlace succeeds', async () => {
-        const db = freshDb();
-        const p = makeTranscript(SIGNAL_TRANSCRIPT);
-        const fakeVcc = {
-            compactWindowLines: () => ({ ok: true, text: 'compacted' }),
-            compactFileInPlace: () => ({ ok: true, text: 'shrunk' }),
-        };
-        await reflect(db, { session_id: 's9', transcript_path: p, project: 'proj' }, { extract: async () => [candA], embed: async (t) => vecFromText(t), vcc: fakeVcc });
-        const row = db.prepare(`SELECT vcc_shrunk_at FROM sessions WHERE session_id = 's9'`).get();
-        expect(row.vcc_shrunk_at).not.toBeNull();
-        db.close();
-    });
-    it('leaves sessions.vcc_shrunk_at NULL when compactFileInPlace fails', async () => {
-        const db = freshDb();
-        const p = makeTranscript(SIGNAL_TRANSCRIPT);
-        const fakeVcc = {
-            compactWindowLines: () => ({ ok: true, text: 'compacted' }),
-            compactFileInPlace: () => ({ ok: false, error: 'boom' }),
-        };
-        await reflect(db, { session_id: 's10', transcript_path: p, project: 'proj' }, { extract: async () => [candA], embed: async (t) => vecFromText(t), vcc: fakeVcc });
-        const row = db.prepare(`SELECT vcc_shrunk_at FROM sessions WHERE session_id = 's10'`).get();
-        expect(row.vcc_shrunk_at).toBeNull();
-        db.close();
-    });
-    it('never invokes compactFileInPlace on a gate-skipped (trivial) window', async () => {
-        const db = freshDb();
-        const p = makeTranscript([userMsg('hi')]);
-        let shrinkCalled = false;
-        const fakeVcc = {
-            compactWindowLines: () => ({ ok: true, text: 'compacted' }),
-            compactFileInPlace: () => { shrinkCalled = true; return { ok: true, text: 'shrunk' }; },
-        };
-        const r = await reflect(db, { session_id: 's11', transcript_path: p, project: 'proj' }, { extract: async () => [candA], embed: async (t) => vecFromText(t), vcc: fakeVcc });
-        expect(r.skipped).toBe(true);
-        expect(shrinkCalled).toBe(false);
-        db.close();
-    });
+    // The post-extraction compactFileInPlace() call site was permanently retired from
+    // reflect() (ADR-015, reaffirmed by ADR-20260820190143-a5) -- compactToParallelFile
+    // below is the live post-extraction shrink mechanism. Tests that DI-inject a fake
+    // compactFileInPlace and assert on vcc_shrunk_at were removed here: one was
+    // genuinely red (asserting a call that no longer happens), two passed vacuously
+    // (asserting the absence of a call that's now unconditionally absent).
     describe('end-of-reflect() parallel-compact trigger (VCC_PARALLEL_COMPACT_BYTES)', () => {
         // Fallback mirrors task-010's planned literal (200_000). Read dynamically off
         // the module namespace so this suite is RED (undefined threshold, no export

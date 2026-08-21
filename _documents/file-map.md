@@ -34,6 +34,14 @@ Maintained via the `update-file-map` skill.
 | `src/capture/prompt-runner.ts` | UserPromptSubmit hook — embeds prompt, injects relevance-floored recall (top 3-5, per-session dedup) |
 | `src/capture/secrets.ts` | Secret detection and in-place redaction — pure, dependency-free |
 | `src/capture/secrets.fixtures.ts` | Shared positive/negative corpus for `secrets.test.ts` and `reflector.test.ts` |
+| `src/core/identifiers.ts` | Deterministic code-like identifier extraction (`extractIdentifiers`, `unionIdentifiers`) — Phase 1 structured-memory: identifiers live in their own column, set-unioned in code during merge, never touched by a model (ADR: Phase 1 zero-loss gate) |
+| `src/core/claims.ts` | Claims data layer — CRUD for the immutable `claims` table (content-addressed ids, `markClaimInvalid`/`embedClaim`), Phase 2 structured-memory |
+| `src/core/claim-dedup.ts` | Claim dedup cascade — `classifyDedupBand` (auto_merge/flag/new), `combinedSimilarity` (embedding+fuzzy blend), `identifiersDisjoint` (any-difference precision veto, ADR-20260820230120-e1) |
+| `src/core/claim-contradiction.ts` | Deterministic numeric-contradiction guard between two claim facts — runs before similarity scoring, no score can override it |
+| `src/core/consolidate-claims.ts` | `consolidateClaims` — dedupe-and-link orchestration over the live claims corpus (contradiction guard → identifier veto → dedup band → invalidate/flag) |
+| `src/core/claims-sweep.ts` | Resumable claim-decomposition sweep core (`decomposeMemoriesToClaims`), mirrors `distill.ts`'s cursor/chunk pattern against `claims_extracted_at` |
+| `src/core/memory-dedup-confirm.ts` | `confirmMemoryDuplicate` — claim-level confirmation gate for memory-level dedup/distill decisions; lazily decomposes+persists claims only for actual dedup candidates (ADR-20260820230137-dc) |
+| `src/capture/claim-extract.ts` | `extractClaimsForMemory` — extract-then-verify claim decomposition of one memory (identifier-coverage retry loop), model-agnostic `callFn` |
 | `extraction_models.yaml` | Runtime config: embedding model, extraction model, recall budget, capture thresholds |
 | `package.json` | Project manifest, scripts, dependencies |
 | `scripts/review-distill.mjs` | Read-only reviewer for `nexus_distill` output — shows each merged memory next to the originals it superseded, via `memories.superseded_by`. Run with `npm run review-distill -- <project-slug> [limit]`. |

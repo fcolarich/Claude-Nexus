@@ -16,6 +16,7 @@ import { generateEmbedding } from './embeddings.js';
 import { callModel } from './llm.js';
 import { embedUnindexedMemories, insertMemory, embedMemory, normalize } from './memories.js';
 import { resolveProjectFromCwd } from './project-root.js';
+import { extractIdentifiers, unionIdentifiers } from './identifiers.js';
 // Below: unrelated. At/above the dedup threshold (0.86): consolidate's job.
 // Left at 0.70 deliberately. Raising it to 0.75 was measured against 1028 real
 // merges and would have dropped 48.5% of the gated pairs — half of all
@@ -161,7 +162,11 @@ function scopeLabel(scope) {
     return scope.kind;
 }
 function rowToMemory(r) {
-    return { ...r, tags: JSON.parse(r.tags || '[]') };
+    return {
+        ...r,
+        tags: JSON.parse(r.tags || '[]'),
+        identifiers: JSON.parse(r.identifiers || '[]'),
+    };
 }
 /**
  * Double any backslash that does not begin a legal JSON escape.
@@ -292,7 +297,7 @@ function relatedMemories(db, queryVec, self, highExclusive) {
     }
     return out;
 }
-export async function distillMemories(db, opts, embedFn = generateEmbedding, callFn = callModel) {
+export async function distillMemories(db, opts, embedFn = generateEmbedding, callFn = callModel, contradictionGuardFn) {
     const clampedLimit = normalizeLimit(opts?.limit);
     const scope = resolveScope(db, opts);
     const since = opts?.since;
@@ -360,11 +365,24 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
             continue;
         }
         consecutiveEmbedFailures = 0;
-        const related = relatedMemories(db, normalize(vec), m, dedupThreshold)
+        let related = relatedMemories(db, normalize(vec), m, dedupThreshold)
             .filter(r => !assigned.has(r.memory.id));
         if (related.length === 0) {
             assigned.add(m.id);
             continue;
+        }
+        if (contradictionGuardFn) {
+            const safe = [];
+            for (const r of related) {
+                const verdict = await contradictionGuardFn(db, m, r.memory);
+                if (verdict !== 'contradicts')
+                    safe.push(r);
+            }
+            related = safe;
+            if (related.length === 0) {
+                assigned.add(m.id);
+                continue;
+            } // every candidate conflicted — nothing safe to merge with
         }
         const cluster = [m, ...related.map(r => r.memory)].slice(0, MAX_CLUSTER);
         for (const c of cluster)
@@ -427,6 +445,13 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
         const tags = Array.isArray(obj.tags)
             ? obj.tags.filter(t => typeof t === 'string').map(t => t.toLowerCase()).slice(0, 5)
             : [];
+        // Set-union in code — the model never carries identifiers across a merge.
+        // Sourced from each cluster member's own `identifiers` column (populated at
+        // insert time or by the Phase 1 backfill), not re-extracted from the LLM's
+        // merged prose: that would only recover what the model happened to keep,
+        // reproducing the exact loss this column exists to eliminate. See
+        // src/core/identifiers.ts and _documents/design-structured-memory.md (Phase 1).
+        const mergedIdentifiers = unionIdentifiers(...cluster.map(c => c.identifiers));
         const ins = insertMemory(db, {
             title: obj.title.slice(0, 120),
             body: obj.body,
@@ -441,6 +466,7 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
             tags,
             load_at_init: cluster.some(c => c.load_at_init === 1),
             promotion_target: 'none',
+            identifiers: mergedIdentifiers,
         });
         if (!ins.inserted)
             continue;
@@ -474,8 +500,18 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
         const obj = firstJsonObject(await callFn(SANITIZE_PROMPT, `(${m.memory_type}) ${m.title}\n${fresh.body}`));
         if (!obj || typeof obj.body !== 'string' || obj.body.length >= fresh.body.length)
             continue;
-        db.prepare(`UPDATE memories SET title = ?, body = ?, updated_at = datetime('now') WHERE id = ?`)
-            .run(typeof obj.title === 'string' ? obj.title.slice(0, 120) : m.title, obj.body, m.id);
+        const newTitle = typeof obj.title === 'string' ? obj.title.slice(0, 120) : m.title;
+        // Sanitize rewrites body text, same as a merge — it must carry the same
+        // identifier guarantee. Union `m.identifiers` (captured at insert/backfill
+        // time, before this rewrite) with a fresh extraction of the tightened text,
+        // rather than overwriting: whatever the shortened prose still names is
+        // included, and nothing the pre-rewrite body named is ever dropped just
+        // because this pass shortened it. Fixes the two identifier losses found in
+        // the Phase 1 whole-population audit (ADR-20260808214308-a0) — both traced
+        // to this UPDATE not touching `identifiers`, not to the extractor itself.
+        const newIdentifiers = unionIdentifiers(m.identifiers, extractIdentifiers(`${newTitle}\n${obj.body}`));
+        db.prepare(`UPDATE memories SET title = ?, body = ?, identifiers = ?, updated_at = datetime('now') WHERE id = ?`)
+            .run(newTitle, obj.body, JSON.stringify(newIdentifiers), m.id);
         await embedMemory(db, m.id, embedFn);
         result.sanitized++;
     }
