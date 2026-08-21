@@ -71,5 +71,27 @@ export function resolveProjectFromCwd(db: Database.Database, cwd: string): strin
 	const shortName = parts[parts.length - 1]?.toLowerCase().replace(/_/g, '-');
 	if (shortName && shortName !== derived?.toLowerCase() && known(shortName)) return shortName;
 
+	// Fuzzy recovery: a cwd that arrived through a shell/tool which mangled path
+	// separators (e.g. backslashes silently dropped by a POSIX-bash caller on
+	// Windows) still slugs to the same alphanumeric skeleton as the real project
+	// — "C:VoodooPaper2" and "C--Voodoo-Paper2" both collapse to "cvoodoopaper2".
+	// Only trust this when exactly one known project matches, to avoid false hits.
+	if (derived) {
+		const skeleton = derived.toLowerCase().replace(/[^a-z0-9]/g, '');
+		if (skeleton.length >= 3) {
+			const rows = db.prepare(`
+				SELECT DISTINCT project FROM (
+					SELECT project FROM atoms WHERE project IS NOT NULL
+					UNION SELECT project FROM sessions WHERE project IS NOT NULL
+					UNION SELECT project FROM memories WHERE project IS NOT NULL
+				)
+			`).all() as { project: string }[];
+			const matches = rows
+				.map(r => r.project)
+				.filter(p => p.toLowerCase().replace(/[^a-z0-9]/g, '') === skeleton);
+			if (matches.length === 1) return matches[0];
+		}
+	}
+
 	return derived ?? shortName ?? cwd;
 }

@@ -74,7 +74,7 @@ Or run `/update-project-docs` after a change and let the doc-sync agent route it
 | `src/core/recall.ts` | Memory retrieval — bulk decay-ranked recall (recallMemories, for MCP/web) + prompt-driven semantic recall (recallByQuery) |
 | `src/core/embeddings.ts` | Embedding generation via Ollama mxbai-embed-large |
 | `src/core/config.ts` | Reads extraction_models.yaml; provides runtime config with sane defaults |
-| `src/core/project-root.ts` | Project identity resolution — `resolveGitProjectRoot()` + `resolveProjectSlug()`, used by every live-cwd call site (ADR-013) |
+| `src/core/project-root.ts` | Project identity resolution — `resolveGitProjectRoot()` + `resolveProjectSlug()`, used by every live-cwd call site (ADR-013); `resolveProjectFromCwd()` also has a skeleton-match fallback for mangled cwd paths (ADR-20260821130040-ea) |
 | `src/capture/reflector.ts` | Background capture pipeline — reads new transcript lines, calls Haiku, dedup-merges memories |
 | `src/capture/extract.ts` | Haiku-based memory extraction from transcript windows |
 | `src/capture/export.ts` | Exports memories as markdown mirror files; prunes stale project export buckets with no live memories |

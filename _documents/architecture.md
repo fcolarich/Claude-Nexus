@@ -34,3 +34,5 @@
 | [ADR-027](decisions/adr-20260820190143-a5-compacttoparallelfile-is-the-live-post-extraction.md) | compactToParallelFile is the live post-extraction shrink mechanism, superseding compactFileInPlace | 2026-08-20 | accepted |
 | [ADR-028](decisions/adr-20260820230120-e1-claim-dedup-precision-fix-identifier-conflict-veto.md) | Claim dedup precision fix: identifier-conflict veto beyond zero-overlap | 2026-08-20 | accepted |
 | [ADR-029](decisions/adr-20260820230137-dc-claim-level-confirmation-gate-for-memory-dedupdist.md) | Claim-level confirmation gate for memory dedup/distill: consolidateMemories and distillMemories, calibrated live | 2026-08-20 | accepted |
+| [ADR-030](decisions/adr-20260821130040-ea-fuzzy-skeleton-match-fallback-for-cwd-project-slug.md) | Fuzzy skeleton-match fallback for cwd project-slug resolution | 2026-08-21 | accepted |
+| [ADR-031](decisions/adr-20260821130106-e9-claim-level-confirmation-gate-made-mandatory-not-o.md) | Claim-level confirmation gate made mandatory (not opt-in) on consolidateMemories and distillMemories | 2026-08-21 | accepted |
