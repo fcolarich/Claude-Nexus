@@ -14,14 +14,12 @@
 import Database from 'better-sqlite3';
 import type { MemoryType } from './types.js';
 import { type HaikuFn } from './governance.js';
-import type { MemoryDuplicateVerdict } from './memory-dedup-confirm.js';
+import { type MemoryDuplicateVerdict } from './memory-dedup-confirm.js';
 /**
- * Optional claim-level confirmation gate for the raw-cosine duplicate merge
- * below (see memory-dedup-confirm.ts's docstring for why raw cosine alone is
- * risky). Undefined by default — existing callers get exactly today's
- * behavior; only a caller that opts in by passing confirmMemoryDuplicate
- * (or an equivalent) pays the claim-decomposition cost and gets the extra
- * precision.
+ * Claim-level confirmation gate for the raw-cosine duplicate merge below (see
+ * memory-dedup-confirm.ts's docstring for why raw cosine alone is risky).
+ * Always runs — defaults to confirmMemoryDuplicate bound to this call's own
+ * haikuFn, but stays injectable so tests can stub it.
  */
 export type ConfirmDuplicateFn = (db: Database.Database, memoryA: {
     id: string;

@@ -32,6 +32,11 @@ const fakeMerge = async () => JSON.stringify({
   scope: 'project', decay_class: 'stable', tags: ['x'],
 });
 
+// Stub for contradictionGuardFn — the gate always runs now, so tests exercising
+// unrelated distill behavior stub it to "confirmed" to keep clustering unblocked
+// without paying for real claim decomposition.
+const confirmedGuard = async () => 'confirmed' as const;
+
 const base: Omit<MemoryInput, 'title' | 'body'> = {
   memory_type: 'convention', scope: 'project', project: 'p', confidence: 0.8,
   decay_class: 'stable', review_status: 'approved',
@@ -47,7 +52,7 @@ describe('distillMemories', () => {
     insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
     insertMemory(db, { ...base, title: 'Three', body: 'GAMMA unrelated thing' });
 
-    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r.clusters).toBe(1);
     expect(r.created).toBe(1);
     expect(r.merged).toBe(2);
@@ -60,7 +65,7 @@ describe('distillMemories', () => {
     insertMemory(db, { ...base, title: 'A', body: 'ALPHA only' });
     insertMemory(db, { ...base, title: 'C', body: 'GAMMA only' });
 
-    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r.clusters).toBe(0);
     expect(r.merged).toBe(0);
     expect(liveCount(db)).toBe(2);
@@ -69,11 +74,14 @@ describe('distillMemories', () => {
 });
 
 describe('distillMemories — contradictionGuardFn (claim-level cluster-membership veto)', () => {
-  it('with no guard supplied, clusters purely on embedding similarity (unchanged default behavior)', async () => {
+  it('with no guard supplied, the gate still runs (bound to confirmMemoryDuplicate over the same callFn/embedFn) and can veto a cluster', async () => {
     const db = freshDb();
     insertMemory(db, { ...base, title: 'One', body: 'ALPHA first phrasing', confidence: 0.9 });
     insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
 
+    // fakeMerge's output isn't a claim-decomposition JSON array, so the default
+    // gate's extraction fails to parse -> zero claims -> 'insufficient' verdict,
+    // which does NOT exclude the pair (only 'contradicts' does).
     const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge);
     expect(r.clusters).toBe(1);
     expect(r.merged).toBe(2);
@@ -116,7 +124,7 @@ describe('distillMemories — Phase 1: identifier set-union on merge', () => {
 
     // fakeMerge's prose ("ALPHA consolidated body") reproduces none of those identifiers —
     // the exact failure mode this design eliminates structurally.
-    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r.created).toBe(1);
 
     const merged = db.prepare(
@@ -136,7 +144,7 @@ describe('distillMemories — Phase 1: identifier set-union on merge', () => {
     const a = insertMemory(db, { ...base, title: 'One', body: 'ALPHA first src/core/distill.ts', confidence: 0.9 });
     insertMemory(db, { ...base, title: 'Two', body: 'BETA second src/core/memories.ts', confidence: 0.7 });
 
-    await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+    await distillMemories(db, undefined, fakeEmbed, fakeMerge, confirmedGuard);
 
     const original = db.prepare(`SELECT identifiers, superseded_by FROM memories WHERE id = ?`).get(a.id) as
       { identifiers: string; superseded_by: string | null };
@@ -152,7 +160,7 @@ describe('distillMemories — scoped/limited pool + accounting', () => {
     for (let i = 0; i < 10; i++) {
       insertMemory(db, { ...base, title: `M${i}`, body: `GAMMA row ${i}` });
     }
-    const r = await distillMemories(db, { limit: 3 }, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, { limit: 3 }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r.processed).toBeLessThanOrEqual(3);
     db.close();
   });
@@ -163,7 +171,7 @@ describe('distillMemories — scoped/limited pool + accounting', () => {
     insertMemory(db, { ...base, title: 'A2', body: 'BETA in proj-a', project: 'proj-a' });
     insertMemory(db, { ...base, title: 'B1', body: 'ALPHA in proj-b', project: 'proj-b' });
 
-    const r = await distillMemories(db, { project: 'proj-a' }, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, { project: 'proj-a' }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r.processed).toBe(2);
     // cross-project memory untouched: still live, not superseded
     const row = db.prepare(`SELECT superseded_by FROM memories WHERE title = 'B1'`).get() as { superseded_by: string | null };
@@ -177,7 +185,7 @@ describe('distillMemories — scoped/limited pool + accounting', () => {
     insertMemory(db, { ...base, title: 'X2', body: 'GAMMA two', project: 'proj-x' });
     insertMemory(db, { ...base, title: 'X3', body: 'GAMMA three', project: 'proj-x' });
 
-    const r = await distillMemories(db, { project: 'proj-x', limit: 2 }, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, { project: 'proj-x', limit: 2 }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r.processed).toBe(2);
     expect(r.scope).toBe('proj-x');
     expect(r.eligibleRemaining).toBe(1);
@@ -193,7 +201,7 @@ describe('distillMemories — scoped/limited pool + accounting', () => {
     const countingEmbed = async (t: string) => { embedCalls++; return fakeEmbed(t); };
     const countingCall = async () => { callCalls++; return fakeMerge(); };
 
-    const r = await distillMemories(db, { project: 'no-such-project' }, countingEmbed, countingCall);
+    const r = await distillMemories(db, { project: 'no-such-project' }, countingEmbed, countingCall, confirmedGuard);
     expect(r.processed).toBe(0);
     expect(r.eligibleRemaining).toBe(0);
     // embedUnindexedMemories may still call embedFn to index the seeded row;
@@ -207,7 +215,7 @@ describe('distillMemories — scoped/limited pool + accounting', () => {
     insertMemory(db, { ...base, title: 'N1', body: 'GAMMA n1' });
     insertMemory(db, { ...base, title: 'N2', body: 'GAMMA n2' });
 
-    const r = await distillMemories(db, { limit: 0 }, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, { limit: 0 }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r.processed).toBe(2);
     db.close();
   });
@@ -217,7 +225,7 @@ describe('distillMemories — scoped/limited pool + accounting', () => {
     insertMemory(db, { ...base, title: 'H1', body: 'GAMMA h1' });
     insertMemory(db, { ...base, title: 'H2', body: 'GAMMA h2' });
 
-    const r = await distillMemories(db, { limit: 9999 }, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, { limit: 9999 }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r.processed).toBe(2);
     expect(r.eligibleRemaining).toBe(0);
     db.close();
@@ -228,7 +236,7 @@ describe('distillMemories — scoped/limited pool + accounting', () => {
     insertMemory(db, { ...base, title: 'F1', body: 'GAMMA f1' });
     insertMemory(db, { ...base, title: 'F2', body: 'GAMMA f2' });
 
-    const r = await distillMemories(db, { limit: 0.5 }, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, { limit: 0.5 }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r.processed).toBe(1);
     expect(r.eligibleRemaining).toBe(1);
     db.close();
@@ -257,12 +265,12 @@ describe('distillMemories — sweep cursor across successive runs', () => {
     const titlesSeen = () => new Set(seen.flatMap(u => u.match(/\bC\d\b/g) ?? []));
 
     seen = [];
-    const r1 = await distillMemories(db, { project: 'proj-cursor', limit: 3 }, fakeEmbed, spyCall);
+    const r1 = await distillMemories(db, { project: 'proj-cursor', limit: 3 }, fakeEmbed, spyCall, confirmedGuard);
     const first = titlesSeen();
     const markedAfterFirst = markedIds(db);
 
     seen = [];
-    const r2 = await distillMemories(db, { project: 'proj-cursor', limit: 3 }, fakeEmbed, spyCall);
+    const r2 = await distillMemories(db, { project: 'proj-cursor', limit: 3 }, fakeEmbed, spyCall, confirmedGuard);
     const second = titlesSeen();
 
     expect(r1.processed).toBe(3);
@@ -287,7 +295,7 @@ describe('distillMemories — sweep cursor across successive runs', () => {
     const remaining: number[] = [];
     let totalProcessed = 0;
     for (let guard = 0; guard < 20; guard++) {
-      const r = await distillMemories(db, { project: 'proj-sweep', limit: 2 }, fakeEmbed, fakeMerge);
+      const r = await distillMemories(db, { project: 'proj-sweep', limit: 2 }, fakeEmbed, fakeMerge, confirmedGuard);
       totalProcessed += r.processed;
       remaining.push(r.eligibleRemaining);
       if (r.eligibleRemaining === 0) break;
@@ -305,13 +313,13 @@ describe('distillMemories — sweep cursor across successive runs', () => {
       insertMemory(db, { ...base, title: `R${i}`, body: `GAMMA reopen ${i}`, project: 'proj-reopen' });
     }
 
-    const swept = await distillMemories(db, { project: 'proj-reopen' }, fakeEmbed, fakeMerge);
+    const swept = await distillMemories(db, { project: 'proj-reopen' }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(swept.processed).toBe(3);
     expect(swept.eligibleRemaining).toBe(0);
 
     let callCalls = 0;
     const countingCall = async () => { callCalls++; return fakeMerge(); };
-    const noop = await distillMemories(db, { project: 'proj-reopen' }, fakeEmbed, countingCall);
+    const noop = await distillMemories(db, { project: 'proj-reopen' }, fakeEmbed, countingCall, confirmedGuard);
     expect(noop.processed).toBe(0);
     expect(noop.eligibleRemaining).toBe(0);
     expect(callCalls).toBe(0);  // no LLM spend once the scope is swept
@@ -319,7 +327,7 @@ describe('distillMemories — sweep cursor across successive runs', () => {
     // Backdate the cursor, then sweep again with a cutoff after it. The re-stamp
     // uses "now", which is not < the cutoff, so the new sweep still terminates.
     db.prepare(`UPDATE memories SET distilled_at = '2019-01-01 00:00:00' WHERE project = 'proj-reopen'`).run();
-    const reopened = await distillMemories(db, { project: 'proj-reopen', since: '2020-01-01 00:00:00' }, fakeEmbed, fakeMerge);
+    const reopened = await distillMemories(db, { project: 'proj-reopen', since: '2020-01-01 00:00:00' }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(reopened.processed).toBe(3);
     expect(reopened.eligibleRemaining).toBe(0);
     db.close();
@@ -331,11 +339,11 @@ describe('distillMemories — sweep cursor across successive runs', () => {
       insertMemory(db, { ...base, title: `N${i}`, body: `GAMMA nocluster ${i}`, project: 'proj-nocluster' });
     }
 
-    const r1 = await distillMemories(db, { project: 'proj-nocluster', limit: 2 }, fakeEmbed, fakeMerge);
+    const r1 = await distillMemories(db, { project: 'proj-nocluster', limit: 2 }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r1.clusters).toBe(0);
     expect(r1.eligibleRemaining).toBe(2);  // work remains despite a zero-cluster run
 
-    const r2 = await distillMemories(db, { project: 'proj-nocluster', limit: 2 }, fakeEmbed, fakeMerge);
+    const r2 = await distillMemories(db, { project: 'proj-nocluster', limit: 2 }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(r2.processed).toBe(2);
     expect(r2.eligibleRemaining).toBe(0);
     db.close();
@@ -347,12 +355,12 @@ describe('distillMemories — sweep cursor across successive runs', () => {
       insertMemory(db, { ...base, title: `P${i}`, body: `GAMMA preview ${i}`, project: 'proj-preview' });
     }
 
-    const preview = await distillMemories(db, { project: 'proj-preview', limit: 2, dryRun: true }, fakeEmbed, fakeMerge);
+    const preview = await distillMemories(db, { project: 'proj-preview', limit: 2, dryRun: true }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(preview.processed).toBe(2);
     expect(preview.eligibleRemaining).toBe(3);
     expect(markedIds(db)).toEqual([]);  // nothing consumed
 
-    const real = await distillMemories(db, { project: 'proj-preview', limit: 2 }, fakeEmbed, fakeMerge);
+    const real = await distillMemories(db, { project: 'proj-preview', limit: 2 }, fakeEmbed, fakeMerge, confirmedGuard);
     expect(real.processed).toBe(2);
     expect(real.eligibleRemaining).toBe(3);  // the dry run's projection held
     db.close();
@@ -390,7 +398,7 @@ describe('distillMemories — merge coverage gate', () => {
       scope: 'project', decay_class: 'stable', tags: [],
     });
 
-    const r = await distillMemories(db, undefined, fakeEmbed, driftingMerge);
+    const r = await distillMemories(db, undefined, fakeEmbed, driftingMerge, confirmedGuard);
 
     expect(r.clusters).toBe(1);
     expect(r.rejected).toBe(1);
@@ -420,7 +428,7 @@ describe('distillMemories — merge coverage gate', () => {
       scope: 'project', decay_class: 'stable', tags: [],
     });
 
-    const r = await distillMemories(db, undefined, fakeEmbed, faithfulMerge);
+    const r = await distillMemories(db, undefined, fakeEmbed, faithfulMerge, confirmedGuard);
     expect(r.rejected).toBe(0);
     expect(r.created).toBe(1);
     expect(r.merged).toBe(2);
@@ -435,7 +443,7 @@ describe('distillMemories — merge coverage gate', () => {
       title: 'Drifted', body: 'GAMMA unrelated consolidation', memory_type: 'convention',
       scope: 'project', decay_class: 'stable', tags: [],
     });
-    await distillMemories(db, undefined, fakeEmbed, driftingMerge);
+    await distillMemories(db, undefined, fakeEmbed, driftingMerge, confirmedGuard);
 
     const rows = db.prepare(
       `SELECT title, distilled_at, superseded_by FROM memories ORDER BY title`
@@ -484,7 +492,7 @@ describe('distillMemories — backend failure does not burn the cursor', () => {
     let calls = 0;
     const deadBackend = async () => { calls++; return ''; };  // what callModel returns on failure
 
-    const r = await distillMemories(db, undefined, pairEmbed, deadBackend);
+    const r = await distillMemories(db, undefined, pairEmbed, deadBackend, confirmedGuard);
 
     expect(r.backendFailed).toBe(true);
     expect(r.created).toBe(0);
@@ -519,7 +527,7 @@ describe('distillMemories — backend failure does not burn the cursor', () => {
       });
     };
 
-    const r = await distillMemories(db, undefined, pairEmbed, flaky);
+    const r = await distillMemories(db, undefined, pairEmbed, flaky, confirmedGuard);
 
     // One bad response is not an outage: the run kept going.
     expect(r.backendFailed).toBe(false);
@@ -548,7 +556,7 @@ describe('distillMemories — backend failure does not burn the cursor', () => {
     let merges = 0;
     const countingMerge = async () => { merges++; return fakeMerge(); };
 
-    const r = await distillMemories(db, undefined, deadEmbed, countingMerge);
+    const r = await distillMemories(db, undefined, deadEmbed, countingMerge, confirmedGuard);
 
     expect(r.backendFailed).toBe(true);
     expect(merges).toBe(0);  // never got far enough to attempt a merge
@@ -566,7 +574,7 @@ describe('distillMemories — backend failure does not burn the cursor', () => {
 
     let calls = 0;
     const deadBackend = async () => { calls++; return ''; };
-    await distillMemories(db, undefined, pairEmbed, deadBackend);
+    await distillMemories(db, undefined, pairEmbed, deadBackend, confirmedGuard);
 
     // Only the merge attempts up to the abort threshold — no sanitize calls after.
     expect(calls).toBeLessThanOrEqual(5);
@@ -588,7 +596,7 @@ describe('distillMemories — merge responses containing code', () => {
       '```json\n{"title": "Merged", "body": "ALPHA matches [SerializeField]\\s+ under C:\\Fran\\claude", ' +
       '"memory_type": "convention", "scope": "project", "decay_class": "stable", "tags": []}\n```';
 
-    const r = await distillMemories(db, undefined, fakeEmbed, codeMerge);
+    const r = await distillMemories(db, undefined, fakeEmbed, codeMerge, confirmedGuard);
 
     expect(r.clusters).toBe(1);
     expect(r.created).toBe(1);   // would be 0 before the escape repair
@@ -617,7 +625,7 @@ describe('distillMemories — merge responses containing code', () => {
       memory_type: 'convention', scope: 'project', decay_class: 'stable', tags: [],
     });
 
-    const r = await distillMemories(db, undefined, fakeEmbed, damaged);
+    const r = await distillMemories(db, undefined, fakeEmbed, damaged, confirmedGuard);
 
     expect(r.created).toBe(0);
     expect(r.merged).toBe(0);
@@ -640,7 +648,7 @@ describe('distillMemories — merge responses containing code', () => {
     insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
 
     const prose = async () => 'These two memories are unrelated, so I will not merge them.';
-    const r = await distillMemories(db, undefined, fakeEmbed, prose);
+    const r = await distillMemories(db, undefined, fakeEmbed, prose, confirmedGuard);
 
     expect(r.created).toBe(0);
     expect(r.merged).toBe(0);
@@ -695,7 +703,7 @@ describe('distillMemories — embedding reuse (loadStoredVector)', () => {
     let embedCalls = 0;
     const spyEmbed = async (t: string) => { embedCalls++; return fakeEmbed(t); };
 
-    const r = await distillMemories(db, undefined, spyEmbed, fakeMerge);
+    const r = await distillMemories(db, undefined, spyEmbed, fakeMerge, confirmedGuard);
     expect(r.embedded).toBe(0); // nothing left unindexed for embedUnindexedMemories
     expect(embedCalls).toBe(0); // clustering loop reused memories_vec, no embedFn fallback
     db.close();
@@ -713,7 +721,7 @@ describe('distillMemories — embedding reuse (loadStoredVector)', () => {
       return call === 1 ? null : fakeEmbed(t);
     };
 
-    await distillMemories(db, undefined, flaky, fakeMerge);
+    await distillMemories(db, undefined, flaky, fakeMerge, confirmedGuard);
     expect(call).toBeGreaterThanOrEqual(2); // embedUnindexedMemories miss, then the loop's fallback call
     db.close();
   });
@@ -731,7 +739,7 @@ describe('distillMemories — dryRun short-circuit (SC-5)', () => {
     const spyEmbed = async (t: string) => { embedCalls++; return fakeEmbed(t); };
     const spyCall = async () => { callCalls++; return fakeMerge(); };
 
-    const r = await distillMemories(db, { project: 'proj-d', limit: 2, dryRun: true }, spyEmbed, spyCall);
+    const r = await distillMemories(db, { project: 'proj-d', limit: 2, dryRun: true }, spyEmbed, spyCall, confirmedGuard);
 
     expect(embedCalls).toBe(0);
     expect(callCalls).toBe(0);
@@ -756,7 +764,7 @@ describe('distillMemories — dryRun short-circuit (SC-5)', () => {
     let embedCalls = 0;
     const spyEmbed = async (t: string) => { embedCalls++; return fakeEmbed(t); };
 
-    const r = await distillMemories(db, { project: 'proj-e', dryRun: true }, spyEmbed, fakeMerge);
+    const r = await distillMemories(db, { project: 'proj-e', dryRun: true }, spyEmbed, fakeMerge, confirmedGuard);
 
     expect(embedCalls).toBe(0);
     expect(r.embedded).toBe(0);
@@ -783,7 +791,7 @@ describe('distillMemories — sanitize bound (7)', () => {
       return JSON.stringify({ title: 'Tight', body: 'short tightened body' });
     };
 
-    const r = await distillMemories(db, { project: 'proj-a' }, fakeEmbed, spyCall);
+    const r = await distillMemories(db, { project: 'proj-a' }, fakeEmbed, spyCall, confirmedGuard);
 
     // In-scope oversized memory was sanitized; the out-of-scope one was never
     // passed to callFn at all.
@@ -809,7 +817,7 @@ describe('distillMemories — sanitize bound (7)', () => {
     // the audit found: a shorter rewrite that drops what the original named.
     const spySanitize = async () => JSON.stringify({ title: 'Tight', body: 'short tightened body with nothing specific' });
 
-    const r = await distillMemories(db, { project: 'proj-a' }, fakeEmbed, spySanitize);
+    const r = await distillMemories(db, { project: 'proj-a' }, fakeEmbed, spySanitize, confirmedGuard);
     expect(r.sanitized).toBe(1);
 
     const row = db.prepare(`SELECT identifiers FROM memories WHERE id = ?`).get(inserted.id) as { identifiers: string };
@@ -827,7 +835,7 @@ describe('distillMemories — backward-compat regression (10, SC-6)', () => {
     insertMemory(db, { ...base, title: 'Two', body: 'BETA second phrasing', confidence: 0.7 });
     insertMemory(db, { ...base, title: 'Three', body: 'GAMMA unrelated thing' });
 
-    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge);
+    const r = await distillMemories(db, undefined, fakeEmbed, fakeMerge, confirmedGuard);
 
     // Byte-identical bookkeeping to the pre-chunking behavior (same seed/assertions
     // as the original 'clusters related memories...' test at the top of this file).

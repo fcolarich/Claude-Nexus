@@ -19,15 +19,13 @@ import { generateEmbedding } from './embeddings.js';
 import { embedUnindexedMemories, findSimilarMemory, normalize } from './memories.js';
 import { governByHelpRate, detectContradictions, type HaikuFn } from './governance.js';
 import { callModel } from './llm.js';
-import type { MemoryDuplicateVerdict } from './memory-dedup-confirm.js';
+import { confirmMemoryDuplicate, type MemoryDuplicateVerdict } from './memory-dedup-confirm.js';
 
 /**
- * Optional claim-level confirmation gate for the raw-cosine duplicate merge
- * below (see memory-dedup-confirm.ts's docstring for why raw cosine alone is
- * risky). Undefined by default — existing callers get exactly today's
- * behavior; only a caller that opts in by passing confirmMemoryDuplicate
- * (or an equivalent) pays the claim-decomposition cost and gets the extra
- * precision.
+ * Claim-level confirmation gate for the raw-cosine duplicate merge below (see
+ * memory-dedup-confirm.ts's docstring for why raw cosine alone is risky).
+ * Always runs — defaults to confirmMemoryDuplicate bound to this call's own
+ * haikuFn, but stays injectable so tests can stub it.
  */
 export type ConfirmDuplicateFn = (
   db: Database.Database,
@@ -71,7 +69,7 @@ export async function consolidateMemories(
   db: Database.Database,
   embedFn: (text: string) => Promise<Float32Array | null> = generateEmbedding,
   haikuFn: HaikuFn = callModel,
-  confirmDuplicateFn?: ConfirmDuplicateFn
+  confirmDuplicateFn: ConfirmDuplicateFn = (db, a, b) => confirmMemoryDuplicate(db, a, b, haikuFn)
 ): Promise<ConsolidateResult> {
   const threshold = getNexusConfig().capture.dedup_cosine_threshold;
 
@@ -128,14 +126,12 @@ export async function consolidateMemories(
     });
     if (!sim || sim.similarity < threshold || gone.has(sim.memory.id)) continue;
 
-    if (confirmDuplicateFn) {
-      const verdict = await confirmDuplicateFn(
-        db,
-        { id: m.id, body: m.body, memory_type: m.memory_type, confidence: m.confidence },
-        { id: sim.memory.id, body: sim.memory.body, memory_type: sim.memory.memory_type, confidence: sim.memory.confidence },
-      );
-      if (verdict !== 'confirmed') continue; // raw cosine similarity alone was not enough — skip, do not supersede
-    }
+    const verdict = await confirmDuplicateFn(
+      db,
+      { id: m.id, body: m.body, memory_type: m.memory_type, confidence: m.confidence },
+      { id: sim.memory.id, body: sim.memory.body, memory_type: sim.memory.memory_type, confidence: sim.memory.confidence },
+    );
+    if (verdict !== 'confirmed') continue; // raw cosine similarity alone was not enough — skip, do not supersede
 
     const mWins = m.confidence >= sim.memory.confidence;
     const winnerId = mWins ? m.id : sim.memory.id;

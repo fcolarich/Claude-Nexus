@@ -178,7 +178,7 @@ describe('integration: consolidation', () => {
     insertMemory(db, { ...base, title: 'A', body: 'first phrasing of the rule', confidence: 0.9 });
     insertMemory(db, { ...base, title: 'B', body: 'second phrasing of the rule', confidence: 0.7 });
 
-    await consolidateMemories(db, async () => constVec());  // identical embeddings -> near-dup
+    await consolidateMemories(db, async () => constVec(), undefined, async () => 'confirmed');  // identical embeddings -> near-dup
     expect(recallMemories(db, { project: 'proj' }).items).toHaveLength(1);
     db.close();
   });

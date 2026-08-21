@@ -30,6 +30,12 @@ const OLD_TIMESTAMP = '2020-01-01T00:00:00.000Z';
 // between them, which always exceeds any reasonable dedup threshold.
 const DUP_MARKER = 'DUPMARK';
 
+// Stub for confirmDuplicateFn — the gate always runs now, so tests exercising
+// the raw-cosine merge itself (unrelated to claim-level confirmation, covered
+// separately in lifecycle.test.ts) stub it to "confirmed" to keep the merge
+// unblocked.
+const confirmedGuard = async () => 'confirmed' as const;
+
 interface SeedOverrides {
 	id: string;
 	title?: string;
@@ -162,7 +168,7 @@ describe('consolidateMemories', () => {
 		seedLink(db, 'contra-a', 'contra-b', 'related');
 
 		const conflictFake = makeConflictFake('some reason');
-		const result = await consolidateMemories(db, fakeEmbedFn, conflictFake);
+		const result = await consolidateMemories(db, fakeEmbedFn, conflictFake, confirmedGuard);
 
 		// Aggregate outcome — implies phase order was followed (e.g. the pruned
 		// memory never reaches governance or dedup).

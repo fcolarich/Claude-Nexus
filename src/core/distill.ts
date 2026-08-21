@@ -19,18 +19,18 @@ import { callModel } from './llm.js';
 import { embedUnindexedMemories, insertMemory, embedMemory, normalize } from './memories.js';
 import { resolveProjectFromCwd } from './project-root.js';
 import { extractIdentifiers, unionIdentifiers } from './identifiers.js';
-import type { MemoryDuplicateVerdict } from './memory-dedup-confirm.js';
+import { confirmMemoryDuplicate, type MemoryDuplicateVerdict } from './memory-dedup-confirm.js';
 import type { Memory, MemoryType, DecayClass, AtomScope } from './types.js';
 
 /**
- * Optional claim-level contradiction guard for cluster membership. Distill's
+ * Claim-level contradiction guard for cluster membership. Distill's
  * clustering is embedding-similarity-only (BAND_LOW=0.70, "related" not
  * "duplicate") — nothing stops it from merging two memories that are
- * topically close but state conflicting facts. Undefined by default —
- * existing callers/tests get exactly today's behavior; production wiring
- * passes confirmMemoryDuplicate bound to the SAME callFn distillation itself
- * uses, so decomposition runs on whatever model is configured for the sweep
- * (Haiku by default, or --merge-model's local model), never a hardcoded one.
+ * topically close but state conflicting facts. Always runs — defaults to
+ * confirmMemoryDuplicate bound to the SAME callFn distillation itself uses,
+ * so decomposition runs on whatever model is configured for the sweep (Haiku
+ * by default, or --merge-model's local model), never a hardcoded one. Stays
+ * injectable so tests can stub it.
  * Only 'contradicts' excludes a candidate — 'insufficient' still lets
  * embedding-based clustering proceed, since distill's own band is already
  * looser than a duplicate-confirmation bar.
@@ -352,7 +352,7 @@ export async function distillMemories(
   opts?: DistillOptions,
   embedFn: (text: string) => Promise<Float32Array | null> = generateEmbedding,
   callFn: (system: string, user: string) => Promise<string> = callModel,
-  contradictionGuardFn?: ContradictionGuardFn
+  contradictionGuardFn: ContradictionGuardFn = (db, a, b) => confirmMemoryDuplicate(db, a, b, callFn)
 ): Promise<DistillResult> {
   const clampedLimit = normalizeLimit(opts?.limit);
   const scope = resolveScope(db, opts);
@@ -432,15 +432,13 @@ export async function distillMemories(
       .filter(r => !assigned.has(r.memory.id));
     if (related.length === 0) { assigned.add(m.id); continue; }
 
-    if (contradictionGuardFn) {
-      const safe = [];
-      for (const r of related) {
-        const verdict = await contradictionGuardFn(db, m, r.memory);
-        if (verdict !== 'contradicts') safe.push(r);
-      }
-      related = safe;
-      if (related.length === 0) { assigned.add(m.id); continue; } // every candidate conflicted — nothing safe to merge with
+    const safe = [];
+    for (const r of related) {
+      const verdict = await contradictionGuardFn(db, m, r.memory);
+      if (verdict !== 'contradicts') safe.push(r);
     }
+    related = safe;
+    if (related.length === 0) { assigned.add(m.id); continue; } // every candidate conflicted — nothing safe to merge with
 
     const cluster = [m, ...related.map(r => r.memory)].slice(0, MAX_CLUSTER);
     for (const c of cluster) assigned.add(c.id);

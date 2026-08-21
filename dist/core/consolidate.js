@@ -16,6 +16,7 @@ import { generateEmbedding } from './embeddings.js';
 import { embedUnindexedMemories, findSimilarMemory, normalize } from './memories.js';
 import { governByHelpRate, detectContradictions } from './governance.js';
 import { callModel } from './llm.js';
+import { confirmMemoryDuplicate } from './memory-dedup-confirm.js';
 /**
  * Q4 REWRITE NO-GO — LLM body-compaction/rewrite evaluated and declined.
  *
@@ -38,7 +39,7 @@ import { callModel } from './llm.js';
  * Decision: do NOT add LLM rewrite logic here. The three reasons above must
  * each be addressed before this decision can be reversed.
  */
-export async function consolidateMemories(db, embedFn = generateEmbedding, haikuFn = callModel, confirmDuplicateFn) {
+export async function consolidateMemories(db, embedFn = generateEmbedding, haikuFn = callModel, confirmDuplicateFn = (db, a, b) => confirmMemoryDuplicate(db, a, b, haikuFn)) {
     const threshold = getNexusConfig().capture.dedup_cosine_threshold;
     // 1. Backfill embeddings.
     const { embedded } = await embedUnindexedMemories(db, embedFn);
@@ -84,11 +85,9 @@ export async function consolidateMemories(db, embedFn = generateEmbedding, haiku
         });
         if (!sim || sim.similarity < threshold || gone.has(sim.memory.id))
             continue;
-        if (confirmDuplicateFn) {
-            const verdict = await confirmDuplicateFn(db, { id: m.id, body: m.body, memory_type: m.memory_type, confidence: m.confidence }, { id: sim.memory.id, body: sim.memory.body, memory_type: sim.memory.memory_type, confidence: sim.memory.confidence });
-            if (verdict !== 'confirmed')
-                continue; // raw cosine similarity alone was not enough — skip, do not supersede
-        }
+        const verdict = await confirmDuplicateFn(db, { id: m.id, body: m.body, memory_type: m.memory_type, confidence: m.confidence }, { id: sim.memory.id, body: sim.memory.body, memory_type: sim.memory.memory_type, confidence: sim.memory.confidence });
+        if (verdict !== 'confirmed')
+            continue; // raw cosine similarity alone was not enough — skip, do not supersede
         const mWins = m.confidence >= sim.memory.confidence;
         const winnerId = mWins ? m.id : sim.memory.id;
         const loserId = mWins ? sim.memory.id : m.id;

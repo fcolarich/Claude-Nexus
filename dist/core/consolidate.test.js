@@ -22,6 +22,11 @@ const OLD_TIMESTAMP = '2020-01-01T00:00:00.000Z';
 // vector regardless of their exact text — guarantees cosine similarity = 1.0
 // between them, which always exceeds any reasonable dedup threshold.
 const DUP_MARKER = 'DUPMARK';
+// Stub for confirmDuplicateFn — the gate always runs now, so tests exercising
+// the raw-cosine merge itself (unrelated to claim-level confirmation, covered
+// separately in lifecycle.test.ts) stub it to "confirmed" to keep the merge
+// unblocked.
+const confirmedGuard = async () => 'confirmed';
 function seedMemory(db, o) {
     db.prepare(`
 		INSERT INTO memories (
@@ -125,7 +130,7 @@ describe('consolidateMemories', () => {
         seedMemory(db, { id: 'contra-b', project: 'projContra', confidence: 0.5 });
         seedLink(db, 'contra-a', 'contra-b', 'related');
         const conflictFake = makeConflictFake('some reason');
-        const result = await consolidateMemories(db, fakeEmbedFn, conflictFake);
+        const result = await consolidateMemories(db, fakeEmbedFn, conflictFake, confirmedGuard);
         // Aggregate outcome — implies phase order was followed (e.g. the pruned
         // memory never reaches governance or dedup).
         expect(result.embedded).toBe(7);

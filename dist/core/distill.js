@@ -17,6 +17,7 @@ import { callModel } from './llm.js';
 import { embedUnindexedMemories, insertMemory, embedMemory, normalize } from './memories.js';
 import { resolveProjectFromCwd } from './project-root.js';
 import { extractIdentifiers, unionIdentifiers } from './identifiers.js';
+import { confirmMemoryDuplicate } from './memory-dedup-confirm.js';
 // Below: unrelated. At/above the dedup threshold (0.86): consolidate's job.
 // Left at 0.70 deliberately. Raising it to 0.75 was measured against 1028 real
 // merges and would have dropped 48.5% of the gated pairs — half of all
@@ -297,7 +298,7 @@ function relatedMemories(db, queryVec, self, highExclusive) {
     }
     return out;
 }
-export async function distillMemories(db, opts, embedFn = generateEmbedding, callFn = callModel, contradictionGuardFn) {
+export async function distillMemories(db, opts, embedFn = generateEmbedding, callFn = callModel, contradictionGuardFn = (db, a, b) => confirmMemoryDuplicate(db, a, b, callFn)) {
     const clampedLimit = normalizeLimit(opts?.limit);
     const scope = resolveScope(db, opts);
     const since = opts?.since;
@@ -371,19 +372,17 @@ export async function distillMemories(db, opts, embedFn = generateEmbedding, cal
             assigned.add(m.id);
             continue;
         }
-        if (contradictionGuardFn) {
-            const safe = [];
-            for (const r of related) {
-                const verdict = await contradictionGuardFn(db, m, r.memory);
-                if (verdict !== 'contradicts')
-                    safe.push(r);
-            }
-            related = safe;
-            if (related.length === 0) {
-                assigned.add(m.id);
-                continue;
-            } // every candidate conflicted — nothing safe to merge with
+        const safe = [];
+        for (const r of related) {
+            const verdict = await contradictionGuardFn(db, m, r.memory);
+            if (verdict !== 'contradicts')
+                safe.push(r);
         }
+        related = safe;
+        if (related.length === 0) {
+            assigned.add(m.id);
+            continue;
+        } // every candidate conflicted — nothing safe to merge with
         const cluster = [m, ...related.map(r => r.memory)].slice(0, MAX_CLUSTER);
         for (const c of cluster)
             assigned.add(c.id);
