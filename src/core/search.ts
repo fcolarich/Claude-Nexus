@@ -12,10 +12,48 @@ export interface MemorySearchResult {
   snippet: string;
 }
 
+// Common English stopwords, stripped from long natural-language queries before
+// OR-joining (see sanitizeFts5Query). Short/explicit-operator queries are left
+// alone so exact short-phrase lookups keep their precise AND semantics.
+const FTS5_STOPWORDS = new Set([
+  'a', 'an', 'the', 'this', 'that', 'these', 'those',
+  'i', 'me', 'my', 'we', 'our', 'you', 'your', 'it', 'its', 'they', 'them', 'their',
+  'is', 'am', 'are', 'was', 'were', 'be', 'been', 'being',
+  'do', 'does', 'did', 'have', 'has', 'had',
+  'to', 'of', 'in', 'on', 'at', 'for', 'with', 'about', 'as', 'by', 'from', 'into',
+  'and', 'or', 'but', 'if', 'so', 'than',
+  'what', 'which', 'who', 'whom', 'how', 'when', 'where', 'why',
+  'should', 'would', 'could', 'can', 'will', 'shall',
+  'please', 'like', 'just',
+]);
+
+// Above this many tokens a query is treated as natural language rather than a
+// short keyword/phrase lookup: stopwords are dropped and terms are OR-joined
+// instead of implicitly AND-ed (see sanitizeFts5Query's rationale).
+const FTS5_NATURAL_LANGUAGE_TOKEN_THRESHOLD = 5;
+
+function quoteFts5Token(t: string): string {
+  // Allow prefix search (word*)
+  if (t.endsWith('*')) {
+    const base = t.slice(0, -1).replace(/"/g, '');
+    return base ? `"${base}" *` : '""';
+  }
+  return `"${t.replace(/"/g, '')}"`;
+}
+
 /**
  * Sanitize a query for FTS5 MATCH. Wraps each token in double quotes
  * to prevent special characters from crashing the query parser.
  * Passes through explicit FTS5 operators (AND, OR, NOT) and quoted phrases.
+ *
+ * FTS5 implicitly ANDs space-separated quoted terms, so a short query like
+ * "foo bar" requires both terms to co-occur — good for precise lookups. But a
+ * long natural-language query (e.g. a full sentence) would then require every
+ * token, including stopwords, to appear verbatim in one document — a bar no
+ * real document clears, so FTS returns zero hits. Past a token-count
+ * threshold, and only when the caller hasn't already written explicit
+ * boolean operators, stopwords are dropped and the remaining terms are
+ * OR-joined instead; BM25 ranking still favors documents matching more terms.
  */
 export function sanitizeFts5Query(raw: string): string {
   const trimmed = raw.trim();
@@ -27,14 +65,17 @@ export function sanitizeFts5Query(raw: string): string {
   // Split on whitespace, preserve FTS5 operators, quote everything else
   const FTS5_OPS = new Set(['AND', 'OR', 'NOT']);
   const tokens = trimmed.split(/\s+/).filter(Boolean);
+  const hasExplicitOperator = tokens.some(t => FTS5_OPS.has(t));
+
+  if (!hasExplicitOperator && tokens.length > FTS5_NATURAL_LANGUAGE_TOKEN_THRESHOLD) {
+    const meaningful = tokens.filter(t => !FTS5_STOPWORDS.has(t.toLowerCase()));
+    const chosen = meaningful.length > 0 ? meaningful : tokens;
+    return chosen.map(quoteFts5Token).join(' OR ');
+  }
+
   return tokens.map(t => {
     if (FTS5_OPS.has(t)) return t;
-    // Allow prefix search (word*)
-    if (t.endsWith('*')) {
-      const base = t.slice(0, -1).replace(/"/g, '');
-      return base ? `"${base}" *` : '""';
-    }
-    return `"${t.replace(/"/g, '')}"`;
+    return quoteFts5Token(t);
   }).join(' ');
 }
 

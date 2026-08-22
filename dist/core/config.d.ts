@@ -35,9 +35,14 @@ export interface NexusConfig {
     reranker: {
         enabled: boolean;
         endpoint: string;
+        model: string;
         script_path: string;
         threshold: number;
         timeout_ms: number;
+    };
+    llamaSwap: {
+        executablePath: string;
+        configPath: string;
     };
 }
 /**

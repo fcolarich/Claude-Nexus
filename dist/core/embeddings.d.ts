@@ -2,19 +2,20 @@
  * Embedding generation for vector search.
  * Endpoint, model, dimensions and timeout come from extraction_models.yaml
  * via getNexusConfig() — see src/core/config.ts.
+ *
+ * Provider is llama-swap (D-001). Ollama is retired. Response shape is OpenAI:
+ *   { object: 'list', data: [{ embedding: number[] }] }
  */
 /**
  * Ensure the embedding model is loaded before a bulk pass.
- * Ollama loads models on demand but takes 5–30s on a cold start. Sending one
- * warmup request with a long timeout lets us wait it out once rather than
- * flooding the bulk loop with 500s while the model loads.
- * Returns true if the model is ready, false if unavailable.
+ * Delegates to ensureLlamaSwapReady — two-tier check: proxy liveness then
+ * model warmth. Returns true if ready, false if unavailable.
  */
 export declare function ensureEmbeddingModelReady(): Promise<boolean>;
 /**
  * Generate an embedding for the given text.
- * Retries once on HTTP 500 (model mid-load) after a short wait.
- * Returns null on any persistent error — non-fatal.
+ * On HTTP 500 (mid-run cold-swap): waits 3s, forces a fresh readiness check,
+ * then retries once. Returns null on any persistent error — non-fatal.
  * Embedding coverage is surfaced by getStats() so the silent path is observable.
  */
 export declare function generateEmbedding(text: string): Promise<Float32Array | null>;

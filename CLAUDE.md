@@ -13,7 +13,7 @@ Give Claude Code persistent cross-session memory without manual note-taking — 
 - **Build:** tsc → dist/
 - **Frontend:** Svelte 5 + Vite
 - **Database:** SQLite (better-sqlite3) + FTS5 + sqlite-vec
-- **Embeddings:** mxbai-embed-large via Ollama
+- **Embeddings:** mxbai-embed-large + jina-reranker-v2-base-multilingual via llama-swap (shared local-inference proxy, also used by uber-db)
 - **Extraction model:** Claude Haiku 4.5 via @anthropic-ai/claude-agent-sdk
 - **MCP:** @modelcontextprotocol/sdk (stdio transport)
 - **API:** Express 5, port 3210
@@ -72,7 +72,7 @@ Or run `/update-project-docs` after a change and let the doc-sync agent route it
 | `scripts/purge-origin.mjs` | Retroactive purge of memories from excluded-origin sessions. Dry-run by default; `--apply` snapshots via VACUUM INTO first |
 | `src/core/database.ts` | SQLite init, migrations, schema_version management |
 | `src/core/recall.ts` | Memory retrieval — bulk decay-ranked recall (recallMemories, for MCP/web) + prompt-driven semantic recall (recallByQuery) |
-| `src/core/embeddings.ts` | Embedding generation via Ollama mxbai-embed-large |
+| `src/core/embeddings.ts` | Embedding generation via llama-swap (mxbai-embed-large, `--pooling cls`) |
 | `src/core/config.ts` | Reads extraction_models.yaml; provides runtime config with sane defaults |
 | `src/core/project-root.ts` | Project identity resolution — `resolveGitProjectRoot()` + `resolveProjectSlug()`, used by every live-cwd call site (ADR-013); `resolveProjectFromCwd()` also has a skeleton-match fallback for mangled cwd paths (ADR-20260821130040-ea) |
 | `src/capture/reflector.ts` | Background capture pipeline — reads new transcript lines, calls Haiku, dedup-merges memories |

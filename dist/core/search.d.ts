@@ -10,6 +10,15 @@ export interface MemorySearchResult {
  * Sanitize a query for FTS5 MATCH. Wraps each token in double quotes
  * to prevent special characters from crashing the query parser.
  * Passes through explicit FTS5 operators (AND, OR, NOT) and quoted phrases.
+ *
+ * FTS5 implicitly ANDs space-separated quoted terms, so a short query like
+ * "foo bar" requires both terms to co-occur — good for precise lookups. But a
+ * long natural-language query (e.g. a full sentence) would then require every
+ * token, including stopwords, to appear verbatim in one document — a bar no
+ * real document clears, so FTS returns zero hits. Past a token-count
+ * threshold, and only when the caller hasn't already written explicit
+ * boolean operators, stopwords are dropped and the remaining terms are
+ * OR-joined instead; BM25 ranking still favors documents matching more terms.
  */
 export declare function sanitizeFts5Query(raw: string): string;
 /**

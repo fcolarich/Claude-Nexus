@@ -4,9 +4,11 @@
 # Nexus falls back to the defaults baked into that loader.
 
 # Embedding model — used for vector search and dedup similarity.
+# No `endpoint:` here on purpose — it falls through to config.ts's DEFAULTS,
+# which derive it from the shared LLAMA_SWAP_BASE_URL env var (same var
+# uber-db reads). Set that once instead of hardcoding the port in two repos.
 embedding:
-  provider: ollama
-  endpoint: http://127.0.0.1:11434/api/embed
+  provider: llama-swap
   model: mxbai-embed-large
   dimensions: 1024          # must match the vec0 table width (memories_vec / atoms_vec)
   timeout_ms: 15000
@@ -49,7 +51,9 @@ capture:
 # machine-specific).
 reranker:
   enabled: true
-  endpoint: http://127.0.0.1:8931/rerank
+  # No `endpoint:` here on purpose — falls through to config.ts's DEFAULTS,
+  # which derive it from LLAMA_SWAP_BASE_URL + this model id.
+  model: jina-reranker-v2-base-multilingual
   script_path: C:/Fran/Cloned Repos/local-reranker-mcp/server.py
   threshold: 0.2          # cross-encoder score floor (nexus atoms/memories convention)
   timeout_ms: 10000

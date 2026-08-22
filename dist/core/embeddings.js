@@ -2,58 +2,17 @@
  * Embedding generation for vector search.
  * Endpoint, model, dimensions and timeout come from extraction_models.yaml
  * via getNexusConfig() — see src/core/config.ts.
+ *
+ * Provider is llama-swap (D-001). Ollama is retired. Response shape is OpenAI:
+ *   { object: 'list', data: [{ embedding: number[] }] }
  */
-import { spawn } from 'child_process';
 import { getNexusConfig } from './config.js';
-/** Extract base URL (scheme+host+port) from the configured embedding endpoint. */
-function ollamaBaseUrl() {
-    try {
-        const u = new URL(getNexusConfig().embedding.endpoint);
-        return `${u.protocol}//${u.host}`;
-    }
-    catch {
-        return 'http://127.0.0.1:11434';
-    }
-}
+import { ensureLlamaSwapReady } from './llama-swap.js';
 /**
- * If embedding provider is ollama and Ollama isn't responding, spawn `ollama serve`
- * and wait up to 30s for it to come up. No-ops for non-ollama providers.
+ * One embedding call to confirm the model is loaded and responsive.
+ * Passed as the warmup callback to ensureLlamaSwapReady.
  */
-async function ensureOllamaRunning() {
-    if (getNexusConfig().embedding.provider !== 'ollama')
-        return;
-    const base = ollamaBaseUrl();
-    try {
-        const r = await fetch(base, { signal: AbortSignal.timeout(1000) });
-        if (r.ok)
-            return;
-    }
-    catch { /* not running — fall through to spawn */ }
-    console.error('[embeddings] Ollama not running — spawning `ollama serve`');
-    const proc = spawn('ollama', ['serve'], { detached: true, stdio: 'ignore', shell: false });
-    proc.unref();
-    for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 1000));
-        try {
-            const r = await fetch(base, { signal: AbortSignal.timeout(1000) });
-            if (r.ok) {
-                console.error('[embeddings] Ollama started');
-                return;
-            }
-        }
-        catch { /* still starting */ }
-    }
-    console.warn('[embeddings] Ollama did not start within 30s — proceeding without embeddings');
-}
-/**
- * Ensure the embedding model is loaded before a bulk pass.
- * Ollama loads models on demand but takes 5–30s on a cold start. Sending one
- * warmup request with a long timeout lets us wait it out once rather than
- * flooding the bulk loop with 500s while the model loads.
- * Returns true if the model is ready, false if unavailable.
- */
-export async function ensureEmbeddingModelReady() {
-    await ensureOllamaRunning();
+async function warmupEmbed() {
     const cfg = getNexusConfig().embedding;
     try {
         const response = await fetch(cfg.endpoint, {
@@ -69,9 +28,18 @@ export async function ensureEmbeddingModelReady() {
     }
 }
 /**
+ * Ensure the embedding model is loaded before a bulk pass.
+ * Delegates to ensureLlamaSwapReady — two-tier check: proxy liveness then
+ * model warmth. Returns true if ready, false if unavailable.
+ */
+export async function ensureEmbeddingModelReady() {
+    const cfg = getNexusConfig().embedding;
+    return ensureLlamaSwapReady(cfg.model, warmupEmbed);
+}
+/**
  * Generate an embedding for the given text.
- * Retries once on HTTP 500 (model mid-load) after a short wait.
- * Returns null on any persistent error — non-fatal.
+ * On HTTP 500 (mid-run cold-swap): waits 3s, forces a fresh readiness check,
+ * then retries once. Returns null on any persistent error — non-fatal.
  * Embedding coverage is surfaced by getStats() so the silent path is observable.
  */
 export async function generateEmbedding(text) {
@@ -86,19 +54,21 @@ export async function generateEmbedding(text) {
             });
             if (!response.ok) {
                 if (response.status === 500 && attempt === 0) {
-                    // Model may still be loading — wait 3s and retry once
+                    // Mid-run cold-swap recovery — wait for model reload, then retry once.
+                    // force:true bypasses the memo so the new readiness state is picked up.
                     await new Promise(r => setTimeout(r, 3000));
+                    await ensureLlamaSwapReady(cfg.model, warmupEmbed, { force: true });
                     continue;
                 }
                 console.warn(`[embeddings] ${cfg.provider} returned HTTP ${response.status}`);
                 return null;
             }
             const data = (await response.json());
-            if (!Array.isArray(data.embeddings) || data.embeddings.length === 0 || data.embeddings[0].length === 0) {
+            if (!Array.isArray(data.data) || data.data.length === 0 || data.data[0].embedding.length === 0) {
                 console.warn('[embeddings] embedding endpoint returned empty result');
                 return null;
             }
-            return new Float32Array(data.embeddings[0]);
+            return new Float32Array(data.data[0].embedding);
         }
         catch {
             // Silently swallow — the embedding model may simply not be running

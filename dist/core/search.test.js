@@ -68,6 +68,21 @@ describe('sanitizeFts5Query', () => {
     it('strips embedded double-quotes from ordinary tokens', () => {
         expect(sanitizeFts5Query('say"hello')).toBe('"sayhello"');
     });
+    it('AND-joins short queries at or under the natural-language threshold', () => {
+        expect(sanitizeFts5Query('foo bar baz qux quux')).toBe('"foo" "bar" "baz" "qux" "quux"');
+    });
+    it('OR-joins and drops stopwords for long natural-language queries', () => {
+        const result = sanitizeFts5Query('what conventions should I follow for writing efficient mobile shaders');
+        expect(result).toBe('"conventions" OR "follow" OR "writing" OR "efficient" OR "mobile" OR "shaders"');
+    });
+    it('keeps every token when a long query is all stopwords', () => {
+        const result = sanitizeFts5Query('what is the this that these those how when where why');
+        expect(result).toBe('"what" OR "is" OR "the" OR "this" OR "that" OR "these" OR "those" OR "how" OR "when" OR "where" OR "why"');
+    });
+    it('does not switch to OR when the query already has an explicit operator, even if long', () => {
+        const result = sanitizeFts5Query('foo AND bar AND baz AND qux AND quux AND corge');
+        expect(result).toBe('"foo" AND "bar" AND "baz" AND "qux" AND "quux" AND "corge"');
+    });
 });
 // ── searchMemories ────────────────────────────────────────────────────────────
 describe('searchMemories', () => {
@@ -101,6 +116,28 @@ describe('searchMemories', () => {
         const results = searchMemories(db, 'alpha', { project: 'proj-a' });
         expect(results).toHaveLength(1);
         expect(results[0].memory.title).toBe('A');
+        db.close();
+    });
+    // Regression for the FTS-only-returns-zero-hits bug: a long natural-language
+    // query used to be sanitized into ~15 mandatory ANDed tokens (including
+    // stopwords), which no realistic memory body satisfies verbatim.
+    it('returns hits for a long natural-language query against realistic memory content', () => {
+        const db = freshDb();
+        insertMemory(db, {
+            ...memBase,
+            title: 'Mobile Shader Conventions',
+            body: 'For efficient mobile shaders, avoid per-pixel branching and keep the instruction count low on tile-based GPUs.',
+            memory_type: 'convention',
+        });
+        insertMemory(db, {
+            ...memBase,
+            title: 'Unrelated Memory',
+            body: 'The database migration script backs up records before applying schema changes.',
+            memory_type: 'convention',
+        });
+        const results = searchMemories(db, 'In this project, what conventions should I follow for writing efficient mobile shaders?');
+        expect(results.length).toBeGreaterThanOrEqual(1);
+        expect(results.map(r => r.memory.title)).toContain('Mobile Shader Conventions');
         db.close();
     });
 });

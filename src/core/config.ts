@@ -5,6 +5,14 @@ import { existsSync, readFileSync } from 'fs';
 import { parse as parseYaml } from 'yaml';
 import type { ClaudeConfig } from './types.js';
 
+// Shared across every local project/session that talks to this machine's one
+// llama-swap instance (uber-db reads the same var). Set once as a user env
+// var instead of duplicating the port in each repo's defaults. Port 8091, not
+// 8080: 8080 collides with wslrelay.exe on this machine (WSL2 port forwarding
+// into a stray local-ai.service), which falsely answers 200 to liveness pings
+// and masks llama-swap never actually starting.
+const LLAMA_SWAP_BASE_URL = process.env['LLAMA_SWAP_BASE_URL'] ?? 'http://127.0.0.1:8091';
+
 export function getClaudeConfig(): ClaudeConfig {
   const claudeDir = join(homedir(), '.claude');
   return {
@@ -57,9 +65,14 @@ export interface NexusConfig {
   reranker: {
     enabled: boolean;
     endpoint: string;
+    model: string;          // llama-swap model id; ensureLlamaSwapReady needs it directly
     script_path: string;
     threshold: number;      // cross-encoder score floor a candidate must clear to be injected
     timeout_ms: number;
+  };
+  llamaSwap: {
+    executablePath: string;  // used by ensureLlamaSwapReady to auto-start the proxy if absent
+    configPath: string;
   };
 }
 
@@ -74,8 +87,8 @@ function expandHome(p: string): string {
 // These match the values Nexus v1 hardcoded, so behaviour is unchanged without the file.
 const DEFAULTS: NexusConfig = {
   embedding: {
-    provider: 'ollama',
-    endpoint: 'http://127.0.0.1:11434/api/embed',
+    provider: 'llama-swap',
+    endpoint: `${LLAMA_SWAP_BASE_URL}/v1/embeddings`,
     model: 'mxbai-embed-large',
     dimensions: 1024,
     timeout_ms: 15000,
@@ -113,10 +126,15 @@ const DEFAULTS: NexusConfig = {
   },
   reranker: {
     enabled: true,
-    endpoint: 'http://127.0.0.1:8931/rerank',
+    endpoint: `${LLAMA_SWAP_BASE_URL}/upstream/jina-reranker-v2-base-multilingual/rerank`,
+    model: 'jina-reranker-v2-base-multilingual',
     script_path: 'C:/Fran/Cloned Repos/local-reranker-mcp/server.py',
     threshold: 0.2,
     timeout_ms: 10000,
+  },
+  llamaSwap: {
+    executablePath: 'C:/Fran/tools/llama-swap/llama-swap.exe',
+    configPath: 'C:/Fran/tools/llama-swap/config.yaml',
   },
 };
 
@@ -148,6 +166,7 @@ export function getNexusConfig(): NexusConfig {
     capture: { ...DEFAULTS.capture, ...loaded.capture },
     exclude: { ...DEFAULTS.exclude, ...loaded.exclude },
     reranker: { ...DEFAULTS.reranker, ...loaded.reranker },
+    llamaSwap: { ...DEFAULTS.llamaSwap, ...loaded.llamaSwap },
   };
   cached.capture.export_dir = expandHome(cached.capture.export_dir);
   return cached;
